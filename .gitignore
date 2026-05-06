@@ -1,0 +1,35 @@
+# Build artifacts
+build/
+out/
+.xmake/
+*.obj
+*.pdb
+*.lib
+*.exp
+*.ilk
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.sln.docstates
+CMakeSettings.json
+
+# UE4SS-generated dumps (large, regenerate locally)
+dump/
+UE4SS_*.log
+ue4ss.log
+
+# Tools — downloaded fresh by setup, not committed
+tools/
+
+# Game pak unpacks (gitignored — never redistribute)
+unpacked/
+*.pak
+*.utoc
+*.ucas
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
