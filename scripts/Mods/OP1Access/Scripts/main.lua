@@ -231,7 +231,10 @@ local function on_widget_created(NewObject)
     scene_widgets[#scene_widgets + 1] = {NewObject, cls, label}
     if cls == "TitlePlayerSelect_C" then cs_instance = NewObject end
 
-    schedule_menu_announce(cls, label)
+    -- Do NOT announce on construction. At launch the game builds dozens of menu
+    -- widgets up-front (cached, never shown), which produced spurious launch
+    -- speech like "Staff credits" / "Other". A screen is announced only when it
+    -- actually becomes visible -- by the poll loop below, or the UIOpen hook.
 end
 
 -- ---------------------------------------------------------------------------
@@ -813,10 +816,11 @@ end
 -- Pick the LIVE, on-screen TitlePlayerSelect_C and its cursor position. Several
 -- instances of this class get constructed; only the genuinely-active one
 -- exposes a readable PlayerPositionMoved (the construction-captured duplicate
--- looks visible but its cursor struct never reads back -- that was the silent
--- bug). So readability is BOTH the instance selector and the "are we live"
--- gate. Scans every candidate (registry + construction capture); tries both
--- struct-access patterns. Returns instance, x, y or nil.
+-- looks readable-once but its cursor struct never reads back -- that was the
+-- silent bug). We require BOTH: the widget is on-screen (widget_is_visible --
+-- otherwise arrow keys on the TITLE MENU would trigger char-select coordinate
+-- read-outs, since the cached widget stays readable) AND a readable cursor
+-- position (picks the live instance among duplicates). Returns instance,x,y/nil.
 local function cs_live_instance()
     local seen = {}
     local function probe(w)
@@ -825,6 +829,7 @@ local function cs_live_instance()
         local ok = false
         pcall(function() ok = w:IsValid() end)
         if not ok then return nil end
+        if not widget_is_visible(w) then return nil end   -- must be on-screen now
         local x, y
         pcall(function() local p = w.PlayerPositionMoved; if p then x, y = p.X, p.Y end end)
         if type(x) ~= "number" then
