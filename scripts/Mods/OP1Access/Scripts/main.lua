@@ -217,6 +217,11 @@ local cs_last_err = nil  -- last distinct error from the char-select announcer (
 local dialog_widgets = {}    -- all constructed UICommonDialogBP_C instances
 local dlg_visible    = false -- was a dialog on-screen last tick (open/close edge)
 local dlg_last_focus = nil   -- last announced answer index
+-- Mute char-select coordinate read-outs briefly after a more-important
+-- announce (screen name, character) so coords don't step on them. Declared
+-- here (before poll_active_menu) so the screen-name announce can set it.
+local CS_COORD_MUTE  = 30    -- ~1.5s at 50ms/poll
+local cs_coord_mute  = 0     -- polls remaining
 
 local function on_widget_created(NewObject)
     -- NotifyOnNewObject passes the UObject directly, NOT a hook-style
@@ -559,6 +564,7 @@ local function poll_active_menu()
         last_polled_class = best_class
         last_spoken_class = best_class
         speak(best_label)
+        cs_coord_mute = CS_COORD_MUTE   -- don't let coords step on the new screen name
     elseif not best_class then
         last_polled_class = nil
     end
@@ -998,8 +1004,11 @@ poll_character_select = function()
     if not instance or not x or not y then
         cs_last_char, cs_last_cell, cs_settle_key, cs_settle_n, cs_lastlog_key, cs_gap = nil, nil, nil, 0, nil, 0
         cs_item_positions, cs_pos_diag, cs_min_sep, cs_learned_names = nil, nil, nil, {}
+        cs_coord_mute = 0
         return
     end
+
+    if cs_coord_mute > 0 then cs_coord_mute = cs_coord_mute - 1 end
 
     local finding = false
     pcall(function() finding = (instance.FindingPlayer == true) end)
@@ -1045,6 +1054,7 @@ poll_character_select = function()
                 -- Don't let the arrival cell's coords interrupt the character.
                 cs_last_cell, cs_gap = cell, 0
                 cs_settle_key, cs_settle_n = cell, CS_SETTLE_TICKS
+                cs_coord_mute = CS_COORD_MUTE
             end
         end
     else
@@ -1061,7 +1071,8 @@ poll_character_select = function()
     else
         cs_settle_n = cs_settle_n + 1
     end
-    if cell ~= cs_last_cell and (cs_settle_n == CS_SETTLE_TICKS or cs_gap >= CS_GAP_TICKS) then
+    if cs_coord_mute <= 0 and cell ~= cs_last_cell
+        and (cs_settle_n == CS_SETTLE_TICKS or cs_gap >= CS_GAP_TICKS) then
         cs_last_cell, cs_gap = cell, 0
         speak(string.format("%d, %d", cx, cy))
     end
@@ -1136,8 +1147,10 @@ local function cycle_player_select(direction)
     speak(combined)
 
     -- Mark this traveler as announced so the poll-driven announcer doesn't
-    -- immediately repeat it.
+    -- immediately repeat it, and mute coords so the cursor's jump onto the
+    -- traveler doesn't read out over the character name.
     cs_last_char = name
+    cs_coord_mute = CS_COORD_MUTE
 end
 
 do
