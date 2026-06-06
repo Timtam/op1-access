@@ -1,66 +1,136 @@
 # OP1Access — Octopath Traveler screen-reader accessibility mod
 
-A UE4SS-based mod that adds screen-reader output and audio cues to Octopath
-Traveler (PC, 2019, UE 4.18). Targets NVDA, JAWS, Narrator and SAPI fallback
-through the Tolk abstraction.
+A [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS)-based mod that adds
+screen-reader output to **Octopath Traveler** (PC / Steam, 2019, Unreal Engine
+4.18). Menus, system dialogs and the **character-select screen** are spoken
+through [Tolk](https://github.com/dkager/tolk), so it works with NVDA, JAWS,
+System Access, and the SAPI fallback.
 
-**Status:** pre-alpha scaffolding. Nothing works yet.
+> **Status:** early but functional. The title-screen flow, menu/screen
+> announcements, system dialogs, and the character-select screen are spoken.
+> Battle and overworld support are still in progress. Expect rough edges.
 
-## Phased scope
+## How it works
 
-| Phase | Features | Status |
-|------|----------|--------|
-| 0 | Toolchain — UE4SS attached, SDK dumped, Tolk speaks "hello" | in progress (UE4SS deployed; Tolk pending) |
-| 1 | Battle-start announcement, HP/SP thresholds | planned |
-| 2 | Dialog text-box read-out (uses decoded `TalkData_EN`) | planned |
-| 3 | Menu read-out — UI confirmed UMG, scope is in | planned |
-| 4 | Overworld proximity beacons, path-actions, sub-stories | future |
+- **UE4SS** injects into the game (via a `dwmapi.dll` proxy) and hosts Lua mods.
+- All policy — *what* to speak and *when* — lives in Lua at
+  `scripts/Mods/OP1Access/Scripts/main.lua`. It hooks the game's UI lifecycle
+  (`KSUIManager`, `KSUserWidgetBase`) and polls widget state on a 50 ms loop.
+- Speech is emitted by **`OP1AccessShim.dll`**, a small Lua C extension that
+  loads **Tolk.dll** at runtime and forwards text to whichever screen reader is
+  running. (Tolk is LGPLv3 and loaded dynamically — never statically linked.)
 
-## Open questions
+Without the shim/Tolk the mod still runs and writes everything it *would* speak
+to `UE4SS.log` (lines prefixed `[OP1Access]`) — useful for development.
 
-1. ~~**Are menus UMG or custom Slate?**~~ ✅ Resolved 2026-05-05 — UMG.
-   See `docs/investigation-umg.md`.
-2. **Does UE4SS attach cleanly to OT1's 4.18 Shipping build?** Verification
-   harness in `scripts/verify-attach.ps1`. Run it, then launch the game.
-3. **Is the dialog-display path a clean hookable UFunction with an ID
-   parameter?** Suspected yes based on `TalkData_EN` table structure;
-   confirmed when phase 2 work begins.
+## Install
 
-See `docs/feasibility.md` for full background and `docs/install-state.md`
-for what's currently deployed.
+1. Install **UE4SS** into
+   `…/OCTOPATH TRAVELER/Octopath_Traveler/Binaries/Win64/`. The stock v3.0.1
+   release attaches to the 4.18 Shipping build with no patching.
+2. Add `OP1Access : 1` to `Win64/Mods/mods.txt`.
+3. Build and deploy the speech shim:
+   ```
+   scripts\build-shim.cmd
+   ```
+   This compiles `Tolk.dll` + `OP1AccessShim.dll` and copies them, plus the
+   NVDA / System-Access bridge DLLs, into `Win64/Mods/OP1Access/Scripts/`.
+4. Copy the Lua mod into place — it is **not** auto-deployed by the build
+   script:
+   ```
+   copy scripts\Mods\OP1Access\Scripts\main.lua "…\Win64\Mods\OP1Access\Scripts\main.lua"
+   ```
+5. Launch the game with your screen reader running. You should hear
+   **“OP1 Access loaded.”**
 
-## Verifying the install (task #2)
+See `docs/install-state.md` for the exact deployed layout and how to reverse the
+install.
 
-```
-powershell -ExecutionPolicy Bypass -File scripts/verify-attach.ps1
-```
+## Hotkeys
 
-In another window: launch Octopath Traveler from Steam. The verifier should
-report `[verify] Log appeared` and then highlight any green `[OP1Access]`
-lines from the UE4SS log.
+### Global
 
-## Build / install (once phase 0 lands)
+| Key | Action |
+|-----|--------|
+| **Ctrl + F10** | Announce the menu / screen you are currently on |
+| **Ctrl + F11** | *(dev)* Dump UHT-compatible headers to `UHTHeaderDump/` |
+| **Ctrl + F12** | *(dev)* Dump all live objects to `UE4SS_ObjectDump.txt` |
 
-Prerequisites:
-- Octopath Traveler on Steam (Windows)
-- UE4SS (latest release, the `LessEqual421` build for UE 4.18)
-- Visual Studio 2022 with C++ desktop workload
-- xmake (UE4SS's build system)
+Everything else is automatic: screens and menus are announced as they open, the
+highlighted entry is read as you move through title menus, and system dialogs
+are read out (caption, body, and button labels).
 
-Install steps will be filled in as phase 0 lands. For now this repo only
-contains scaffolding.
+## Character-select screen ("Choose your character")
+
+This is the opening screen where you pick your starting traveler. It is a
+free-cursor world map with the eight travelers placed around it. There are two
+ways to get around, and they work together.
+
+### Cycling — the reliable way to choose
+
+| Key | Action |
+|-----|--------|
+| **Page Down** | Jump to the next traveler |
+| **Page Up** | Jump to the previous traveler |
+
+Each press snaps directly onto a traveler and reads their **name, job, path
+action, and talent** (e.g. *“Ophilia. Cleric. Path action: Guide. Talent:
+Summon”*). This is the dependable way to land exactly on someone — then confirm
+with the game's normal accept button. If you only want to pick a character,
+use this.
+
+### Free cursor — spatial exploration
+
+| Key | Action |
+|-----|--------|
+| **Arrow keys** | Move the cursor around the map |
+| **N** | Guide to the **nearest** traveler |
+
+- As you move, it speaks your **coordinates** when the cursor settles, and a
+  traveler's full info when the cursor lands on one.
+- **N** announces the closest traveler, **the arrow keys to press to reach
+  them**, and their coordinates — e.g. *“Cyrus, up and left. At -70, 40.”* This
+  works for all eight from the start; passing over a traveler refines it.
+- If a press does **not** move the cursor, it tells you why — **“reversing”**
+  (you changed direction and the cursor is bleeding off momentum — keep
+  pressing) or **“blocked”** (e.g. a map edge) — followed by your coordinates,
+  so a press is never silent.
+
+### Known limitations
+
+- The cursor is **momentum-driven**: reversing direction stalls for ~3–4 presses
+  before it turns, and it moves in large steps. Precise free-cursor positioning
+  is therefore difficult — for actually selecting a traveler, prefer
+  **Page Up / Page Down**.
+- The "up / down / left / right" guidance assumes the default arrow→map mapping
+  and self-corrects as you move; if a direction ever comes out reversed, it will
+  fix itself after you move that way once.
+
+## Development notes
+
+- The Lua mod currently emits **verbose diagnostic logging** to `UE4SS.log`
+  (`CS:` cursor traces, `KEY` press logs, anchor reads, etc.). This is
+  intentional while the character-select work is being tuned and will be quieted
+  later.
+- `docs/sdk-dump-procedure.md` covers capturing hook targets; the flat object
+  dump (`UE4SS_ObjectDump.txt`) is the source of truth for Blueprint property
+  names, offsets, and types.
+- There is no standalone Lua interpreter in the repo, but a `luac` can be built
+  from the bundled Lua 5.4.7 sources to syntax-check `main.lua` before
+  deploying (`luac -p main.lua`).
 
 ## Repo layout
 
 ```
-docs/         design docs and feasibility briefing
-src/          C++ mod source (Tolk shim, called from Lua)
-scripts/      Lua mod that loads into UE4SS
+docs/         design docs, investigation reports, install state
+src/          C++ shim source (Tolk bridge, statically links Lua 5.4)
+scripts/      the Lua mod (Mods/OP1Access/) + build-shim.cmd
 third_party/  Tolk DLLs (vendored — LGPLv3, see THIRD_PARTY_LICENSES.md)
+tools/        UE4SS distribution and build inputs (gitignored)
 ```
 
 ## License
 
-Mod code: MIT (see LICENSE).
-Tolk: LGPLv3, vendored unmodified — see `third_party/tolk/` and
+Mod code: **MIT** (see `LICENSE`).
+Tolk: **LGPLv3**, vendored unmodified — see `third_party/tolk/` and
 `THIRD_PARTY_LICENSES.md`.

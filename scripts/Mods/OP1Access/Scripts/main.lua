@@ -200,10 +200,17 @@ end
 -- cleanup of invalid entries each tick.
 local scene_widgets = {}  -- list of {widget_uobject, class_name, label}
 
--- Forward declaration so on_widget_created can reference poll_player_panel_info
--- (defined later). Without this, the reference would be captured as a *global*
--- at compile time and never see the later local definition.
-local poll_player_panel_info
+-- Forward declarations so functions defined later in the file can be referenced
+-- from earlier code without being captured as globals at compile time.
+local poll_character_select
+local find_visible_instance
+
+-- A constructed TitlePlayerSelect_C, captured by on_widget_created (just below)
+-- as a fallback candidate. The actual live on-screen instance is chosen each
+-- poll by cs_live_instance() -- the one whose cursor position reads back -- so
+-- this is only a backstop in case the registry is missing it.
+local cs_instance = nil
+local cs_last_err = nil  -- last distinct error from the char-select announcer (logged once)
 
 local function on_widget_created(NewObject)
     -- NotifyOnNewObject passes the UObject directly, NOT a hook-style
@@ -222,6 +229,7 @@ local function on_widget_created(NewObject)
     -- transitions (e.g. closing Save/Load and returning to Title) where
     -- no UIOpen / UIClose fires.
     scene_widgets[#scene_widgets + 1] = {NewObject, cls, label}
+    if cls == "TitlePlayerSelect_C" then cs_instance = NewObject end
 
     schedule_menu_announce(cls, label)
 end
@@ -384,7 +392,7 @@ local SELECT_INDEX_MENUS = {
         text_array      = "TextLabel",
     },
     -- TitlePlayerSelect_C is intentionally NOT in this table. It uses a
-    -- bespoke poll path (poll_player_panel_info) that reads the localized
+    -- bespoke poll path (poll_character_select) that reads the localized
     -- name + class straight from the on-screen PlayerPanel_C UTextBlocks
     -- as the game itself updates them. That's the canonical source — the
     -- game already does the localization for us.
@@ -546,7 +554,16 @@ local function poll_active_menu()
     -- Bespoke path for TitlePlayerSelect_C — the free-cursor character
     -- map. Reads the localized name + class from PlayerPanel_C's
     -- on-screen UTextBlocks, which the game updates as the cursor hovers.
-    poll_player_panel_info(best_class)
+    -- Wrapped so a throw inside surfaces in the log (the outer LoopAsync pcall
+    -- would otherwise swallow it). Log each distinct error once. Guarded because
+    -- the loop can tick once before poll_character_select is assigned at load.
+    if poll_character_select then
+        local cs_ok, cs_err = pcall(poll_character_select)
+        if not cs_ok and cs_err ~= cs_last_err then
+            cs_last_err = cs_err
+            log("CS ERR: " .. tostring(cs_err))
+        end
+    end
 end
 
 -- Fire-and-forget polling loop. Wrap each tick in pcall: a Lua error
@@ -583,24 +600,10 @@ pcall(RegisterKeyBind, Key.F12, { ModifierKey.CONTROL }, function()
 end)
 
 -- ---------------------------------------------------------------------------
--- Hover-based read of PlayerPanel_C.
---
--- Property of this screen: the game updates `Select` (IntProperty on
--- TitlePlayerSelect_C) when the cursor crosses a character region but
--- does NOT call PlayerPanel_C:SetPlayer itself. So NameText/JobText/etc.
--- stay stuck at whatever the panel was last populated with. We bridge:
--- when Select changes in the poll, we call SetPlayer(Select) and schedule
--- a deferred announcement.
---
--- Why deferred (and not poll-stability): the panel populates its
--- TextBlocks via a typewriter animation. Per-tick stability checks fight
--- NVDA's interrupt-on-new-speak behaviour, producing audibly-truncated
--- announcements. A single ExecuteWithDelay(400ms) gives the typewriter
--- time to finish, then reads and speaks once. NVDA plays one full
--- announcement instead of interrupting partials.
+-- PlayerPanel_C read helpers. The panel shows the focused traveler's
+-- localized name / job / path-action / talent as on-screen UTextBlocks.
+-- Shared by the Page Up/Down cycle and the poll-driven announcer below.
 -- ---------------------------------------------------------------------------
-local last_panel_speech = nil  -- last full string we spoke
-local last_panel_select = nil  -- last Select we observed (for SetPlayer bridge)
 
 local function read_text_block(panel, field)
     local s = nil
@@ -638,36 +641,318 @@ local function build_player_panel_string(panel)
     return table.concat(parts, ". ")
 end
 
--- Forward-declared so poll_active_menu can call it.
-poll_player_panel_info = function(active_cls)
-    if active_cls ~= "TitlePlayerSelect_C" then
-        last_panel_speech = nil
-        last_panel_select = nil
+-- ---------------------------------------------------------------------------
+-- Character-select (TitlePlayerSelect_C) announcer.
+--
+-- Free-cursor world map: a cursor glides around (the game eases
+-- PlayerPositionMoved, an FVector2D) over 8 travelers at fixed points.
+--
+-- Hard-won facts from runtime logs:
+--   * FindingPlayer (bool) IS the reliable on/off-traveler signal: true while
+--     the cursor is on a traveler, false in empty space. (It looked dead in an
+--     earlier pass only because those samples were taken after the cursor had
+--     already left the traveler.)
+--   * NameText is correct while FindingPlayer is true, but STICKY afterwards
+--     (keeps the last name in empty space), so it must be gated by FindingPlayer.
+--   * ItemPlayerPosition currently reads back as all-(0,0) and PlayerName as
+--     opaque wrappers, so the "direction to nearest traveler" hint isn't
+--     possible yet (deferred); empty space just reports coordinates. The
+--     cs_load_positions / cs_nearest_* helpers below are kept for that future.
+--
+-- Announce model: on a traveler, speak the panel immediately (on name change).
+-- In empty space, speak coordinates once the cursor SETTLES (same rounded cell
+-- for CS_SETTLE_TICKS polls) -- one readout per pause, not a stream while
+-- easing and not throttled away. Identical messages dedup. Driven by the 50ms
+-- poll, gated on cs_live_instance().
+-- ---------------------------------------------------------------------------
+
+local CS_SETTLE_TICKS = 2    -- polls the cursor cell must hold before speaking coords (~100ms)
+local CS_GAP_TICKS    = 8    -- max polls between coord readouts during a sustained sweep (~400ms)
+
+-- Y-axis sense of the cursor space (for the deferred direction hint).
+local CS_MAP_Y_DOWN = true
+
+-- Announcer state, reset on leaving the screen.
+local cs_last_char      = nil  -- last traveler name announced (don't repeat it)
+local cs_last_cell      = nil  -- last coordinate cell announced (dedup)
+local cs_settle_key     = nil  -- cell currently waiting to settle
+local cs_settle_n       = 0    -- consecutive polls cs_settle_key has held
+local cs_gap            = 0    -- polls since the last coordinate readout (sweep throttle)
+local cs_lastlog_key    = nil  -- last diagnostic key logged (one line per change)
+local cs_hb             = 0    -- heartbeat throttle counter (diagnostic)
+local cs_item_positions = nil  -- (deferred hint) cached anchors, currently all (0,0)
+local cs_pos_diag       = nil  -- (deferred hint) bounding-box diagonal
+local cs_min_sep        = nil  -- (deferred hint) min pairwise distance
+local cs_learned_names  = {}   -- (deferred hint) traveler index -> name
+local cs_known          = {}   -- learned traveler name -> {sx,sy,n} position centroid
+-- Anchor (ItemPlayerPosition) <-> cursor-space mapping. Measured from a full
+-- cycle-through: the anchor frame is the cursor frame point-reflected (180 deg)
+-- about an offset, i.e. cursor = (bx - anchor.x, by - anchor.y). Each anchor's
+-- PlayerName (ePLAYABLE_CHARA_NAME_0X) gives the enum index -> traveler.
+local CS_ANCHOR_NAME = { [0] = "Ophilia", [1] = "Cyrus", [2] = "Tressa", [3] = "Olberic",
+                         [4] = "Primrose", [5] = "Alfyn", [6] = "Therion", [7] = "H'aanit" }
+local CS_NAME_IDX = {}; for i, n in pairs(CS_ANCHOR_NAME) do CS_NAME_IDX[n] = i end
+local CS_DEF_BX, CS_DEF_BY = 90, -79   -- default offset; refined at runtime from hovers
+
+local function is_placeholder_name(name)
+    return not name or name == "" or name == "1234"
+end
+
+-- Read the travelers' fixed map anchors WITHOUT visiting each: ItemPlayerPosition
+-- (FVector2D[]) for positions, PlayerName (FName[]) for names. This read came
+-- back all-zeros earlier (likely before the screen finished placing travelers),
+-- so we RETRY every call and cache ONLY once the values look real (>=3 entries
+-- with actual spread). Diagnostic-logged so a run shows if the game exposes them.
+local cs_anchor_try = 0
+local function cs_load_positions(instance)
+    if cs_item_positions then return cs_item_positions end
+    cs_anchor_try = cs_anchor_try + 1
+    local names = {}
+    pcall(function()
+        local arr = instance.PlayerName
+        if arr and arr.ForEach then
+            arr:ForEach(function(_, v)
+                local s
+                pcall(function() s = v:get():ToString() end)   -- FName element
+                if not s or s == "" then s = value_to_string(v) end
+                names[#names + 1] = s
+            end)
+        end
+    end)
+    local positions, idx, sample = {}, 0, nil
+    pcall(function()
+        local arr = instance.ItemPlayerPosition
+        if arr and arr.ForEach then
+            arr:ForEach(function(_, v)
+                idx = idx + 1
+                local vx, vy
+                pcall(function() local e = v:get(); vx, vy = e.X, e.Y end)
+                if type(vx) ~= "number" then pcall(function() vx, vy = v.X, v.Y end) end
+                if not sample then sample = string.format("x=%s,y=%s", tostring(vx), tostring(vy)) end
+                if type(vx) == "number" and type(vy) == "number" then
+                    local raw = names[idx]
+                    local ei = tonumber(tostring(raw):match("(%d+)%s*$"))
+                    positions[#positions + 1] = {
+                        x = vx, y = vy, idx = ei,
+                        name = (ei ~= nil and CS_ANCHOR_NAME[ei]) or raw,
+                    }
+                end
+            end)
+        end
+    end)
+    local minx, miny, maxx, maxy
+    for _, p in ipairs(positions) do
+        minx = math.min(minx or p.x, p.x); maxx = math.max(maxx or p.x, p.x)
+        miny = math.min(miny or p.y, p.y); maxy = math.max(maxy or p.y, p.y)
+    end
+    local spread = maxx and ((maxx - minx) + (maxy - miny)) or 0
+    if cs_anchor_try <= 15 then
+        log(string.format("CS anchors try %d: n=%d spread=%.1f sample(%s) name1=%s",
+            cs_anchor_try, #positions, spread, sample or "none", tostring(names[1])))
+    end
+    if #positions >= 3 and spread > 5 then
+        cs_item_positions = positions
+        for _, p in ipairs(positions) do
+            log(string.format("CS anchor: %s at (%.1f, %.1f)", tostring(p.name), p.x, p.y))
+        end
+        return cs_item_positions
+    end
+    return nil   -- not populated yet; retry on a later call
+end
+
+-- Index (and distance) of the traveler nearest (x, y); nil if none loaded.
+local function cs_nearest_index(positions, x, y)
+    local bi, bd
+    for i, p in ipairs(positions) do
+        local dx, dy = p.x - x, p.y - y
+        local d = dx * dx + dy * dy
+        if not bd or d < bd then bi, bd = i, d end
+    end
+    if not bi then return nil end
+    return bi, math.sqrt(bd)
+end
+
+-- (dx, dy) cursor->target -> 8-point compass word. Honors CS_MAP_Y_DOWN.
+local function cs_direction_word(dx, dy)
+    if not CS_MAP_Y_DOWN then dy = -dy end  -- normalize so +dy points south
+    local ax, ay = math.abs(dx), math.abs(dy)
+    if ax < 0.5 and ay < 0.5 then return "here" end
+    local horiz = (dx >= 0) and "east" or "west"
+    local vert  = (dy >= 0) and "south" or "north"
+    if ax > ay * 2.5 then return horiz end
+    if ay > ax * 2.5 then return vert end
+    return vert .. "-" .. horiz
+end
+
+-- Distance word relative to the map's own scale; nil => mid-range, omitted.
+local function cs_distance_word(d)
+    if not cs_pos_diag then return nil end
+    local frac = d / cs_pos_diag
+    if frac < 0.10 then return "very near"
+    elseif frac < 0.22 then return "near"
+    elseif frac >= 0.45 then return "far" end
+    return nil
+end
+
+-- "Ophilia south-east, near" for the traveler nearest (x, y); nil if unknown.
+-- Prefers the localized name learned while hovering; falls back to PlayerName.
+local function cs_nearest_hint(instance, x, y)
+    local positions = cs_load_positions(instance)
+    if not positions then return nil end
+    local i, d = cs_nearest_index(positions, x, y)
+    if not i then return nil end
+    local p = positions[i]
+    local nm = cs_learned_names[i]
+    if not nm or nm == "" then nm = (p.name and p.name ~= "" and p.name) or "Traveler" end
+    local s = nm .. " " .. cs_direction_word(p.x - x, p.y - y)
+    local dist = cs_distance_word(d)
+    if dist then s = s .. ", " .. dist end
+    return s
+end
+
+-- Pick the LIVE, on-screen TitlePlayerSelect_C and its cursor position. Several
+-- instances of this class get constructed; only the genuinely-active one
+-- exposes a readable PlayerPositionMoved (the construction-captured duplicate
+-- looks visible but its cursor struct never reads back -- that was the silent
+-- bug). So readability is BOTH the instance selector and the "are we live"
+-- gate. Scans every candidate (registry + construction capture); tries both
+-- struct-access patterns. Returns instance, x, y or nil.
+local function cs_live_instance()
+    local seen = {}
+    local function probe(w)
+        if not w or seen[w] then return nil end
+        seen[w] = true
+        local ok = false
+        pcall(function() ok = w:IsValid() end)
+        if not ok then return nil end
+        local x, y
+        pcall(function() local p = w.PlayerPositionMoved; if p then x, y = p.X, p.Y end end)
+        if type(x) ~= "number" then
+            pcall(function() local p = w.PlayerPositionMoved; if p then local g = p:get(); x, y = g.X, g.Y end end)
+        end
+        if type(x) == "number" and type(y) == "number" then return w, x, y end
+        return nil
+    end
+    for i = #scene_widgets, 1, -1 do
+        local e = scene_widgets[i]
+        if e[2] == "TitlePlayerSelect_C" then
+            local w, x, y = probe(e[1])
+            if w then return w, x, y end
+        end
+    end
+    return probe(cs_instance)
+end
+
+-- Forward-declared (poll_character_select) so poll_active_menu can call it.
+-- Runs every poll tick; gates on cs_live_instance() (readable cursor position),
+-- NOT on the flaky widget-visibility/registry signals that kept starving it.
+--
+-- FindingPlayer and Select proved dead here (stuck at false/0 even while
+-- hovering Ophilia -- they track the discrete Page Up/Down path, not the free
+-- cursor), so on/off-traveler is decided geometrically from ItemPlayerPosition
+-- vs the live PlayerPositionMoved. Candidate signals are still logged so the
+-- next pass can confirm.
+poll_character_select = function()
+    local instance, x, y = cs_live_instance()
+
+    -- Heartbeat (~1/s) so the log shows the gating truth even when silent:
+    -- how many candidates exist, how many are visible, how many readable.
+    cs_hb = cs_hb + 1
+    if cs_hb >= 20 then
+        cs_hb = 0
+        if not cs_item_positions then cs_load_positions(instance) end  -- retry anchors
+        local n, vis, rd = 0, 0, 0
+        for i = 1, #scene_widgets do
+            if scene_widgets[i][2] == "TitlePlayerSelect_C" then
+                n = n + 1
+                local w = scene_widgets[i][1]
+                if widget_is_visible(w) then vis = vis + 1 end
+                local px
+                pcall(function() local p = w.PlayerPositionMoved; if p then px = p.X end end)
+                if px ~= nil then rd = rd + 1 end
+            end
+        end
+        if n > 0 or instance then
+            log(string.format("CS hb: cands=%d vis=%d readable=%d picked=%s",
+                n, vis, rd, tostring(instance ~= nil)))
+        end
+    end
+
+    if not instance or not x or not y then
+        cs_last_char, cs_last_cell, cs_settle_key, cs_settle_n, cs_lastlog_key, cs_gap = nil, nil, nil, 0, nil, 0
+        cs_item_positions, cs_pos_diag, cs_min_sep, cs_learned_names = nil, nil, nil, {}
         return
     end
 
-    -- Find the live TitlePlayerSelect_C instance in our registry.
-    local instance = nil
-    for i = #scene_widgets, 1, -1 do
-        local entry = scene_widgets[i]
-        if entry[2] == "TitlePlayerSelect_C" then
-            local w = entry[1]
-            local alive = false
-            pcall(function() alive = w and w:IsValid() end)
-            if alive and widget_is_visible(w) then
-                instance = w; break
+    local finding = false
+    pcall(function() finding = (instance.FindingPlayer == true) end)
+    local panel
+    pcall(function() panel = instance.PlayerPanel_147 end)
+    local name = panel and read_text_block(panel, "NameText") or nil
+
+    local cx, cy = math.floor(x + 0.5), math.floor(y + 0.5)
+    local cell = string.format("%d,%d", cx, cy)
+
+    -- (Cursor slow-down via writing InputScale was REVERTED: writing that live
+    -- property every tick froze input and crashed the game. Don't write live
+    -- UObject properties from the poll loop. The cursor stays at native speed;
+    -- the periodic coordinate readout below softens the fast glides instead.)
+
+    -- One diagnostic line per cell change (+ confirmable-signal candidates).
+    if cell ~= cs_lastlog_key then
+        cs_lastlog_key = cell
+        local selC, selP, dec
+        pcall(function() selC = instance.SelectCharacter end)
+        pcall(function() selP = instance.SelectPlayer end)
+        pcall(function() dec  = instance.IsDecide end)
+        log(string.format("CS: pos=(%.1f,%.1f) find=%s selC=%s selP=%s dec=%s name=%s",
+            x, y, tostring(finding), tostring(selC), tostring(selP), tostring(dec), tostring(name)))
+    end
+
+    -- Character: announce immediately on arrival at / change of traveler. The
+    -- panel is read only while FindingPlayer is true (NameText is sticky
+    -- otherwise). FindingPlayer spans a sizable zone, so coordinates below must
+    -- still run while on a traveler, or it becomes a silent dead spot.
+    if finding and not is_placeholder_name(name) then
+        -- Learn this traveler's map position (centroid of its FindingPlayer
+        -- zone) so the nearest-character guide can point to it later. NameText
+        -- is reliable while FindingPlayer is true, so `name` is correct here.
+        local kk = cs_known[name]
+        if not kk then kk = { sx = 0, sy = 0, n = 0 }; cs_known[name] = kk end
+        kk.sx, kk.sy, kk.n = kk.sx + x, kk.sy + y, kk.n + 1
+        if name ~= cs_last_char then
+            cs_last_char = name
+            local s = build_player_panel_string(panel) or name
+            if s and s ~= "" then
+                speak(s)
+                -- Don't let the arrival cell's coords interrupt the character.
+                cs_last_cell, cs_gap = cell, 0
+                cs_settle_key, cs_settle_n = cell, CS_SETTLE_TICKS
             end
         end
+    else
+        cs_last_char = nil  -- empty space / panel not ready: re-announce on return
     end
-    if not instance then return end
 
-    -- (Removed: hover-bridge that auto-announced when Select changed.
-    -- After every cycle / F5, the game reverts Select back to whatever
-    -- the cursor is parked on. The bridge then fired "Olberic" right
-    -- after the cycle/F5 announcement and interrupted it. Cursor-driven
-    -- navigation isn't viable on this screen anyway since we can't move
-    -- the visual cursor reliably; users navigate via Page Up/Down.)
+    -- Coordinates: speak when the cell changed AND either the cursor just
+    -- settled (you paused -> one clean readout per move) or it's been a while
+    -- mid-sweep (so holding a key gives periodic updates instead of silence
+    -- between the start and end of a long glide).
+    cs_gap = cs_gap + 1
+    if cell ~= cs_settle_key then
+        cs_settle_key, cs_settle_n = cell, 0
+    else
+        cs_settle_n = cs_settle_n + 1
+    end
+    if cell ~= cs_last_cell and (cs_settle_n == CS_SETTLE_TICKS or cs_gap >= CS_GAP_TICKS) then
+        cs_last_cell, cs_gap = cell, 0
+        speak(string.format("%d, %d", cx, cy))
+    end
 end
+
+-- (No Tick hook: RegisterHook on the title BP's Tick returns false -- the BP
+-- class isn't loaded at script-init time, so the hook can't bind. Liveness is
+-- handled by cs_live_instance() in the poll loop instead.)
 
 -- ---------------------------------------------------------------------------
 -- TitlePlayerSelect cycle helper.
@@ -680,7 +965,7 @@ end
 -- visual cursor position so a subsequent confirm picks the announced one.
 -- ---------------------------------------------------------------------------
 
-local function find_visible_instance(cls)
+find_visible_instance = function(cls)
     for i = #scene_widgets, 1, -1 do
         local entry = scene_widgets[i]
         if entry[2] == cls then
@@ -695,12 +980,17 @@ end
 
 -- Cycle helper. Calls TitlePlayerSelect_C's own SelectUpMove / SelectDownMove
 -- BP functions — those wrap UICursorDecrementLoop / IncrementLoop and also
--- drive the visual cursor on the map, so a confirm press after cycling lands
--- on the announced character. We then poll the panel until the displayed
--- name changes, then speak the full info. The polling generation counter
--- ensures rapid presses cancel earlier polls.
-local cycle_poll_gen = 0
-
+-- drive the visual cursor on the map, so a confirm press after cycling
+-- lands on the announced character.
+--
+-- Speech: read the panel synchronously and speak immediately if the data
+-- is real. This keeps Page Up/Down latency near zero on the common path.
+-- We then stamp the poll-driven announcer's settle key with this traveler
+-- so it skips re-announcing the same change (otherwise we'd double-speak on
+-- every press). If the panel still has the "1234" placeholder (only happens
+-- on the first press after entering the screen), we leave the announcement
+-- to the poll loop, which will pick it up once the game's Tick finishes
+-- populating the data.
 local function cycle_player_select(direction)
     if last_polled_class ~= "TitlePlayerSelect_C" then
         speak("Character cycle is only active on character select")
@@ -708,15 +998,6 @@ local function cycle_player_select(direction)
     end
     local instance = find_visible_instance("TitlePlayerSelect_C")
     if not instance then return end
-
-    -- Capture current name so we can detect when the panel actually
-    -- updates after SelectDownMove. On the first press the panel is in
-    -- a placeholder state ("1234. 剣士. ..."), and the game's Tick
-    -- needs an indeterminate number of frames to populate it. Polling
-    -- until the name changes is more reliable than picking a fixed delay.
-    local panel_initial = nil
-    pcall(function() panel_initial = instance.PlayerPanel_147 end)
-    local prev_name = panel_initial and read_text_block(panel_initial, "NameText") or nil
 
     local fn_name = (direction > 0) and "SelectDownMove" or "SelectUpMove"
     local called = false
@@ -727,37 +1008,19 @@ local function cycle_player_select(direction)
         return
     end
 
-    cycle_poll_gen = cycle_poll_gen + 1
-    local my_gen = cycle_poll_gen
-    local poll_count = 0
+    local panel = nil
+    pcall(function() panel = instance.PlayerPanel_147 end)
+    local name = panel and read_text_block(panel, "NameText") or nil
+    if is_placeholder_name(name) then return end  -- defer to poll loop
 
-    local function speak_panel(p)
-        local combined = p and build_player_panel_string(p) or nil
-        if combined and combined ~= "" then
-            last_panel_speech = combined
-            speak(combined)
-        else
-            local sel = nil
-            pcall(function() sel = instance.Select end)
-            speak("Character " .. tostring(sel or "?"))
-        end
-    end
+    local combined = build_player_panel_string(panel)
+    if not combined or combined == "" then return end
 
-    local function poll()
-        if my_gen ~= cycle_poll_gen then return end  -- superseded by another press
-        poll_count = poll_count + 1
-        local p = nil
-        pcall(function() p = instance.PlayerPanel_147 end)
-        local cur_name = p and read_text_block(p, "NameText") or nil
-        if cur_name and cur_name ~= prev_name then
-            speak_panel(p)
-        elseif poll_count >= 10 then  -- 500ms timeout
-            speak_panel(p)
-        else
-            ExecuteWithDelay(50, poll)
-        end
-    end
-    ExecuteWithDelay(50, poll)
+    speak(combined)
+
+    -- Mark this traveler as announced so the poll-driven announcer doesn't
+    -- immediately repeat it.
+    cs_last_char = name
 end
 
 do
@@ -772,6 +1035,161 @@ do
         local ok = pcall(RegisterKeyBind, down, function() cycle_player_select(1) end)
         log("Bound Page Down cycle: " .. tostring(ok))
     end
+end
+
+-- Arrow keybinds. Jobs: (1) diagnostic KEY log; (2) NO-OP FEEDBACK with a
+-- reason -- the cursor has momentum, so reversing direction stalls ~3-4 presses
+-- (and map edges block it). When a press moves the cursor zero distance we say
+-- "reversing" (the press was opposite the last steady direction) or "blocked"
+-- (otherwise) plus the held coordinate, so a dead press is never silent and you
+-- know WHY; (3) learn each arrow's world direction from steady runs, for the
+-- nearest-character guide. Reads only; debounced; does not consume the key.
+local CS_OPP = { UP_ARROW = "DOWN_ARROW", DOWN_ARROW = "UP_ARROW",
+                 LEFT_ARROW = "RIGHT_ARROW", RIGHT_ARROW = "LEFT_ARROW" }
+local cs_press_n    = 0
+local cs_press_last = nil  -- pos string at the previous press, to flag "no move"
+local cs_noop_gen   = 0
+local cs_prev_key   = nil  -- previous arrow press
+local cs_move_key   = nil  -- last arrow that produced steady movement
+local cs_pp_x, cs_pp_y = nil, nil  -- previous press cursor pos (numbers)
+local cs_key_delta  = {}   -- arrow -> {dx,dy} sign of the world movement it causes
+local function on_arrow_log(kname)
+    local inst, x, y = cs_live_instance()
+    if not inst or not x or not y then return end
+    cs_press_n = cs_press_n + 1
+    local here = string.format("%.1f,%.1f", x, y)
+    local moved = (cs_press_last == nil) or (here ~= cs_press_last)
+    log(string.format("KEY %s #%d pos=(%s) movedSinceLastPress=%s",
+        kname, cs_press_n, here, tostring(moved)))
+
+    -- Learn this arrow's direction from a steady run (same key as the previous
+    -- press AND the cursor actually moved -> not an overshoot/switch press).
+    if cs_prev_key == kname and moved and cs_pp_x then
+        local dx, dy = x - cs_pp_x, y - cs_pp_y
+        if math.abs(dx) > math.abs(dy) and math.abs(dx) >= 0.5 then
+            cs_key_delta[kname] = { dx = (dx > 0 and 1 or -1), dy = 0 }; cs_move_key = kname
+        elseif math.abs(dy) >= 0.5 then
+            cs_key_delta[kname] = { dx = 0, dy = (dy > 0 and 1 or -1) }; cs_move_key = kname
+        end
+    end
+    cs_prev_key = kname
+    cs_pp_x, cs_pp_y = x, y
+    cs_press_last = here
+
+    -- No-op feedback (debounced): if the cursor hasn't moved ~250ms later, say
+    -- why + the held coordinate, so a dead press is never silent.
+    local px, py, pressed = math.floor(x + 0.5), math.floor(y + 0.5), kname
+    cs_noop_gen = cs_noop_gen + 1
+    local mygen = cs_noop_gen
+    ExecuteWithDelay(250, function()
+        if mygen ~= cs_noop_gen then return end          -- superseded by a newer press
+        local i2, x2, y2 = cs_live_instance()
+        if not i2 or not x2 or not y2 then return end
+        local cx2, cy2 = math.floor(x2 + 0.5), math.floor(y2 + 0.5)
+        if cx2 == px and cy2 == py then                  -- cursor never moved
+            local label = (cs_move_key and pressed == CS_OPP[cs_move_key]) and "reversing" or "blocked"
+            speak(string.format("%s, %d, %d", label, cx2, cy2))
+        end
+    end)
+end
+do
+    for _, kn in ipairs({ "UP_ARROW", "DOWN_ARROW", "LEFT_ARROW", "RIGHT_ARROW" }) do
+        local k = nil
+        pcall(function() k = Key[kn] end)
+        if k then
+            local ok = pcall(RegisterKeyBind, k, function() on_arrow_log(kn) end)
+            log("Bound diag key " .. kn .. ": " .. tostring(ok))
+        end
+    end
+end
+
+-- Nearest-character guide (bound to N). Points at the closest traveler whose
+-- position we've learned (by hovering it, or cycling Page Up/Down which moves
+-- the cursor onto each). It speaks the ARROW KEYS to press to get there --
+-- learned from your own movement, so it's correct regardless of the map's odd
+-- axis orientation -- plus the traveler's coordinates.
+local CS_KEYWORD = { UP_ARROW = "up", DOWN_ARROW = "down",
+                     LEFT_ARROW = "left", RIGHT_ARROW = "right" }
+-- Default arrow->direction mapping measured from the logs (UP=+Y, DOWN=-Y,
+-- LEFT=+X, RIGHT=-X). Used until your movement learns it (cs_key_delta, which
+-- overrides) so the guide always has real directions -- never "move toward".
+local CS_KEY_DEFAULT = { UP_ARROW = { dx = 0, dy = 1 }, DOWN_ARROW = { dx = 0, dy = -1 },
+                         LEFT_ARROW = { dx = 1, dy = 0 }, RIGHT_ARROW = { dx = -1, dy = 0 } }
+local function cs_key_toward(axis, want)
+    for kn, d in pairs(cs_key_delta) do             -- learned (authoritative)
+        if axis == "x" and d.dx == want then return kn end
+        if axis == "y" and d.dy == want then return kn end
+    end
+    for kn, d in pairs(CS_KEY_DEFAULT) do            -- observed-default fallback
+        if axis == "x" and d.dx == want then return kn end
+        if axis == "y" and d.dy == want then return kn end
+    end
+    return nil
+end
+local function announce_nearest()
+    local inst, cx, cy = cs_live_instance()
+    if not inst or not cx or not cy then return end
+
+    -- Offset b for cursor = (bx - anchor.x, by - anchor.y): start from the
+    -- measured default, refine by averaging over any travelers actually hovered
+    -- (matched to their anchor by enum index). Self-corrects if the default is
+    -- off this session.
+    local bx, by, bn = 0, 0, 0
+    if cs_item_positions then
+        for nm, k in pairs(cs_known) do
+            local ei = CS_NAME_IDX[nm]
+            if ei ~= nil and k.n > 0 then
+                for _, a in ipairs(cs_item_positions) do
+                    if a.idx == ei then
+                        bx = bx + (k.sx / k.n + a.x); by = by + (k.sy / k.n + a.y); bn = bn + 1
+                        break
+                    end
+                end
+            end
+        end
+    end
+    if bn > 0 then bx, by = bx / bn, by / bn else bx, by = CS_DEF_BX, CS_DEF_BY end
+
+    -- Candidates: every anchor transformed into cursor space (known up-front, no
+    -- hovering). Fall back to hovered centroids if anchors have not loaded yet.
+    local cand = {}
+    if cs_item_positions then
+        for _, a in ipairs(cs_item_positions) do
+            cand[#cand + 1] = { x = bx - a.x, y = by - a.y, name = a.name }
+        end
+    else
+        for nm, k in pairs(cs_known) do
+            if k.n > 0 then cand[#cand + 1] = { x = k.sx / k.n, y = k.sy / k.n, name = nm } end
+        end
+    end
+    if #cand == 0 then
+        speak("No characters mapped yet. Give it a second, then try again.")
+        return
+    end
+
+    local bN, bD, tx, ty
+    for _, c in ipairs(cand) do
+        local d = math.sqrt((c.x - cx) ^ 2 + (c.y - cy) ^ 2)
+        if not bD or d < bD then bN, bD, tx, ty = c.name, d, c.x, c.y end
+    end
+    local who = (bN and bN ~= "" and bN ~= "nil") and bN or "Character"
+    if bD < 30 then speak(who .. ", here"); return end
+    local dx, dy = tx - cx, ty - cy
+    local parts = {}
+    if math.abs(dy) >= 20 then local kw = cs_key_toward("y", dy > 0 and 1 or -1); if kw then parts[#parts + 1] = CS_KEYWORD[kw] end end
+    if math.abs(dx) >= 20 then local kw = cs_key_toward("x", dx > 0 and 1 or -1); if kw then parts[#parts + 1] = CS_KEYWORD[kw] end end
+    if #parts > 0 then
+        speak(string.format("%s, %s. At %d, %d", who,
+            table.concat(parts, " and "), math.floor(tx + 0.5), math.floor(ty + 0.5)))
+    else
+        speak(string.format("%s, at %d, %d", who, math.floor(tx + 0.5), math.floor(ty + 0.5)))
+    end
+end
+do
+    local k = nil
+    pcall(function() k = Key.N end)
+    local ok = k and pcall(RegisterKeyBind, k, announce_nearest)
+    log("Bound nearest-character (N): " .. tostring(ok))
 end
 
 -- Manual "what am I on now" — walks the scene_widgets registry to find
