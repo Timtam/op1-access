@@ -203,6 +203,7 @@ local scene_widgets = {}  -- list of {widget_uobject, class_name, label}
 -- Forward declarations so functions defined later in the file can be referenced
 -- from earlier code without being captured as globals at compile time.
 local poll_character_select
+local poll_dialog
 local find_visible_instance
 
 -- A constructed TitlePlayerSelect_C, captured by on_widget_created (just below)
@@ -211,6 +212,11 @@ local find_visible_instance
 -- this is only a backstop in case the registry is missing it.
 local cs_instance = nil
 local cs_last_err = nil  -- last distinct error from the char-select announcer (logged once)
+-- Confirm-dialog (UICommonDialogBP_C) tracking. Instances are captured at
+-- construction below; poll_dialog detects when one is actually on-screen.
+local dialog_widgets = {}    -- all constructed UICommonDialogBP_C instances
+local dlg_visible    = false -- was a dialog on-screen last tick (open/close edge)
+local dlg_last_focus = nil   -- last announced answer index
 
 local function on_widget_created(NewObject)
     -- NotifyOnNewObject passes the UObject directly, NOT a hook-style
@@ -218,6 +224,11 @@ local function on_widget_created(NewObject)
     if not NewObject then return end
     local cls = class_name_of(NewObject)
     if not cls then return end
+
+    -- Capture confirm-dialog widgets (not a SCENE_LABEL; handled by poll_dialog).
+    if cls == "UICommonDialogBP_C" then
+        dialog_widgets[#dialog_widgets + 1] = NewObject
+    end
 
     local label = SCENE_LABELS[cls]
     if not label then return end
@@ -540,6 +551,10 @@ local function poll_active_menu()
     end
     scene_widgets = kept
 
+    -- A modal confirm dialog (UICommonDialogBP) takes priority: poll_dialog
+    -- announces it and we suppress the underlying screen while it is open.
+    if poll_dialog and poll_dialog() then return end
+
     if best_class and best_class ~= last_polled_class then
         last_polled_class = best_class
         last_spoken_class = best_class
@@ -579,7 +594,11 @@ log("Polling loop started: " .. tostring(ok_loop))
 -- In-game: routed through KSUIManager.
 safe_register("/Script/Octopath_Traveler.KSUIManager:Open",       on_ui_manager_open,        "KSUIManager.Open")
 safe_register("/Script/Octopath_Traveler.KSUIManager:Close",      on_ui_manager_close,       "KSUIManager.Close")
-safe_register("/Script/Octopath_Traveler.KSUIManager:OpenDialog", on_ui_manager_open_dialog, "KSUIManager.OpenDialog")
+-- KSUIManager:OpenDialog announce is disabled: UICommonDialogBP dialogs (title
+-- confirm AND in-game prompts) are now handled uniformly by poll_dialog, which
+-- detects them by visibility, adds answer-focus read-out, and avoids the
+-- double-speak that registering both paths would cause.
+-- safe_register("/Script/Octopath_Traveler.KSUIManager:OpenDialog", on_ui_manager_open_dialog, "KSUIManager.OpenDialog")
 
 -- Phase 0 boot announce
 log("script loaded; shim=" .. tostring(shim ~= nil))
@@ -848,6 +867,99 @@ local function cs_live_instance()
     return probe(cs_instance)
 end
 
+-- Forward-declared poll_dialog. The character-select confirmation (and other
+-- title / system prompts) is a shared UICommonDialogBP_C, shown via the widget's
+-- own OpenDialog -- NOT KSUIManager:OpenDialog -- so the old hook never saw it.
+-- Detect it by visibility, read caption + answers (Answer_01..04) + the focused
+-- answer (FocusIndex), and announce focus changes so moving Yes/No is spoken.
+-- Returns true while a dialog is open so poll_active_menu suppresses the
+-- underlying screen. Requires real content (caption/answers) so a cached,
+-- hidden dialog widget can't false-trigger and mute everything.
+poll_dialog = function()
+    local inst, kept = nil, {}
+    for i = 1, #dialog_widgets do
+        local w = dialog_widgets[i]
+        local alive = false
+        pcall(function() alive = w and w:IsValid() end)
+        if alive then
+            kept[#kept + 1] = w
+            if widget_is_visible(w) then inst = w end   -- last visible wins
+        end
+    end
+    dialog_widgets = kept
+    if not inst then
+        dlg_visible, dlg_last_focus = false, nil
+        return false
+    end
+
+    -- Real content comes from NowParam (a KSUICommonDialogParam: caption /
+    -- detail / buttons), NOT the widget's CaptionText block, which holds a stale
+    -- design default ("購入"). A cached launch dialog has an empty NowParam (no
+    -- buttons), which also kills the launch false-trigger.
+    local caption, detail, buttons, default = "", "", {}, 0
+    pcall(function()
+        local p = inst.NowParam
+        if p then
+            caption = ftext_to_string(p.CaptionText)
+            detail  = ftext_to_string(p.DetailText)
+            pcall(function() default = p.DefaultButton or 0 end)
+            local arr = p.ButtonText
+            if arr and arr.ForEach then
+                arr:ForEach(function(_, v) local s = ftext_to_string(v); if s ~= "" then buttons[#buttons + 1] = s end end)
+            end
+        end
+    end)
+    -- Fallback for the buttons if the NowParam array doesn't marshal: read the
+    -- Answer_01..04 widgets (these read fine before), skipping "000" placeholders.
+    if #buttons == 0 then
+        for i = 1, 4 do
+            local t
+            pcall(function() local item = inst["Answer_0" .. i]; if item then t = read_text_block(item, "Text") end end)
+            if t and t ~= "" and t ~= "000" then buttons[#buttons + 1] = t end
+        end
+    end
+    if #buttons == 0 then               -- no real answer buttons -> not a dialog we read
+        dlg_visible, dlg_last_focus = false, nil
+        return false
+    end
+
+    local focus = nil
+    pcall(function() focus = inst.FocusIndex end)
+    -- Effective selection: the live FocusIndex if valid, else the param's
+    -- DefaultButton (FocusIndex reads -1 the instant the dialog opens), else 0.
+    local ef = ((focus and focus >= 0) and focus)
+        or ((default and default >= 0) and default) or 0
+    local focused = buttons[ef + 1]
+
+    if not dlg_visible then
+        dlg_visible, dlg_last_focus = true, ef
+        -- If the dialog is over the character-select screen, read the focused
+        -- traveler's full description (PlayerPanel.PlayerDetail, a KSTextBlock)
+        -- so the confirm reads e.g. "You are Ophilia, a Cleric... Begin? Yes".
+        local desc = nil
+        local cinst = cs_live_instance()
+        if cinst then
+            local panel
+            pcall(function() panel = cinst.PlayerPanel_147 end)
+            if panel then desc = read_text_block(panel, "PlayerDetail") end
+        end
+        log(string.format("DLG open: caption=%s detail=%s buttons=[%s] focus=%s default=%s ef=%s desc=%s",
+            tostring(caption), tostring(detail), table.concat(buttons, "|"),
+            tostring(focus), tostring(default), tostring(ef), tostring(desc)))
+        local parts = {}
+        if desc and desc ~= "" then parts[#parts + 1] = desc end
+        if caption ~= "" then parts[#parts + 1] = caption end
+        if detail  ~= "" then parts[#parts + 1] = detail end
+        if focused and focused ~= "" then parts[#parts + 1] = focused end  -- only the selected answer
+        if #parts > 0 then speak(table.concat(parts, ". ")) end
+    elseif focus and focus >= 0 and focus ~= dlg_last_focus then
+        dlg_last_focus = focus
+        log(string.format("DLG focus -> %s = %s", tostring(focus), tostring(focused)))
+        if focused and focused ~= "" then speak(focused) end
+    end
+    return true
+end
+
 -- Forward-declared (poll_character_select) so poll_active_menu can call it.
 -- Runs every poll tick; gates on cs_live_instance() (readable cursor position),
 -- NOT on the flaky widget-visibility/registry signals that kept starving it.
@@ -1059,6 +1171,7 @@ local cs_move_key   = nil  -- last arrow that produced steady movement
 local cs_pp_x, cs_pp_y = nil, nil  -- previous press cursor pos (numbers)
 local cs_key_delta  = {}   -- arrow -> {dx,dy} sign of the world movement it causes
 local function on_arrow_log(kname)
+    if dlg_visible then return end          -- a confirm dialog owns the keys; stay quiet
     local inst, x, y = cs_live_instance()
     if not inst or not x or not y then return end
     cs_press_n = cs_press_n + 1
@@ -1088,6 +1201,7 @@ local function on_arrow_log(kname)
     local mygen = cs_noop_gen
     ExecuteWithDelay(250, function()
         if mygen ~= cs_noop_gen then return end          -- superseded by a newer press
+        if dlg_visible then return end                   -- a dialog opened during the wait
         local i2, x2, y2 = cs_live_instance()
         if not i2 or not x2 or not y2 then return end
         local cx2, cy2 = math.floor(x2 + 0.5), math.floor(y2 + 0.5)
