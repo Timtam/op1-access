@@ -205,6 +205,11 @@ local scene_widgets = {}  -- list of {widget_uobject, class_name, label}
 local poll_character_select
 local poll_dialog
 local find_visible_instance
+local cs_live_instance
+-- The poll loop's "currently-shown screen" (set in poll_active_menu). Hoisted
+-- here so the construction hook can dedup its char-select screen-name announce
+-- against the loop.
+local last_polled_class
 
 -- A constructed TitlePlayerSelect_C, captured by on_widget_created (just below)
 -- as a fallback candidate. The actual live on-screen instance is chosen each
@@ -245,7 +250,23 @@ local function on_widget_created(NewObject)
     -- transitions (e.g. closing Save/Load and returning to Title) where
     -- no UIOpen / UIClose fires.
     scene_widgets[#scene_widgets + 1] = {NewObject, cls, label}
-    if cls == "TitlePlayerSelect_C" then cs_instance = NewObject end
+    if cls == "TitlePlayerSelect_C" then
+        cs_instance = NewObject
+        -- "Choose your character" normally comes from the poll loop's visibility
+        -- check -- but that loop intermittently dies after a level load. So also
+        -- announce it event-driven here, gated so cached/never-shown instances
+        -- built at launch stay silent: after a short delay, only if the screen is
+        -- actually on-screen (cs_live_instance reads a live cursor) and the loop
+        -- hasn't already named it.
+        ExecuteWithDelay(500, function()
+            if last_polled_class == "TitlePlayerSelect_C" then return end
+            if not cs_live_instance or not cs_live_instance() then return end
+            last_polled_class = "TitlePlayerSelect_C"
+            last_spoken_class = "TitlePlayerSelect_C"
+            cs_coord_mute = CS_COORD_MUTE
+            speak(label)
+        end)
+    end
 
     -- Do NOT announce on construction. At launch the game builds dozens of menu
     -- widgets up-front (cached, never shown), which produced spurious launch
@@ -359,7 +380,6 @@ safe_register("/Script/Octopath_Traveler.KSUserWidgetBase:UIClose", on_widget_ui
 -- and the work per tick is small (a handful of UFunction calls + property
 -- reads).
 local POLL_INTERVAL_MS = 50
-local last_polled_class = nil
 
 local function widget_is_visible(w)
     -- Use UWidget::IsVisible() — a UFunction that returns true iff the
@@ -854,7 +874,7 @@ end
 -- otherwise arrow keys on the TITLE MENU would trigger char-select coordinate
 -- read-outs, since the cached widget stays readable) AND a readable cursor
 -- position (picks the live instance among duplicates). Returns instance,x,y/nil.
-local function cs_live_instance()
+cs_live_instance = function()
     local seen = {}
     local function probe(w)
         if not w or seen[w] then return nil end
