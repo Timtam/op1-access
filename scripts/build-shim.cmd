@@ -98,7 +98,7 @@ for %%F in (lapi.c lauxlib.c lbaselib.c lcode.c lcorolib.c lctype.c ldblib.c lde
 )
 
 cl /nologo /MD /O2 /EHsc /std:c++20 ^
-   /I"%LUAINC%" /I"%LUASRC%" /I"%MINHOOK%\include" ^
+   /I"%LUAINC%" /I"%LUASRC%" /I"%MINHOOK%\include" /I"%MINHOOK%\src\hde" ^
    "%REPO%\src\Shim.cpp" %LUASRCS% ^
    "%MINHOOK%\src\buffer.c" "%MINHOOK%\src\hook.c" "%MINHOOK%\src\trampoline.c" ^
    "%MINHOOK%\src\hde\hde32.c" "%MINHOOK%\src\hde\hde64.c" ^

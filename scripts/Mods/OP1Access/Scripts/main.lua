@@ -1469,6 +1469,12 @@ local function install_talk_hook(attempt)
     end
     log(string.format("GetTalkText hook attempt %d: armed=%s found=%s", attempt, tostring(armed),
         tostring(ok and uf ~= nil)))
+    -- Speaker-name resolver: hand GetGameTextString's UFunction to the shim so it
+    -- can locate the native impl that turns speaker handles into localized names.
+    local gok, gf = pcall(StaticFindObject, "/Script/Octopath_Traveler.KSTextStatics:GetGameTextString")
+    if gok and gf and gf:IsValid() and shim and shim.InstallGameTextResolver then
+        log("GameText resolver: " .. tostring(shim.InstallGameTextResolver(gf:GetAddress())))
+    end
     if not armed and attempt < 15 then
         ExecuteWithDelay(2000, function() install_talk_hook(attempt + 1) end)
     end

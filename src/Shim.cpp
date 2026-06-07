@@ -24,8 +24,12 @@
 #include <string>
 #include <cstdint>
 #include <cstring>
+#include <cstdio>
 
 #include "MinHook.h"
+extern "C" {
+#include "hde64.h"   // HDE disassembler (bundled with MinHook) -- to locate a UFunction's native impl
+}
 
 extern "C" {
 #include "lua.h"
@@ -62,6 +66,22 @@ std::once_flag            g_init_once;
 // struct bytes directly, no Lua marshalling.
 bool           g_mh_ready  = false;
 std::once_flag g_hooks_once;
+
+// Speaker names: TalkText.Names[0] is an FName HANDLE that is itself a GameText
+// label ("ePLAYABLE_FULL_NAME_02" for a traveler, "CN_*" for chapter NPCs). To
+// get the localized display name we must CALL
+//   void KSTextStatics::GetGameTextString(FName Label, FString& OutText)
+// Lua can't (its FString-return marshalling fails), so we call the native impl
+// from C++: Lua hands us the UFunction address, we find the impl by disassembling
+// the exec (the last in-image CALL), and invoke it (Label in RCX, &OutText in
+// RDX). g_name_out is a reused output FString -- UE owns/reallocates its buffer.
+struct FStringRaw { wchar_t* data; int num; int cap; };
+using FnGetGameTextStr = void (*)(uint64_t /*FName by value*/, void* /*FString**/);
+FnGetGameTextStr g_ggts_impl      = nullptr;   // resolved GetGameTextString impl
+FStringRaw       g_name_out       = { nullptr, 0, 0 };
+uintptr_t        g_ggts_cands[16] = { 0 };     // impl candidates (singly-called in-image targets)
+int              g_ggts_cand_n    = 0;
+bool             g_ggts_searched  = false;     // have we tried the candidates yet?
 
 void init_hooks() {
     g_mh_ready = (MH_Initialize() == MH_OK);
@@ -121,16 +141,118 @@ static void read_frame_cands(void* frame, void** c_mrpa, void** c_locals) {
     } __except (EXCEPTION_EXECUTE_HANDLER) {}
 }
 
+// Disassemble a native exec to find its implementation: the last CALL (E8) whose
+// target lies inside the main module. HDE (bundled with MinHook) decodes the
+// instructions. SEH-guarded; optionally records candidate RVAs for logging.
+static void* find_impl_call(void* exec, uintptr_t* rvas, int* count, int maxr) {
+    void* impl = nullptr;
+    if (count) *count = 0;
+    __try {
+        HMODULE h = GetModuleHandleW(nullptr);
+        uintptr_t base = reinterpret_cast<uintptr_t>(h), size = 0;
+        if (h) {
+            auto dos = reinterpret_cast<IMAGE_DOS_HEADER*>(h);
+            auto nt  = reinterpret_cast<IMAGE_NT_HEADERS*>(reinterpret_cast<BYTE*>(h) + dos->e_lfanew);
+            size = nt->OptionalHeader.SizeOfImage;
+        }
+        uintptr_t p = reinterpret_cast<uintptr_t>(exec);
+        for (int i = 0; i < 100; i++) {
+            hde64s hs;
+            unsigned int len = hde64_disasm(reinterpret_cast<void*>(p), &hs);
+            if ((hs.flags & F_ERROR) || len == 0) break;
+            if (hs.opcode == 0xE8) {                                   // CALL rel32
+                uintptr_t target = p + len + static_cast<int>(hs.imm.imm32);
+                if (size && target >= base && target < base + size) {
+                    impl = reinterpret_cast<void*>(target);            // keep the last in-image call
+                    if (rvas && count && *count < maxr) rvas[(*count)++] = target - base;
+                }
+            }
+            if (hs.opcode == 0xC3 || hs.opcode == 0xC2) break;         // RET
+            p += len;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) { impl = nullptr; }
+    return impl;
+}
+
+// SEH-guarded read of the speaker FName (Names[0], 8 bytes) from a TalkText.
+static uint64_t read_fname0(void* tt) {
+    uint64_t fname = 0;
+    __try {
+        uintptr_t b   = reinterpret_cast<uintptr_t>(tt);
+        void* arrData = *reinterpret_cast<void**>(b + 0x40);   // Names: TArray<FName> data
+        int   arrNum  = *reinterpret_cast<int*>(b + 0x48);     // Names: element count
+        if (arrData && arrNum > 0) fname = *reinterpret_cast<uint64_t*>(arrData);
+    } __except (EXCEPTION_EXECUTE_HANDLER) { fname = 0; }
+    return fname;
+}
+
+// Try calling a candidate as GetGameTextString(FName, FString&). Returns true +
+// the resulting text iff it produced a readable string. SEH-guarded; the local
+// out FString is leaked if allocated (only happens during the one-time search).
+static bool try_candidate(uintptr_t cand, uint64_t fname, wchar_t* buf, int cap, int* outlen) {
+    bool valid = false; *outlen = 0; if (cap > 0) buf[0] = L'\0';
+    __try {
+        FStringRaw lo = { nullptr, 0, 0 };
+        reinterpret_cast<FnGetGameTextStr>(cand)(fname, &lo);
+        if (lo.data && lo.num > 1 && lo.num < 200) {
+            int m = lo.num - 1; if (m > cap - 1) m = cap - 1;
+            bool printable = (m > 0);
+            for (int j = 0; j < m; j++) { wchar_t c = lo.data[j]; buf[j] = c; if (c < 0x20) printable = false; }
+            buf[m] = L'\0';
+            valid = printable;
+            *outlen = valid ? m : 0;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) { valid = false; *outlen = 0; if (cap > 0) buf[0] = L'\0'; }
+    return valid;
+}
+
+// Call the resolved impl into the persistent g_name_out (no per-call leak).
+static int resolve_via(FnGetGameTextStr impl, uint64_t fname, wchar_t* nameBuf, int cap) {
+    int wlen = 0; nameBuf[0] = L'\0';
+    __try {
+        impl(fname, &g_name_out);
+        wchar_t* s = g_name_out.data;
+        int      n = g_name_out.num;
+        if (s && n > 1 && n < 256) {
+            for (int j = 0; j < n - 1 && wlen < cap - 1; j++) nameBuf[wlen++] = s[j];
+        }
+        nameBuf[wlen] = L'\0';
+    } __except (EXCEPTION_EXECUTE_HANDLER) { wlen = 0; nameBuf[0] = L'\0'; }
+    return wlen;
+}
+
+// Resolve Names[0] to the localized display name. On the first real speaker,
+// identify which disassembled candidate is GetGameTextString by trying each (the
+// one returning readable text wins) and cache it. Empty -> no speaker.
+static int read_speaker(void* tt, wchar_t* nameBuf, int cap) {
+    uint64_t fname = read_fname0(tt);
+    if (fname == 0) { nameBuf[0] = L'\0'; return 0; }
+    if (!g_ggts_impl && !g_ggts_searched) {
+        g_ggts_searched = true;
+        wchar_t tmp[128]; int got = 0;
+        for (int i = 0; i < g_ggts_cand_n; i++) {
+            if (try_candidate(g_ggts_cands[i], fname, tmp, 128, &got)) {
+                g_ggts_impl = reinterpret_cast<FnGetGameTextStr>(g_ggts_cands[i]);
+                break;
+            }
+        }
+    }
+    if (g_ggts_impl) return resolve_via(g_ggts_impl, fname, nameBuf, cap);
+    nameBuf[0] = L'\0';
+    return 0;
+}
+
 void capture_talk(void* result, void* frame) {
     void* mrpa = nullptr; void* locals8 = nullptr;
     read_frame_cands(frame, &mrpa, &locals8);
     void* cands[3] = { result, mrpa, locals8 };   // OutText is usually at mrpa
     wchar_t wbuf[2048];
     int wlen = 0;
+    void* talk_base = nullptr;
     for (int i = 0; i < 3; i++) {
         if (cands[i]) {
             wlen = read_talktext_raw(cands[i], wbuf, 2048);
-            if (wlen > 0) break;
+            if (wlen > 0) { talk_base = cands[i]; break; }
         }
     }
     if (wlen <= 0) return;
@@ -144,14 +266,27 @@ void capture_talk(void* result, void* frame) {
     memcpy(s_last, wbuf, (static_cast<size_t>(wlen) + 1) * sizeof(wchar_t));
     s_last_len = wlen;
 
-    // Speak DIRECTLY from the native hook (game thread). This is independent of
-    // the Lua poll loop, which intermittently dies after a chapter load -- when
-    // it did, PollTalk never ran and dialogue was silent. The hook always fires.
-    if (g_tolk_output) g_tolk_output(wbuf, true);
+    // Prepend the speaker (TalkText.Names[0]) as "Name: " when present.
+    wchar_t namebuf[128];
+    int nlen = read_speaker(talk_base, namebuf, 128);
+    wchar_t out[2304];
+    int olen = 0;
+    if (nlen > 0) {
+        for (int j = 0; j < nlen && olen < 2300; j++) out[olen++] = namebuf[j];
+        out[olen++] = L':';
+        out[olen++] = L' ';
+    }
+    for (int j = 0; j < wlen && olen < 2303; j++) out[olen++] = wbuf[j];
+    out[olen] = L'\0';
+
+    // Speak DIRECTLY from the native hook (game thread) -- independent of the Lua
+    // poll loop, which intermittently dies after a chapter load (PollTalk would
+    // then never run). The hook always fires.
+    if (g_tolk_output) g_tolk_output(out, true);
 
     // Also publish for the loop to LOG it (it no longer speaks -> no double-speak).
     char u8[6144];
-    int u = WideCharToMultiByte(CP_UTF8, 0, wbuf, wlen, u8, sizeof(u8) - 1, nullptr, nullptr);
+    int u = WideCharToMultiByte(CP_UTF8, 0, out, olen, u8, sizeof(u8) - 1, nullptr, nullptr);
     if (u <= 0) return;
     std::lock_guard<std::mutex> lk(g_talk_mtx);
     g_last_talk.assign(u8, static_cast<size_t>(u));
@@ -305,6 +440,36 @@ int l_install_talk_hook(lua_State* L) {
                                 reinterpret_cast<void*>(&hk_gtt), reinterpret_cast<void**>(&g_gtt_orig));
     lua_pushboolean(L, ok ? 1 : 0); return 1;
 }
+
+// Resolve GetGameTextString's native impl (for speaker-name lookup) from its
+// UFunction address: read the exec (Func at +0xB0) and find its impl call.
+// Returns a short diagnostic string (impl RVA + candidate count) for logging.
+int l_install_gametext_resolver(lua_State* L) {
+    uintptr_t ufunc = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
+    void* exec = nullptr;
+    if (ufunc >= 0x10000) {
+        __try { exec = *reinterpret_cast<void**>(ufunc + 0xB0); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { exec = nullptr; }
+    }
+    uintptr_t rvas[16]; int cnt = 0;
+    if (exec) find_impl_call(exec, rvas, &cnt, 16);
+    uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    // Keep only singly-called in-image targets as impl candidates: the param-read
+    // machinery is called once per parameter (appears >=2x); the impl is called
+    // exactly once. read_speaker tries these and keeps whichever returns a name.
+    g_ggts_impl = nullptr; g_ggts_searched = false; g_ggts_cand_n = 0;
+    for (int i = 0; i < cnt; i++) {
+        int c = 0; for (int j = 0; j < cnt; j++) if (rvas[j] == rvas[i]) c++;
+        if (c == 1 && g_ggts_cand_n < 16) g_ggts_cands[g_ggts_cand_n++] = base + rvas[i];
+    }
+    char buf[256]; int n = 0;
+    n += std::snprintf(buf + n, sizeof(buf) - n, "calls=%d singles=%d [", cnt, g_ggts_cand_n);
+    for (int i = 0; i < cnt && n < static_cast<int>(sizeof(buf)) - 16; i++)
+        n += std::snprintf(buf + n, sizeof(buf) - n, "%llX ", static_cast<unsigned long long>(rvas[i]));
+    std::snprintf(buf + n, sizeof(buf) - n, "]");
+    lua_pushstring(L, buf);
+    return 1;
+}
 // Returns the last captured dialogue line(s) once, then clears (nil if nothing new).
 int l_poll_talk(lua_State* L) {
     std::lock_guard<std::mutex> lk(g_talk_mtx);
@@ -324,6 +489,7 @@ const luaL_Reg op1access_funcs[] = {
     {"DetectScreenReader",   l_detect},
     {"PreferSAPI",           l_prefer_sapi},
     {"InstallTalkHook",      l_install_talk_hook},
+    {"InstallGameTextResolver", l_install_gametext_resolver},
     {"PollTalk",             l_poll_talk},
     {nullptr, nullptr},
 };
