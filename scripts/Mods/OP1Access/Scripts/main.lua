@@ -1128,12 +1128,14 @@ end
 -- to the poll loop, which will pick it up once the game's Tick finishes
 -- populating the data.
 local function cycle_player_select(direction)
-    if last_polled_class ~= "TitlePlayerSelect_C" then
+    -- Detect char-select via cs_live_instance() (the instance whose cursor reads
+    -- back) -- NOT last_polled_class, which the poll loop sets. When the loop dies
+    -- after a load, the old gate left Page Up/Down dead even on the screen.
+    local instance = cs_live_instance()
+    if not instance then
         speak("Character cycle is only active on character select")
         return
     end
-    local instance = find_visible_instance("TitlePlayerSelect_C")
-    if not instance then return end
 
     local fn_name = (direction > 0) and "SelectDownMove" or "SelectUpMove"
     local called = false
