@@ -60,8 +60,8 @@ M.speak = speak; M.silence = silence; M.log = log
 local SCENE_LABELS = {
     -- Title-screen flow
     UIMainTitle_C            = "Title",
-    TitleMainMenu_00_C       = "Title main menu",
-    TitleMainMenu_01_C       = "Title submenu",
+    TitleMainMenu_00_C       = "Press any button",
+    TitleMainMenu_01_C       = "Title menu",
     TitleOptionScene_C       = "Options",
     TitleLoadScene_C         = "Load game",
     TitlePlayerSelect_C      = "Choose your character",
@@ -127,6 +127,8 @@ local UI_KIND_NAMES = {
 }
 
 local UI_KIND_SUPPRESSED = {
+    [0]  = true,  -- "Title screen": KSUIManager fires it spuriously during loads;
+                  -- the real title is the bespoke UIMainTitle (poll loop -> "Title").
     [27] = true, [103] = true, [104] = true,
 }
 
@@ -381,6 +383,33 @@ safe_register("/Script/Octopath_Traveler.KSUserWidgetBase:UIClose", on_widget_ui
 -- reads).
 local POLL_INTERVAL_MS = 50
 
+-- Screen-announce debounce: a screen SWITCH flickers best_class through several
+-- transient "visible" widgets (cached menus read IsVisible=true the instant
+-- they're constructed during a load/transition), which announced wrong screens
+-- ("Other", "Job status", "Narration message"...). Require best_class to hold
+-- steady for POLL_ANNOUNCE_SETTLE ticks before announcing -- collapsing a switch
+-- to a single announce of the screen it actually lands on.
+local POLL_ANNOUNCE_SETTLE = 4   -- ~200ms at 50ms/tick
+local pending_polled_class = nil
+local pending_polled_n     = 0
+
+-- The poll loop announces ONLY these bespoke title-screen widgets, which are
+-- visibility-toggled with no KS lifecycle event, so nothing else can detect them.
+-- Every in-game menu is announced by the KSUIManager:Open hook instead -- keeping
+-- those OUT of the loop is what stops freshly-constructed cached in-game widgets
+-- from being read out during loads/transitions (the spurious-announce bug).
+local TITLE_FLOW = {
+    -- UIMainTitle_C is intentionally absent: it's the title ROOT, on screen only
+    -- for the boot logo and the (visual-less) load into the prologue -- announcing
+    -- it just produced a stray "Title". The real screens below are what matter.
+    TitleMainMenu_00_C  = true,
+    TitleMainMenu_01_C  = true,
+    TitleOptionScene_C  = true,
+    TitleLoadScene_C    = true,
+    TitlePlayerSelect_C = true,
+    MenuSaveLoad_C      = true,   -- reachable from the title (Continue / Load)
+}
+
 local function widget_is_visible(w)
     -- Use UWidget::IsVisible() — a UFunction that returns true iff the
     -- widget's effective visibility is one of {Visible, HitTestInvisible,
@@ -565,11 +594,10 @@ local function poll_active_menu()
         pcall(function() alive = w and w:IsValid() end)
         if alive then
             kept[#kept + 1] = entry
-            if not CONTAINER_CLASSES[cls] and widget_is_visible(w) then
-                -- Most-recently-added visible widget wins — the diagnostic
-                -- dumps confirmed each title sub-screen is constructed
-                -- after the root container, so the highest-index visible
-                -- entry is the actual active screen.
+            if TITLE_FLOW[cls] and widget_is_visible(w) then
+                -- Most-recently-added visible widget wins — each title sub-screen
+                -- is constructed after the root, so the highest-index visible entry
+                -- is the active screen.
                 if i >= best_idx then
                     best_idx, best_class, best_label = i, cls, label
                 end
@@ -582,13 +610,26 @@ local function poll_active_menu()
     -- announces it and we suppress the underlying screen while it is open.
     if poll_dialog and poll_dialog() then return end
 
-    if best_class and best_class ~= last_polled_class then
-        last_polled_class = best_class
-        last_spoken_class = best_class
-        speak(best_label)
-        cs_coord_mute = CS_COORD_MUTE   -- don't let coords step on the new screen name
+    -- Debounced announce (see POLL_ANNOUNCE_SETTLE): only speak once best_class
+    -- has held steady, so a screen switch's transient widgets aren't each read out.
+    if best_class == last_polled_class then
+        pending_polled_class, pending_polled_n = nil, 0        -- already announced; stable
     elseif not best_class then
-        last_polled_class = nil
+        last_polled_class = nil                                -- nothing visible; allow re-announce
+        pending_polled_class, pending_polled_n = nil, 0
+    else
+        if best_class == pending_polled_class then
+            pending_polled_n = pending_polled_n + 1
+        else
+            pending_polled_class, pending_polled_n = best_class, 1
+        end
+        if pending_polled_n >= POLL_ANNOUNCE_SETTLE then
+            last_polled_class = best_class
+            last_spoken_class = best_class
+            speak(best_label)
+            cs_coord_mute = CS_COORD_MUTE   -- don't let coords step on the new screen name
+            pending_polled_class, pending_polled_n = nil, 0
+        end
     end
 
     -- Per-item polling for menus where we have a selection-index property.
