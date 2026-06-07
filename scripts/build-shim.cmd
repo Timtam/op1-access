@@ -12,6 +12,7 @@ set LUASRC=%REPO%\tools\ue4ss-src\deps\first\LuaRaw\src
 set LUAINC=%REPO%\tools\ue4ss-src\deps\first\LuaRaw\include
 set TOLKSRC=%REPO%\tools\tolk-src\src
 set BUILD=%REPO%\build\shim
+set MINHOOK=%REPO%\tools\minhook
 set TOLK_OUT=%BUILD%\Tolk.dll
 set SHIM_OUT=%BUILD%\OP1AccessShim.dll
 set GAME_MODS=C:\Program Files (x86)\Steam\steamapps\common\OCTOPATH TRAVELER\Octopath_Traveler\Binaries\Win64\Mods\OP1Access
@@ -28,6 +29,11 @@ if not exist "%TOLKSRC%\Tolk.cpp" (
 )
 if not exist "%NVDA_DLL%" (
     echo [build] nvdaControllerClient64.dll missing at "%NVDA_DLL%".
+    exit /b 1
+)
+if not exist "%MINHOOK%\src\hook.c" (
+    echo [build] MinHook not found at "%MINHOOK%". Fetch it:
+    echo         git clone --depth 1 https://github.com/TsudaKageyu/minhook tools\minhook
     exit /b 1
 )
 
@@ -92,8 +98,10 @@ for %%F in (lapi.c lauxlib.c lbaselib.c lcode.c lcorolib.c lctype.c ldblib.c lde
 )
 
 cl /nologo /MD /O2 /EHsc /std:c++20 ^
-   /I"%LUAINC%" /I"%LUASRC%" ^
+   /I"%LUAINC%" /I"%LUASRC%" /I"%MINHOOK%\include" ^
    "%REPO%\src\Shim.cpp" %LUASRCS% ^
+   "%MINHOOK%\src\buffer.c" "%MINHOOK%\src\hook.c" "%MINHOOK%\src\trampoline.c" ^
+   "%MINHOOK%\src\hde\hde32.c" "%MINHOOK%\src\hde\hde64.c" ^
    /link /DLL ^
    /OUT:"%SHIM_OUT%" ^
    /IMPLIB:"%BUILD%\OP1AccessShim.lib" ^

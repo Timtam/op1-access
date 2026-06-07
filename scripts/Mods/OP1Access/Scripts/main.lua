@@ -517,7 +517,9 @@ local function poll_title_selection(active_cls)
 
     local sel = nil
     pcall(function() sel = instance.Select end)
-    if sel == nil then return end
+    -- Some menus' Select is a UObject, not an index; %d-formatting it later
+    -- threw every tick in-game. Only proceed for a real numeric index.
+    if type(sel) ~= "number" then return end
 
     local owner_changed = (active_cls ~= last_select_owner)
     local value_changed = (sel ~= last_select_value)
@@ -592,8 +594,21 @@ end
 
 -- Fire-and-forget polling loop. Wrap each tick in pcall: a Lua error
 -- inside LoopAsync would otherwise stop subsequent ticks (or worse).
+local talk_dbg = 0
 local ok_loop = pcall(LoopAsync, POLL_INTERVAL_MS, function()
     pcall(poll_active_menu)
+    -- Speak each story/dialogue line captured by the native GetTalkText hook.
+    if shim and shim.PollTalk then
+        local t = shim.PollTalk()
+        if t and t ~= "" then log("STORY: " .. t); speak(t) end
+    end
+    -- DIAGNOSTIC (~2s): GetTalkText hook fire-count, so I can tell loop-alive +
+    -- hook-firing from "didn't reach the prologue".
+    talk_dbg = talk_dbg + 1
+    if talk_dbg % 40 == 0 and shim and shim.TextCounts then
+        local g = shim.TextCounts()
+        log("GTT fired: " .. tostring(g))
+    end
 end)
 log("Polling loop started: " .. tostring(ok_loop))
 
@@ -1346,6 +1361,21 @@ pcall(RegisterKeyBind, Key.F10, { ModifierKey.CONTROL }, function()
         speak(SCENE_LABELS[last_spoken_class] or last_spoken_class)
     else
         speak("No menu detected")
+    end
+end)
+
+-- Install the native GetTalkText hook (in C++, via the shim) so story/dialogue
+-- text is spoken in the player's language. Lua locates the UFunction; the shim
+-- hooks its native exec (UFunction::Func at +0xB0) and reads the localized
+-- OutText struct by offset -- the only path that works, since UE4SS's Lua
+-- RegisterHook crashes on this function's struct out-param. A short delay lets
+-- KSTextStatics finish loading.
+ExecuteWithDelay(4000, function()
+    local ok, uf = pcall(StaticFindObject, "/Script/Octopath_Traveler.KSTextStatics:GetTalkText")
+    if ok and uf and uf:IsValid() and shim and shim.InstallTalkHook then
+        log("GetTalkText hook armed: " .. tostring(shim.InstallTalkHook(uf:GetAddress())))
+    else
+        log("GetTalkText hook: UFunction not found")
     end
 end)
 
