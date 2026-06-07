@@ -24,6 +24,8 @@
 #include <string>
 #include <cstdint>
 #include <cstring>
+
+#include "SpatialAudio.h"
 #include <cstdio>
 
 #include "MinHook.h"
@@ -482,6 +484,21 @@ int l_poll_talk(lua_State* L) {
     return 1;
 }
 
+// ---- Spatial audio (phase 4 / Pillar A): Steam Audio HRTF beacons ----
+int l_audio_init(lua_State* L)     { lua_pushboolean(L, SA_Init()); return 1; }
+int l_audio_shutdown(lua_State* L) { SA_Shutdown(); return 0; }
+int l_audio_status(lua_State* L)   { lua_pushstring(L, SA_Status()); return 1; }
+int l_audio_test(lua_State* L)     { SA_TestTone((int)luaL_checkinteger(L, 1)); return 0; }
+int l_audio_set_listener(lua_State* L) {
+    SA_SetListener((float)luaL_checknumber(L, 1), (float)luaL_checknumber(L, 2), (float)luaL_checknumber(L, 3));
+    return 0;
+}
+int l_audio_set_source(lua_State* L) {
+    SA_SetSource((int)luaL_checkinteger(L, 1), lua_toboolean(L, 2),
+                 (float)luaL_checknumber(L, 3), (float)luaL_checknumber(L, 4), (float)luaL_checknumber(L, 5));
+    return 0;
+}
+
 const luaL_Reg op1access_funcs[] = {
     {"Speak",                l_speak},
     {"Silence",              l_silence},
@@ -491,6 +508,12 @@ const luaL_Reg op1access_funcs[] = {
     {"InstallTalkHook",      l_install_talk_hook},
     {"InstallGameTextResolver", l_install_gametext_resolver},
     {"PollTalk",             l_poll_talk},
+    {"AudioInit",            l_audio_init},
+    {"AudioShutdown",        l_audio_shutdown},
+    {"AudioStatus",          l_audio_status},
+    {"AudioTest",            l_audio_test},
+    {"AudioSetListener",     l_audio_set_listener},
+    {"AudioSetSource",       l_audio_set_source},
     {nullptr, nullptr},
 };
 

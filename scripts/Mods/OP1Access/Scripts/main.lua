@@ -1491,6 +1491,258 @@ pcall(RegisterKeyBind, Key.F10, { ModifierKey.CONTROL }, function()
     end
 end)
 
+-- ===== Overworld (phase 4): field-command interaction read-out =====
+-- FieldCommandManagerBP_C.ActiveCommandType (byte[] of KSFIeldCommandType) lists
+-- what you can DO at your current spot -- talk/examine plus path actions (steal,
+-- inquire, purchase, ...). ActiveCommandList holds the matching FieldCommandEvent
+-- objects (which carry the target). PROBE: a key that reads + speaks the types, to
+-- confirm the data path before wiring an automatic "you can interact" announce.
+-- Ctrl+F9 chosen for zero game-control conflict; we'll pick an ergonomic key once
+-- it's proven.
+local FIELD_CMD_NAME = {
+    [0] = "Talk", [1] = "Purchase", [2] = "Steal", [3] = "Challenge",
+    [4] = "Provoke", [5] = "Blessing", [6] = "Guide", [7] = "Examine", [8] = "Inquire",
+}
+local fcmd_mgr = nil
+local function get_fcmd_mgr()
+    if fcmd_mgr and fcmd_mgr:IsValid() then return fcmd_mgr, "cache" end
+    fcmd_mgr = nil
+    pcall(function()
+        local cdo = StaticFindObject("/Script/Octopath_Traveler.Default__FieldCommandManager")
+        if cdo then fcmd_mgr = cdo:GetInstance() end
+    end)
+    if fcmd_mgr and fcmd_mgr:IsValid() then return fcmd_mgr, "GetInstance" end
+    fcmd_mgr = nil
+    pcall(function() fcmd_mgr = FindFirstOf("FieldCommandManagerBP_C") end)
+    if fcmd_mgr and fcmd_mgr:IsValid() then return fcmd_mgr, "FindFirstOf" end
+    fcmd_mgr = nil
+    return nil, "none"
+end
+local function read_active_commands(mgr)
+    local names, raw = {}, {}
+    pcall(function()
+        local arr = mgr.ActiveCommandType
+        if arr and arr.ForEach then
+            arr:ForEach(function(_, v)
+                local b
+                pcall(function() b = v:get() end)
+                if type(b) ~= "number" then pcall(function() b = v end) end
+                if type(b) == "number" then
+                    raw[#raw + 1] = b
+                    names[#names + 1] = FIELD_CMD_NAME[b] or ("command " .. b)
+                end
+            end)
+        end
+    end)
+    return names, raw
+end
+local function announce_interactions()
+    local mgr, how = get_fcmd_mgr()
+    if not mgr then log("FCMD: no manager"); speak("No interaction here"); return end
+    local names, raw = read_active_commands(mgr)
+    log(string.format("FCMD via %s: n=%d types=[%s]", how, #raw, table.concat(raw, ",")))
+    if #names == 0 then speak("Nothing to interact with"); return end
+    speak(table.concat(names, ", "))
+end
+do
+    local ok = pcall(RegisterKeyBind, Key.F9, { ModifierKey.CONTROL }, announce_interactions)
+    log("Bound interaction query (Ctrl+F9): " .. tostring(ok))
+end
+
+-- ===== Overworld foundations probe (phase 4): player + object positions =====
+-- Proves the data path for spatial beacons + pathfinding BEFORE building the Steam
+-- Audio engine: get the player object (KSCharacterFunction/Manager:GetPlayerObject
+-- -> KSCharacterBase, an OBJECT return so no struct-marshalling wall), read its
+-- world position via RootComponent.RelativeLocation (a PROPERTY read -- the safe
+-- path that worked for char-select), enumerate a couple of object categories
+-- on-demand via FindAllOf(SPECIFIC class) (never per-frame), read their positions,
+-- and speak the nearest one's direction + distance. The direction frame + distance
+-- scale are UNCALIBRATED here -- the log prints raw player/nearest deltas so we can
+-- calibrate from one field test (same way the char-select axes were fixed). Ctrl+F8.
+local NAV_CLASSES = {
+    { cls = "TreasureBoxBP_C",   name = "chest" },
+    { cls = "LevelTriggerActor", name = "exit" },
+}
+local function read_actor_pos(obj)
+    if not obj then return nil end
+    local x, y, z
+    pcall(function()
+        local rc = obj.RootComponent
+        if rc then local l = rc.RelativeLocation; x, y, z = l.X, l.Y, l.Z end
+    end)
+    if type(x) == "number" then return x, y, z, "rootcomp" end
+    x = nil
+    pcall(function() local l = obj:K2_GetActorLocation(); x, y, z = l.X, l.Y, l.Z end)
+    if type(x) == "number" then return x, y, z, "k2loc" end
+    return nil
+end
+local function get_player_obj()
+    local p = nil
+    pcall(function()
+        local cdo = StaticFindObject("/Script/Octopath_Traveler.Default__KSCharacterFunction")
+        if cdo then p = cdo:GetPlayerObject() end
+    end)
+    if p and p:IsValid() then return p, "charfunc" end
+    p = nil
+    pcall(function()
+        local cdo = StaticFindObject("/Script/Octopath_Traveler.Default__KSCharacterManager")
+        if cdo then local mgr = cdo:GetInstance(); if mgr then p = mgr:GetPlayerObject() end end
+    end)
+    if p and p:IsValid() then return p, "charmgr" end
+    return nil, "none"
+end
+-- Calibrated 2026-06-07 (held each arrow ~2s, watched the world delta): movement
+-- is world-axis-aligned, and the axes are SWAPPED vs screen intuition --
+-- world X = the UP/DOWN arrow axis (UP=+X, DOWN=-X); world Y = the LEFT/RIGHT
+-- arrow axis (RIGHT=+Y, LEFT=-Y). So a target's world (dx,dy) maps straight to the
+-- arrow keys to press.
+local function nav_dir(dx, dy)
+    local ax, ay = math.abs(dx), math.abs(dy)
+    local parts = {}
+    if ax >= 0.4 * ay then parts[#parts + 1] = (dx > 0) and "up" or "down" end
+    if ay >= 0.4 * ax then parts[#parts + 1] = (dy > 0) and "right" or "left" end
+    if #parts == 0 then return "here" end
+    return table.concat(parts, " ")
+end
+local nav_last_px, nav_last_py = nil, nil
+local function nav_probe()
+    local p, phow = get_player_obj()
+    if not p then log("NAV: no player object"); speak("No player position"); return end
+    local px, py, pz, pposhow = read_actor_pos(p)
+    if not px then log("NAV: player pos unreadable (" .. phow .. ")"); speak("Player position unreadable"); return end
+    log(string.format("NAV player via %s/%s = (%.0f, %.0f, %.0f)", phow, pposhow or "?", px, py, pz))
+    if nav_last_px then
+        log(string.format("NAVDELTA since last Ctrl+F8: dX=%.0f dY=%.0f", px - nav_last_px, py - nav_last_py))
+    end
+    nav_last_px, nav_last_py = px, py
+    local bestd, bestcat, bdx, bdy
+    for _, c in ipairs(NAV_CLASSES) do
+        local list = nil
+        pcall(function() list = FindAllOf(c.cls) end)
+        local n, near = 0, nil
+        if list then
+            for _, o in pairs(list) do
+                local okv = false
+                pcall(function() okv = o and o:IsValid() end)
+                if okv then
+                    local ox, oy = read_actor_pos(o)
+                    if ox then
+                        n = n + 1
+                        local dx, dy = ox - px, oy - py
+                        local d = math.sqrt(dx * dx + dy * dy)
+                        if not near or d < near then near = d end
+                        if not bestd or d < bestd then bestd, bestcat, bdx, bdy = d, c.name, dx, dy end
+                    end
+                end
+            end
+        end
+        log(string.format("NAV %s: list=%s readable=%d nearest=%s", c.name,
+            list and "ok" or "nil", n, near and string.format("%.0f", near) or "-"))
+    end
+    if not bestd then speak("No chests or exits found"); return end
+    log(string.format("NAV nearest=%s d=%.0f dx=%.0f dy=%.0f", bestcat, bestd, bdx, bdy))
+    speak(string.format("%s, %s, distance %d", bestcat, nav_dir(bdx, bdy), math.floor(bestd + 0.5)))
+end
+do
+    local ok = pcall(RegisterKeyBind, Key.F8, { ModifierKey.CONTROL }, nav_probe)
+    log("Bound nav probe (Ctrl+F8): " .. tostring(ok))
+end
+
+-- ===== Spatial-audio test (phase 4 / Pillar A): isolate HRTF direction =====
+-- Ctrl+F7 cycles a continuous test tone right -> left -> front -> back -> off via
+-- the shim's Steam Audio engine. Confirms audio comes out of the shim in-process
+-- AND that the direction is audible, before we drive sources from object positions.
+local audio_inited = false
+local audio_test_dir = 4
+local AUDIO_DIR_NAME = { [0] = "right", [1] = "left", [2] = "front", [3] = "back", [4] = "off" }
+local function audio_test_cycle()
+    if not (shim and shim.AudioInit) then speak("Audio module not loaded"); return end
+    if not audio_inited then
+        local ok = false
+        pcall(function() ok = shim.AudioInit() end)
+        audio_inited = ok and true or false
+        local st = "?"; pcall(function() st = shim.AudioStatus() end)
+        log("AudioInit: " .. tostring(ok) .. " status=" .. tostring(st))
+        if not audio_inited then speak("Audio init failed: " .. tostring(st)); return end
+    end
+    audio_test_dir = (audio_test_dir + 1) % 5
+    pcall(function() shim.AudioTest(audio_test_dir) end)
+    speak("tone " .. (AUDIO_DIR_NAME[audio_test_dir] or "?"))
+end
+do
+    local ok = pcall(RegisterKeyBind, Key.F7, { ModifierKey.CONTROL }, audio_test_cycle)
+    log("Bound audio test (Ctrl+F7): " .. tostring(ok))
+end
+
+-- ===== Live beacon (phase 4 / Pillar A milestone 2): nearest object tracks you =====
+-- Ctrl+F6 toggles a beacon on the nearest chest/exit. On start we enumerate the
+-- categories once (objects are static, so cache their positions); an ExecuteWithDelay
+-- self-loop (~120ms, generation-guarded so toggling cancels cleanly) feeds the
+-- player position as the Steam Audio listener and the nearest object as source 0,
+-- so the cue pans + swells as you walk. Re-toggle after a map change to rescan.
+local beacon_on  = false
+local beacon_gen = 0
+local beacon_objs = {}
+local function beacon_rescan()
+    beacon_objs = {}
+    for _, c in ipairs(NAV_CLASSES) do
+        local list = nil
+        pcall(function() list = FindAllOf(c.cls) end)
+        if list then
+            for _, o in pairs(list) do
+                local okv = false
+                pcall(function() okv = o and o:IsValid() end)
+                if okv then
+                    local x, y, z = read_actor_pos(o)
+                    if x then beacon_objs[#beacon_objs + 1] = { x = x, y = y, z = z, cat = c.name } end
+                end
+            end
+        end
+    end
+    log("BEACON rescan: " .. #beacon_objs .. " objects")
+end
+local function beacon_tick(mygen)
+    if not beacon_on or mygen ~= beacon_gen then return end
+    local p = get_player_obj()
+    local px, py, pz
+    if p then px, py, pz = read_actor_pos(p) end
+    if px then
+        pcall(function() shim.AudioSetListener(px, py, pz) end)
+        local bd, bx, by, bz
+        for _, o in ipairs(beacon_objs) do
+            local dx, dy = o.x - px, o.y - py
+            local d = dx * dx + dy * dy
+            if not bd or d < bd then bd, bx, by, bz = d, o.x, o.y, o.z end
+        end
+        if bd then pcall(function() shim.AudioSetSource(0, true, bx, by, bz) end) end
+    end
+    ExecuteWithDelay(120, function() beacon_tick(mygen) end)
+end
+local function beacon_toggle()
+    if not (shim and shim.AudioInit) then speak("Audio module not loaded"); return end
+    if beacon_on then
+        beacon_on = false; beacon_gen = beacon_gen + 1
+        pcall(function() shim.AudioSetSource(0, false, 0, 0, 0) end)
+        speak("Beacon off")
+        return
+    end
+    if not audio_inited then
+        local ok = false; pcall(function() ok = shim.AudioInit() end)
+        audio_inited = ok and true or false
+        if not audio_inited then speak("Audio init failed"); return end
+    end
+    beacon_rescan()
+    if #beacon_objs == 0 then speak("No objects found to beacon"); return end
+    beacon_gen = beacon_gen + 1
+    beacon_on = true
+    speak(string.format("Beacon on, %d objects", #beacon_objs))
+    beacon_tick(beacon_gen)
+end
+do
+    local ok = pcall(RegisterKeyBind, Key.F6, { ModifierKey.CONTROL }, beacon_toggle)
+    log("Bound beacon toggle (Ctrl+F6): " .. tostring(ok))
+end
+
 -- Install the native GetTalkText hook (in C++, via the shim) so story/dialogue
 -- text is spoken in the player's language. Lua locates the UFunction; the shim
 -- hooks its native exec (UFunction::Func at +0xB0) and reads the localized

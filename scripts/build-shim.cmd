@@ -13,9 +13,14 @@ set LUAINC=%REPO%\tools\ue4ss-src\deps\first\LuaRaw\include
 set TOLKSRC=%REPO%\tools\tolk-src\src
 set BUILD=%REPO%\build\shim
 set MINHOOK=%REPO%\tools\minhook
+set STEAMAUDIO=%REPO%\tools\steamaudio
+set MINIAUDIO=%REPO%\tools\miniaudio
 set TOLK_OUT=%BUILD%\Tolk.dll
 set SHIM_OUT=%BUILD%\OP1AccessShim.dll
 set GAME_MODS=C:\Program Files (x86)\Steam\steamapps\common\OCTOPATH TRAVELER\Octopath_Traveler\Binaries\Win64\Mods\OP1Access
+:: Win64 (game exe dir) -- phonon.dll must live here so the shim's implicit
+:: dependency on it resolves at load time (Scripts\ is NOT on the DLL search path).
+for %%I in ("%GAME_MODS%\..\..") do set "GAME_BIN=%%~fI"
 set NVDA_DLL=%REPO%\tools\tolk-src\libs\x64\nvdaControllerClient64.dll
 set SAAPI_DLL=%REPO%\tools\tolk-src\libs\x64\SAAPI64.dll
 
@@ -34,6 +39,17 @@ if not exist "%NVDA_DLL%" (
 if not exist "%MINHOOK%\src\hook.c" (
     echo [build] MinHook not found at "%MINHOOK%". Fetch it:
     echo         git clone --depth 1 https://github.com/TsudaKageyu/minhook tools\minhook
+    exit /b 1
+)
+if not exist "%STEAMAUDIO%\lib\windows-x64\phonon.lib" (
+    echo [build] Steam Audio SDK not found at "%STEAMAUDIO%". Fetch steamaudio_4.8.1.zip from
+    echo         github.com/ValveSoftware/steam-audio/releases and copy its include\ and
+    echo         lib\windows-x64\ into tools\steamaudio\.
+    exit /b 1
+)
+if not exist "%MINIAUDIO%\miniaudio.h" (
+    echo [build] miniaudio.h not found at "%MINIAUDIO%". Fetch it from
+    echo         raw.githubusercontent.com/mackron/miniaudio/master/miniaudio.h
     exit /b 1
 )
 
@@ -99,13 +115,14 @@ for %%F in (lapi.c lauxlib.c lbaselib.c lcode.c lcorolib.c lctype.c ldblib.c lde
 
 cl /nologo /MD /O2 /EHsc /std:c++20 ^
    /I"%LUAINC%" /I"%LUASRC%" /I"%MINHOOK%\include" /I"%MINHOOK%\src\hde" ^
-   "%REPO%\src\Shim.cpp" %LUASRCS% ^
+   /I"%STEAMAUDIO%\include" /I"%MINIAUDIO%" ^
+   "%REPO%\src\Shim.cpp" "%REPO%\src\SpatialAudio.cpp" %LUASRCS% ^
    "%MINHOOK%\src\buffer.c" "%MINHOOK%\src\hook.c" "%MINHOOK%\src\trampoline.c" ^
    "%MINHOOK%\src\hde\hde32.c" "%MINHOOK%\src\hde\hde64.c" ^
    /link /DLL ^
    /OUT:"%SHIM_OUT%" ^
    /IMPLIB:"%BUILD%\OP1AccessShim.lib" ^
-   advapi32.lib user32.lib
+   advapi32.lib user32.lib ole32.lib "%STEAMAUDIO%\lib\windows-x64\phonon.lib"
 
 if errorlevel 1 (
     echo [build] Shim build failed.
@@ -124,6 +141,10 @@ copy /Y "%SHIM_OUT%" "%GAME_MODS%\Scripts\OP1AccessShim.dll" >nul || (
 )
 copy /Y "%TOLK_OUT%" "%GAME_MODS%\Scripts\Tolk.dll" >nul || (
     echo [build] Copy Tolk failed.
+    exit /b 1
+)
+copy /Y "%STEAMAUDIO%\lib\windows-x64\phonon.dll" "%GAME_BIN%\phonon.dll" >nul || (
+    echo [build] Copy phonon.dll failed.
     exit /b 1
 )
 copy /Y "%NVDA_DLL%" "%GAME_MODS%\Scripts\nvdaControllerClient64.dll" >nul
