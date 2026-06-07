@@ -1177,6 +1177,36 @@ do
     end
 end
 
+-- Shared one-shot char-select announce: speaks the hovered traveler (when on
+-- one), else the cursor cell. Deduped via cs_last_char/cs_last_cell so it can be
+-- driven by BOTH the poll loop and the arrow keys with no double-speak -- and so
+-- the arrow keys keep char-select working when the poll loop has died. Carries no
+-- loop-tick state (no settle/gap, no cs_coord_mute), so it is safe from a keybind.
+local function cs_announce(instance, x, y)
+    if not instance or not x or not y then return end
+    local finding = false
+    pcall(function() finding = (instance.FindingPlayer == true) end)
+    local panel
+    pcall(function() panel = instance.PlayerPanel_147 end)
+    local name = panel and read_text_block(panel, "NameText") or nil
+    local cx, cy = math.floor(x + 0.5), math.floor(y + 0.5)
+    local cell = string.format("%d,%d", cx, cy)
+    if finding and not is_placeholder_name(name) then
+        if name ~= cs_last_char then
+            cs_last_char = name
+            cs_last_cell = cell          -- don't read the arrival coords over the name
+            local s = build_player_panel_string(panel) or name
+            if s and s ~= "" then speak(s) end
+        end
+    else
+        cs_last_char = nil
+        if cell ~= cs_last_cell then
+            cs_last_cell = cell
+            speak(string.format("%d, %d", cx, cy))
+        end
+    end
+end
+
 -- Arrow keybinds. Jobs: (1) diagnostic KEY log; (2) NO-OP FEEDBACK with a
 -- reason -- the cursor has momentum, so reversing direction stalls ~3-4 presses
 -- (and map edges block it). When a press moves the cursor zero distance we say
@@ -1231,6 +1261,8 @@ local function on_arrow_log(kname)
         if cx2 == px and cy2 == py then                  -- cursor never moved
             local label = (cs_move_key and pressed == CS_OPP[cs_move_key]) and "reversing" or "blocked"
             speak(string.format("%s, %d, %d", label, cx2, cy2))
+        else
+            cs_announce(i2, x2, y2)       -- moved: announce where we landed (works w/o the loop)
         end
     end)
 end
