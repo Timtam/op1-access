@@ -600,7 +600,7 @@ local ok_loop = pcall(LoopAsync, POLL_INTERVAL_MS, function()
     -- Speak each story/dialogue line captured by the native GetTalkText hook.
     if shim and shim.PollTalk then
         local t = shim.PollTalk()
-        if t and t ~= "" then log("STORY: " .. t); speak(t) end
+        if t and t ~= "" then log("STORY: " .. t) end  -- spoken by the native hook; loop only logs
     end
     -- DIAGNOSTIC (~2s): GetTalkText hook fire-count, so I can tell loop-alive +
     -- hook-firing from "didn't reach the prologue".
@@ -1370,13 +1370,21 @@ end)
 -- OutText struct by offset -- the only path that works, since UE4SS's Lua
 -- RegisterHook crashes on this function's struct out-param. A short delay lets
 -- KSTextStatics finish loading.
-ExecuteWithDelay(4000, function()
+-- RETRY until armed: dialogue reading was intermittent per-launch (works on a
+-- later try), consistent with the UFunction / reflection not being ready at one
+-- fixed delay. Re-attempt every 2s until the hook arms, then stop.
+local function install_talk_hook(attempt)
+    local armed = false
     local ok, uf = pcall(StaticFindObject, "/Script/Octopath_Traveler.KSTextStatics:GetTalkText")
     if ok and uf and uf:IsValid() and shim and shim.InstallTalkHook then
-        log("GetTalkText hook armed: " .. tostring(shim.InstallTalkHook(uf:GetAddress())))
-    else
-        log("GetTalkText hook: UFunction not found")
+        armed = shim.InstallTalkHook(uf:GetAddress()) and true or false
     end
-end)
+    log(string.format("GetTalkText hook attempt %d: armed=%s found=%s", attempt, tostring(armed),
+        tostring(ok and uf ~= nil)))
+    if not armed and attempt < 15 then
+        ExecuteWithDelay(2000, function() install_talk_hook(attempt + 1) end)
+    end
+end
+ExecuteWithDelay(2000, function() install_talk_hook(1) end)
 
 return M

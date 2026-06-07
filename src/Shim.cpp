@@ -22,6 +22,7 @@
 #include <string>
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
 
 #include "MinHook.h"
 
@@ -148,6 +149,21 @@ void capture_talk(void* result, void* frame) {
     }
     if (wlen <= 0) return;
     wbuf[wlen] = L'\0';
+
+    // Dedup consecutive identical lines (the game re-fetches the same line).
+    // Only the hook calls this, so a static buffer is single-threaded.
+    static wchar_t s_last[2048]; static int s_last_len = -1;
+    if (wlen == s_last_len &&
+        memcmp(wbuf, s_last, static_cast<size_t>(wlen) * sizeof(wchar_t)) == 0) return;
+    memcpy(s_last, wbuf, (static_cast<size_t>(wlen) + 1) * sizeof(wchar_t));
+    s_last_len = wlen;
+
+    // Speak DIRECTLY from the native hook (game thread). This is independent of
+    // the Lua poll loop, which intermittently dies after a chapter load -- when
+    // it did, PollTalk never ran and dialogue was silent. The hook always fires.
+    if (g_tolk_output) g_tolk_output(wbuf, true);
+
+    // Also publish for the loop to LOG it (it no longer speaks -> no double-speak).
     char u8[6144];
     int u = WideCharToMultiByte(CP_UTF8, 0, wbuf, wlen, u8, sizeof(u8) - 1, nullptr, nullptr);
     if (u <= 0) return;
