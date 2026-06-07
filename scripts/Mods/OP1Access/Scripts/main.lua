@@ -782,14 +782,18 @@ local cs_pos_diag       = nil  -- (deferred hint) bounding-box diagonal
 local cs_min_sep        = nil  -- (deferred hint) min pairwise distance
 local cs_learned_names  = {}   -- (deferred hint) traveler index -> name
 local cs_known          = {}   -- learned traveler name -> {sx,sy,n} position centroid
--- Anchor (ItemPlayerPosition) <-> cursor-space mapping. Measured from a full
--- cycle-through: the anchor frame is the cursor frame point-reflected (180 deg)
--- about an offset, i.e. cursor = (bx - anchor.x, by - anchor.y). Each anchor's
--- PlayerName (ePLAYABLE_CHARA_NAME_0X) gives the enum index -> traveler.
+local cs_cursor_pos            -- forward decl (defined below; Page Up/Down learns via it)
+-- Anchor (ItemPlayerPosition) -> cursor-space mapping. Measured from a full
+-- cycle-through (all 8 travelers): the anchor frame equals the cursor frame
+-- shifted by a CONSTANT, i.e. cursor = (anchor.x + 12, anchor.y - 24). Delta x
+-- was exactly +12 for every traveler, delta y -24/-25 -- so the anchors ARE the
+-- travelers' cursor-space positions plus the cursor's fixed resting offset. This
+-- is why the nearest guide can know all 8 at screen-open with no navigation.
+-- Each anchor's PlayerName (ePLAYABLE_CHARA_NAME_0X) gives enum index -> traveler.
 local CS_ANCHOR_NAME = { [0] = "Ophilia", [1] = "Cyrus", [2] = "Tressa", [3] = "Olberic",
                          [4] = "Primrose", [5] = "Alfyn", [6] = "Therion", [7] = "H'aanit" }
 local CS_NAME_IDX = {}; for i, n in pairs(CS_ANCHOR_NAME) do CS_NAME_IDX[n] = i end
-local CS_DEF_BX, CS_DEF_BY = 90, -79   -- default offset; refined at runtime from hovers
+local CS_ANCHOR_OFF_X, CS_ANCHOR_OFF_Y = 12, -24  -- cursor = anchor + this (measured, all 8)
 
 local function is_placeholder_name(name)
     return not name or name == "" or name == "1234"
@@ -1079,6 +1083,12 @@ poll_character_select = function()
 
     if cs_coord_mute > 0 then cs_coord_mute = cs_coord_mute - 1 end
 
+    -- Character / coordinate announce is now handled by the OnCursor* hooks
+    -- (correct instance, event-driven). Skip the poll-driven announce to avoid
+    -- double-speak / wrong-instance reads. (Heartbeat + anchor load above still
+    -- run, for the nearest-character guide.)
+    do return end
+
     local finding = false
     pcall(function() finding = (instance.FindingPlayer == true) end)
     local panel
@@ -1222,6 +1232,27 @@ local function cycle_player_select(direction)
     -- traveler doesn't read out over the character name.
     cs_last_char = name
     cs_coord_mute = CS_COORD_MUTE
+
+    -- Page Up/Down lands the cursor ON the cycled-to traveler, so this doubles as
+    -- the position-learning pass for the N-key nearest guide: once the jump
+    -- settles, record the cursor position under this traveler's name. Paging
+    -- through the roster once teaches N everyone -- no manual map hunting. Guard
+    -- with the name (skip if the user has already paged on) so fast paging never
+    -- files a mid-jump position under the wrong traveler.
+    local learn_name = name
+    ExecuteWithDelay(300, function()
+        local live = cs_live_instance()
+        if not live then return end
+        local panel2 = nil
+        pcall(function() panel2 = live.PlayerPanel_147 end)
+        local now_name = panel2 and read_text_block(panel2, "NameText") or nil
+        if now_name ~= learn_name then return end
+        local x, y = cs_cursor_pos(live)
+        if not x or not y then return end
+        local kk = cs_known[learn_name]
+        if not kk then kk = { sx = 0, sy = 0, n = 0 }; cs_known[learn_name] = kk end
+        kk.sx, kk.sy, kk.n = kk.sx + x, kk.sy + y, kk.n + 1
+    end)
 end
 
 do
@@ -1253,6 +1284,11 @@ local function cs_announce(instance, x, y)
     local cx, cy = math.floor(x + 0.5), math.floor(y + 0.5)
     local cell = string.format("%d,%d", cx, cy)
     if finding and not is_placeholder_name(name) then
+        -- Learn this traveler's cursor position (in the current cursor space) so the
+        -- nearest-character guide (N) can point to it. Averaged over visits.
+        local kk = cs_known[name]
+        if not kk then kk = { sx = 0, sy = 0, n = 0 }; cs_known[name] = kk end
+        kk.sx, kk.sy, kk.n = kk.sx + x, kk.sy + y, kk.n + 1
         if name ~= cs_last_char then
             cs_last_char = name
             cs_last_cell = cell          -- don't read the arrival coords over the name
@@ -1285,6 +1321,7 @@ local cs_move_key   = nil  -- last arrow that produced steady movement
 local cs_pp_x, cs_pp_y = nil, nil  -- previous press cursor pos (numbers)
 local cs_key_delta  = {}   -- arrow -> {dx,dy} sign of the world movement it causes
 local function on_arrow_log(kname)
+    do return end   -- superseded by the OnCursor* hooks (correct instance + event-driven)
     if dlg_visible then return end          -- a confirm dialog owns the keys; stay quiet
     local inst, x, y = cs_live_instance()
     if not inst or not x or not y then return end
@@ -1345,11 +1382,12 @@ end
 -- axis orientation -- plus the traveler's coordinates.
 local CS_KEYWORD = { UP_ARROW = "up", DOWN_ARROW = "down",
                      LEFT_ARROW = "left", RIGHT_ARROW = "right" }
--- Default arrow->direction mapping measured from the logs (UP=+Y, DOWN=-Y,
--- LEFT=+X, RIGHT=-X). Used until your movement learns it (cs_key_delta, which
--- overrides) so the guide always has real directions -- never "move toward".
-local CS_KEY_DEFAULT = { UP_ARROW = { dx = 0, dy = 1 }, DOWN_ARROW = { dx = 0, dy = -1 },
-                         LEFT_ARROW = { dx = 1, dy = 0 }, RIGHT_ARROW = { dx = -1, dy = 0 } }
+-- Arrow->direction mapping for the full-map cursor space (cs_cursor_pos = on-screen
+-- cursor MINUS map scroll, which negates BOTH axes vs the raw scroll the old table
+-- was measured against): RIGHT=+X, LEFT=-X, DOWN=+Y, UP=-Y. Confirmed live --
+-- pressing Left took the cursor x from 17 to -33, i.e. Left decreases x.
+local CS_KEY_DEFAULT = { UP_ARROW = { dx = 0, dy = -1 }, DOWN_ARROW = { dx = 0, dy = 1 },
+                         LEFT_ARROW = { dx = -1, dy = 0 }, RIGHT_ARROW = { dx = 1, dy = 0 } }
 local function cs_key_toward(axis, want)
     for kn, d in pairs(cs_key_delta) do             -- learned (authoritative)
         if axis == "x" and d.dx == want then return kn end
@@ -1361,42 +1399,43 @@ local function cs_key_toward(axis, want)
     end
     return nil
 end
-local function announce_nearest()
-    local inst, cx, cy = cs_live_instance()
-    if not inst or not cx or not cy then return end
+-- Full-map cursor position = on-screen cursor (PlayerSelectCursor_41 render
+-- transform, clamped +/-100) minus the map scroll (PlayerPositionMoved). Both the
+-- cursor announce and the N guide use this so they share one coordinate space.
+cs_cursor_pos = function(inst)
+    if not inst then return nil, nil end
+    local cx, cy, mx, my
+    pcall(function() local t = inst.PlayerSelectCursor_41.RenderTransform.Translation; cx = t.X; cy = t.Y end)
+    pcall(function() local p = inst.PlayerPositionMoved; mx = p.X; my = p.Y end)
+    if type(cx) ~= "number" or type(cy) ~= "number" then return nil, nil end
+    return cx - (type(mx) == "number" and mx or 0), cy - (type(my) == "number" and my or 0)
+end
 
-    -- Offset b for cursor = (bx - anchor.x, by - anchor.y): start from the
-    -- measured default, refine by averaging over any travelers actually hovered
-    -- (matched to their anchor by enum index). Self-corrects if the default is
-    -- off this session.
-    local bx, by, bn = 0, 0, 0
+local function announce_nearest()
+    local inst = cs_live_instance()
+    if not inst then return end
+    local cx, cy = cs_cursor_pos(inst)   -- same full-map cursor space as the announce
+    if not cx or not cy then return end
+
+    -- Travelers in cursor space, known from screen-open with NO navigation:
+    -- anchor (ItemPlayerPosition, populates shortly after open) + the measured
+    -- constant offset that maps the anchor frame onto the cursor frame. Page
+    -- Up/Down's learned centroids (cs_known) override per-traveler with the exact
+    -- measured spot, so the guide self-corrects if the offset is ever off.
+    cs_load_positions(inst)            -- retry until the anchors populate
+    local by_name = {}
     if cs_item_positions then
-        for nm, k in pairs(cs_known) do
-            local ei = CS_NAME_IDX[nm]
-            if ei ~= nil and k.n > 0 then
-                for _, a in ipairs(cs_item_positions) do
-                    if a.idx == ei then
-                        bx = bx + (k.sx / k.n + a.x); by = by + (k.sy / k.n + a.y); bn = bn + 1
-                        break
-                    end
-                end
+        for _, a in ipairs(cs_item_positions) do
+            if a.name then
+                by_name[a.name] = { x = a.x + CS_ANCHOR_OFF_X, y = a.y + CS_ANCHOR_OFF_Y, name = a.name }
             end
         end
     end
-    if bn > 0 then bx, by = bx / bn, by / bn else bx, by = CS_DEF_BX, CS_DEF_BY end
-
-    -- Candidates: every anchor transformed into cursor space (known up-front, no
-    -- hovering). Fall back to hovered centroids if anchors have not loaded yet.
-    local cand = {}
-    if cs_item_positions then
-        for _, a in ipairs(cs_item_positions) do
-            cand[#cand + 1] = { x = bx - a.x, y = by - a.y, name = a.name }
-        end
-    else
-        for nm, k in pairs(cs_known) do
-            if k.n > 0 then cand[#cand + 1] = { x = k.sx / k.n, y = k.sy / k.n, name = nm } end
-        end
+    for nm, k in pairs(cs_known) do
+        if k.n > 0 then by_name[nm] = { x = k.sx / k.n, y = k.sy / k.n, name = nm } end
     end
+    local cand = {}
+    for _, c in pairs(by_name) do cand[#cand + 1] = c end
     if #cand == 0 then
         speak("No characters mapped yet. Give it a second, then try again.")
         return
@@ -1480,5 +1519,40 @@ local function install_talk_hook(attempt)
     end
 end
 ExecuteWithDelay(2000, function() install_talk_hook(1) end)
+
+-- Char-select cursor: hook the game's OnCursor{Up,Down,Left,Right} input events.
+-- The callback's Context is the LIVE instance the game is driving (fixes the old
+-- wrong-instance read), and it fires via ProcessInternal -- independent of the
+-- poll loop (the decoupling). The move lands a frame later (UpdateInputMove in
+-- Tick), so we read the settled position after a short delay, then announce the
+-- hovered traveler / cursor cell, or report a no-move (blocked / reversing).
+local cs_cursor_hooked = false
+local cs_cursor_gen    = 0
+local function on_cursor_hook(dir)
+    return function(Context)
+        local inst = Context and Context:get()
+        if not inst then return end
+        cs_cursor_gen = cs_cursor_gen + 1
+        local mygen = cs_cursor_gen
+        ExecuteWithDelay(140, function()
+            if mygen ~= cs_cursor_gen then return end        -- superseded by a newer press
+            if dlg_visible then return end                    -- a dialog owns input
+            -- Full-map cursor position (on-screen cursor minus map scroll; see
+            -- cs_cursor_pos). Announce the hovered traveler / cursor cell.
+            local x, y = cs_cursor_pos(inst)
+            if x and y then cs_announce(inst, x, y) end
+        end)
+    end
+end
+local function try_hook_cursor()
+    if cs_cursor_hooked then return end
+    if not cs_instance then ExecuteWithDelay(1000, try_hook_cursor); return end  -- wait for the BP to load
+    cs_cursor_hooked = true
+    for _, dir in ipairs({ "Up", "Down", "Left", "Right" }) do
+        pcall(RegisterHook, "/Game/UI/Title/BP/Scene/TitlePlayerSelect.TitlePlayerSelect_C:OnCursor" .. dir, on_cursor_hook(dir))
+    end
+    log("char-select cursor hooks registered")
+end
+ExecuteWithDelay(3000, try_hook_cursor)
 
 return M
