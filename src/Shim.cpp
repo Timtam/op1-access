@@ -14,13 +14,14 @@
 //   IsSpeakingSupported()      -> bool   (Tolk has detected a screen reader)
 //   DetectScreenReader()       -> string|nil  (name of active backend)
 //   PreferSAPI(bool)           -> bool   (force SAPI as primary)
+//   InstallTalkHook(ufuncAddr) -> bool   (native-hook GetTalkText; speaks dialogue)
+//   PollTalk()                 -> string|nil  (last captured line, for logging)
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
 #include <mutex>
 #include <string>
-#include <cstdio>
 #include <cstdint>
 #include <cstring>
 
@@ -56,26 +57,13 @@ FnTolk_PreferSAPI         g_tolk_prefer_sapi = nullptr;
 std::once_flag            g_init_once;
 
 // --- Native hooking (MinHook) -------------------------------------------
-// PHASE 1 self-test: QueryPerformanceCounter is called every frame by the
-// engine; hooking it and counting calls proves in-process native hooking works.
-// This is the foundation for reading struct-returning UFunctions (e.g.
+// In-process native hooking lets us read struct-returning UFunctions (e.g.
 // GetTalkText) that UE4SS's Lua RegisterHook crashes on -- in C++ we read the
 // struct bytes directly, no Lua marshalling.
-using FnQPC = BOOL (WINAPI*)(LARGE_INTEGER*);
-FnQPC          g_qpc_orig   = nullptr;
-volatile long  g_hook_count = 0;
-bool           g_mh_ready   = false;
+bool           g_mh_ready  = false;
 std::once_flag g_hooks_once;
 
-BOOL WINAPI hk_qpc(LARGE_INTEGER* p) {
-    InterlockedIncrement(&g_hook_count);
-    return g_qpc_orig ? g_qpc_orig(p) : FALSE;
-}
-
 void init_hooks() {
-    // Initialize MinHook. (The Phase-1 QueryPerformanceCounter self-test that
-    // proved in-process hooking has been removed now that real UFunction hooks
-    // work.)
     g_mh_ready = (MH_Initialize() == MH_OK);
 }
 
@@ -89,10 +77,8 @@ void init_hooks() {
 std::mutex   g_talk_mtx;
 std::string  g_last_talk;          // UTF-8, last captured line(s)
 bool         g_talk_new = false;
-int          g_talk_src  = 0;      // which candidate yielded the text (diagnostic)
 using FnExec = void (*)(void*, void*, void*);
-FnExec       g_gtt_orig  = nullptr;
-volatile long g_gtt_count = 0;     // times the GetTalkText hook fired (diagnostic)
+FnExec       g_gtt_orig = nullptr;
 
 // SEH-guarded raw read into a caller-provided buffer. POD-only (no C++ objects)
 // so __try is allowed (MSVC C2712 forbids __try alongside object unwinding).
@@ -138,13 +124,13 @@ static void read_frame_cands(void* frame, void** c_mrpa, void** c_locals) {
 void capture_talk(void* result, void* frame) {
     void* mrpa = nullptr; void* locals8 = nullptr;
     read_frame_cands(frame, &mrpa, &locals8);
-    void* cands[3] = { result, mrpa, locals8 };
+    void* cands[3] = { result, mrpa, locals8 };   // OutText is usually at mrpa
     wchar_t wbuf[2048];
-    int wlen = 0, src = 0;
+    int wlen = 0;
     for (int i = 0; i < 3; i++) {
         if (cands[i]) {
             wlen = read_talktext_raw(cands[i], wbuf, 2048);
-            if (wlen > 0) { src = i + 1; break; }   // 1=result 2=mrpa 3=locals+8
+            if (wlen > 0) break;
         }
     }
     if (wlen <= 0) return;
@@ -169,23 +155,13 @@ void capture_talk(void* result, void* frame) {
     if (u <= 0) return;
     std::lock_guard<std::mutex> lk(g_talk_mtx);
     g_last_talk.assign(u8, static_cast<size_t>(u));
-    g_talk_src = src;
     g_talk_new = true;
 }
 
 void hk_gtt(void* ctx, void* frame, void* result) {
-    InterlockedIncrement(&g_gtt_count);
     if (g_gtt_orig) g_gtt_orig(ctx, frame, result);
     capture_talk(result, frame);
 }
-
-// Diagnostic counters for the other localized-text statics, to learn which the
-// prologue actually uses (and to confirm exec-hooking works at all -- the UI
-// definitely calls one of these). Count only; no capture yet.
-FnExec g_ggt_orig = nullptr, g_ggts_orig = nullptr;
-volatile long g_ggt_count = 0, g_ggts_count = 0;
-void hk_ggt(void* c, void* f, void* r)  { InterlockedIncrement(&g_ggt_count);  if (g_ggt_orig)  g_ggt_orig(c, f, r); }
-void hk_ggts(void* c, void* f, void* r) { InterlockedIncrement(&g_ggts_count); if (g_ggts_orig) g_ggts_orig(c, f, r); }
 
 std::wstring sibling_path(const wchar_t* name) {
     wchar_t buf[MAX_PATH] = {0};
@@ -317,52 +293,8 @@ int l_prefer_sapi(lua_State* L) {
     return 1;
 }
 
-// PHASE 1 diagnostic: returns the QPC hook hit-count (and whether MinHook armed).
-// Lua logs this after load; a climbing count proves native hooking works.
-int l_hook_selftest(lua_State* L) {
-    lua_pushinteger(L, static_cast<lua_Integer>(g_hook_count));
-    lua_pushboolean(L, g_mh_ready ? 1 : 0);
-    lua_pushinteger(L, static_cast<lua_Integer>(g_gtt_count));
-    return 3;
-}
-
-// PHASE 2a: given a UFunction's address (from Lua's GetAddress()), scan its tail
-// for a pointer into the main executable's image -- that's the native exec
-// (UFunction::Func) we'll hook. Read-only; returns "+OFF=rva:RVA ..." so we can
-// learn the Func member offset for this build. (No hooking here.)
-int l_probe_ufunc(lua_State* L) {
-    uintptr_t addr = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
-    if (addr < 0x10000) { lua_pushstring(L, "(bad addr)"); return 1; }
-    HMODULE h = GetModuleHandleW(nullptr);
-    uintptr_t base = reinterpret_cast<uintptr_t>(h), size = 0;
-    if (h) {
-        auto dos = reinterpret_cast<IMAGE_DOS_HEADER*>(h);
-        auto nt  = reinterpret_cast<IMAGE_NT_HEADERS*>(reinterpret_cast<BYTE*>(h) + dos->e_lfanew);
-        size = nt->OptionalHeader.SizeOfImage;
-    }
-    std::string out;
-    char line[160];
-    for (uintptr_t off = 0x40; off <= 0x108; off += 8) {
-        uintptr_t v = *reinterpret_cast<uintptr_t*>(addr + off);
-        if (size && v >= base && v < base + size) {
-            // Dump the first bytes AT the pointer so we can tell a code prologue
-            // (the native exec = Func) from a vtable (points at pointers).
-            const unsigned char* p = reinterpret_cast<const unsigned char*>(v);
-            char bytes[40]; int k = 0;
-            for (int i = 0; i < 8 && k < (int)sizeof(bytes) - 4; i++)
-                k += std::snprintf(bytes + k, sizeof(bytes) - k, "%02X ", p[i]);
-            std::snprintf(line, sizeof(line), "+%llX=rva:%llX[%s] ",
-                          (unsigned long long)off, (unsigned long long)(v - base), bytes);
-            out += line;
-        }
-    }
-    if (out.empty()) out = "(no in-image ptrs found)";
-    lua_pushstring(L, out.c_str());
-    return 1;
-}
-
-// PHASE 2b: install the GetTalkText hook. Lua passes the UFunction's address;
-// Func is at +0xB0 (confirmed by prologue). Returns true if the hook armed.
+// Install the GetTalkText hook. Lua passes the UFunction's address; its native
+// exec (Func) is at UFunction+0xB0 (verified by the function prologue there).
 static bool install_func_hook(uintptr_t ufunc, void* cb, void** orig) {
     if (ufunc < 0x10000) return false;
     void* func = *reinterpret_cast<void**>(ufunc + 0xB0);   // UFunction::Func (confirmed)
@@ -373,31 +305,13 @@ int l_install_talk_hook(lua_State* L) {
                                 reinterpret_cast<void*>(&hk_gtt), reinterpret_cast<void**>(&g_gtt_orig));
     lua_pushboolean(L, ok ? 1 : 0); return 1;
 }
-int l_install_ggt_hook(lua_State* L) {
-    bool ok = install_func_hook(static_cast<uintptr_t>(luaL_checkinteger(L, 1)),
-                                reinterpret_cast<void*>(&hk_ggt), reinterpret_cast<void**>(&g_ggt_orig));
-    lua_pushboolean(L, ok ? 1 : 0); return 1;
-}
-int l_install_ggts_hook(lua_State* L) {
-    bool ok = install_func_hook(static_cast<uintptr_t>(luaL_checkinteger(L, 1)),
-                                reinterpret_cast<void*>(&hk_ggts), reinterpret_cast<void**>(&g_ggts_orig));
-    lua_pushboolean(L, ok ? 1 : 0); return 1;
-}
-int l_text_counts(lua_State* L) {
-    lua_pushinteger(L, static_cast<lua_Integer>(g_gtt_count));
-    lua_pushinteger(L, static_cast<lua_Integer>(g_ggt_count));
-    lua_pushinteger(L, static_cast<lua_Integer>(g_ggts_count));
-    return 3;
-}
-
 // Returns the last captured dialogue line(s) once, then clears (nil if nothing new).
 int l_poll_talk(lua_State* L) {
     std::lock_guard<std::mutex> lk(g_talk_mtx);
     if (g_talk_new && !g_last_talk.empty()) {
         g_talk_new = false;
         lua_pushlstring(L, g_last_talk.data(), g_last_talk.size());
-        lua_pushinteger(L, g_talk_src);
-        return 2;
+        return 1;
     }
     lua_pushnil(L);
     return 1;
@@ -409,12 +323,7 @@ const luaL_Reg op1access_funcs[] = {
     {"IsSpeakingSupported",  l_is_supported},
     {"DetectScreenReader",   l_detect},
     {"PreferSAPI",           l_prefer_sapi},
-    {"HookSelfTest",         l_hook_selftest},
-    {"ProbeUFunc",           l_probe_ufunc},
     {"InstallTalkHook",      l_install_talk_hook},
-    {"InstallGameTextHook",  l_install_ggt_hook},
-    {"InstallGameTextStrHook", l_install_ggts_hook},
-    {"TextCounts",           l_text_counts},
     {"PollTalk",             l_poll_talk},
     {nullptr, nullptr},
 };

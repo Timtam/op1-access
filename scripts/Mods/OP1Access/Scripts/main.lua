@@ -594,20 +594,13 @@ end
 
 -- Fire-and-forget polling loop. Wrap each tick in pcall: a Lua error
 -- inside LoopAsync would otherwise stop subsequent ticks (or worse).
-local talk_dbg = 0
 local ok_loop = pcall(LoopAsync, POLL_INTERVAL_MS, function()
     pcall(poll_active_menu)
-    -- Speak each story/dialogue line captured by the native GetTalkText hook.
+    -- The native GetTalkText hook speaks dialogue directly (independent of this
+    -- loop, which can die after a level load). The loop just logs the line.
     if shim and shim.PollTalk then
         local t = shim.PollTalk()
-        if t and t ~= "" then log("STORY: " .. t) end  -- spoken by the native hook; loop only logs
-    end
-    -- DIAGNOSTIC (~2s): GetTalkText hook fire-count, so I can tell loop-alive +
-    -- hook-firing from "didn't reach the prologue".
-    talk_dbg = talk_dbg + 1
-    if talk_dbg % 40 == 0 and shim and shim.TextCounts then
-        local g = shim.TextCounts()
-        log("GTT fired: " .. tostring(g))
+        if t and t ~= "" then log("STORY: " .. t) end
     end
 end)
 log("Polling loop started: " .. tostring(ok_loop))
