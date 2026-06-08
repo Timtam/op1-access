@@ -1560,8 +1560,11 @@ end
 -- scale are UNCALIBRATED here -- the log prints raw player/nearest deltas so we can
 -- calibrate from one field test (same way the char-select axes were fixed). Ctrl+F8.
 local NAV_CLASSES = {
-    { cls = "TreasureBoxBP_C",   name = "chest" },
-    { cls = "LevelTriggerActor", name = "exit" },
+    { cls = "TreasureBoxBP_C",       name = "chest" },
+    { cls = "LevelTrigger_C",        name = "exit" },     -- area transitions (the BP, not the C++ base)
+    { cls = "HouseEnterTriggerBP_C", name = "building" },  -- enter a house
+    { cls = "ShopTriggerBP_C",       name = "shop" },
+    { cls = "KSFieldNPCCharacter_C", name = "npc" },       -- townsfolk (moves -> read live)
 }
 local function read_actor_pos(obj)
     if not obj then return nil end
@@ -1605,6 +1608,7 @@ local function nav_dir(dx, dy)
     return table.concat(parts, " ")
 end
 local nav_last_px, nav_last_py = nil, nil
+local LEVEL_THRESH = 250  -- |dz| beyond this = another floor (one floor measured ~502 units; 250 clears same-floor jitter)
 local function nav_probe()
     local p, phow = get_player_obj()
     if not p then log("NAV: no player object"); speak("No player position"); return end
@@ -1615,7 +1619,7 @@ local function nav_probe()
         log(string.format("NAVDELTA since last Ctrl+F8: dX=%.0f dY=%.0f", px - nav_last_px, py - nav_last_py))
     end
     nav_last_px, nav_last_py = px, py
-    local bestd, bestcat, bdx, bdy
+    local bestd, bestcat, bdx, bdy, bdz
     for _, c in ipairs(NAV_CLASSES) do
         local list = nil
         pcall(function() list = FindAllOf(c.cls) end)
@@ -1625,13 +1629,13 @@ local function nav_probe()
                 local okv = false
                 pcall(function() okv = o and o:IsValid() end)
                 if okv then
-                    local ox, oy = read_actor_pos(o)
+                    local ox, oy, oz = read_actor_pos(o)
                     if ox then
                         n = n + 1
                         local dx, dy = ox - px, oy - py
                         local d = math.sqrt(dx * dx + dy * dy)
                         if not near or d < near then near = d end
-                        if not bestd or d < bestd then bestd, bestcat, bdx, bdy = d, c.name, dx, dy end
+                        if not bestd or d < bestd then bestd, bestcat, bdx, bdy, bdz = d, c.name, dx, dy, (oz - pz) end
                     end
                 end
             end
@@ -1639,9 +1643,12 @@ local function nav_probe()
         log(string.format("NAV %s: list=%s readable=%d nearest=%s", c.name,
             list and "ok" or "nil", n, near and string.format("%.0f", near) or "-"))
     end
-    if not bestd then speak("No chests or exits found"); return end
-    log(string.format("NAV nearest=%s d=%.0f dx=%.0f dy=%.0f", bestcat, bestd, bdx, bdy))
-    speak(string.format("%s, %s, distance %d", bestcat, nav_dir(bdx, bdy), math.floor(bestd + 0.5)))
+    if not bestd then speak("No objects found"); return end
+    log(string.format("NAV nearest=%s d=%.0f dx=%.0f dy=%.0f dz=%.0f", bestcat, bestd, bdx, bdy, bdz or 0))
+    local lvl = ""
+    if bdz and bdz > LEVEL_THRESH then lvl = ", above"
+    elseif bdz and bdz < -LEVEL_THRESH then lvl = ", below" end
+    speak(string.format("%s%s, %s, distance %d", bestcat, lvl, nav_dir(bdx, bdy), math.floor(bestd + 0.5)))
 end
 do
     local ok = pcall(RegisterKeyBind, Key.F8, { ModifierKey.CONTROL }, nav_probe)
@@ -1683,6 +1690,14 @@ end
 local beacon_on  = false
 local beacon_gen = 0
 local beacon_objs = {}
+-- Range model: ping EVERY object within a FIXED radius (no density filter), so an
+-- object's presence + loudness map STEADILY to its distance. A radius that grew/
+-- shrank with crowding could hide a nearby object just because the area was busy,
+-- which breaks the distance estimation blind players rely on. HARDCAP is only a
+-- slot-safety limit (the shim has 32 source slots).
+local BEACON_RANGE   = 3000     -- fixed audible radius (world units)
+local BEACON_HARDCAP = 32       -- slot-safety cap; if ever exceeded, nearest are kept
+local CAT_CUE = { chest = 0, exit = 1, npc = 2, building = 3, shop = 4 }  -- category -> shim cue/freq
 local function beacon_rescan()
     beacon_objs = {}
     for _, c in ipairs(NAV_CLASSES) do
@@ -1692,9 +1707,10 @@ local function beacon_rescan()
             for _, o in pairs(list) do
                 local okv = false
                 pcall(function() okv = o and o:IsValid() end)
-                if okv then
-                    local x, y, z = read_actor_pos(o)
-                    if x then beacon_objs[#beacon_objs + 1] = { x = x, y = y, z = z, cat = c.name } end
+                -- store the ACTOR (not a fixed position): NPCs wander, so the tick
+                -- reads each one's live position. Cap defends against huge towns.
+                if okv and #beacon_objs < 128 then
+                    beacon_objs[#beacon_objs + 1] = { actor = o, cat = c.name }
                 end
             end
         end
@@ -1708,21 +1724,46 @@ local function beacon_tick(mygen)
     if p then px, py, pz = read_actor_pos(p) end
     if px then
         pcall(function() shim.AudioSetListener(px, py, pz) end)
-        local bd, bx, by, bz
+        -- live positions + distances for every tracked object (handles wandering
+        -- NPCs + despawns)
+        local objs = {}
         for _, o in ipairs(beacon_objs) do
-            local dx, dy = o.x - px, o.y - py
-            local d = dx * dx + dy * dy
-            if not bd or d < bd then bd, bx, by, bz = d, o.x, o.y, o.z end
+            local okv = false
+            pcall(function() okv = o.actor and o.actor:IsValid() end)
+            if okv then
+                local ox, oy, oz = read_actor_pos(o.actor)
+                if ox then
+                    local dx, dy = ox - px, oy - py
+                    objs[#objs + 1] = { x = ox, y = oy, z = oz, cat = o.cat, d = math.sqrt(dx * dx + dy * dy) }
+                end
+            end
         end
-        if bd then pcall(function() shim.AudioSetSource(0, true, bx, by, bz) end) end
+        -- ping EVERY object within the fixed radius; sort by distance so the slot
+        -- cap, if ever hit in a huge crowd, keeps the nearest
+        table.sort(objs, function(a, b) return a.d < b.d end)
+        local slot = 0
+        for _, o in ipairs(objs) do
+            if o.d > BEACON_RANGE or slot >= BEACON_HARDCAP then break end
+            local s = slot
+            pcall(function() shim.AudioSetSource(s, true, o.x, o.y, o.z, CAT_CUE[o.cat] or 0) end)
+            slot = slot + 1
+        end
+        for i = slot, BEACON_HARDCAP - 1 do
+            pcall(function() shim.AudioSetSource(i, false, 0, 0, 0, 0) end)
+        end
     end
     ExecuteWithDelay(120, function() beacon_tick(mygen) end)
+end
+local function beacon_deactivate_all()
+    for i = 0, BEACON_HARDCAP - 1 do
+        pcall(function() shim.AudioSetSource(i, false, 0, 0, 0, 0) end)
+    end
 end
 local function beacon_toggle()
     if not (shim and shim.AudioInit) then speak("Audio module not loaded"); return end
     if beacon_on then
         beacon_on = false; beacon_gen = beacon_gen + 1
-        pcall(function() shim.AudioSetSource(0, false, 0, 0, 0) end)
+        beacon_deactivate_all()
         speak("Beacon off")
         return
     end
@@ -1735,7 +1776,7 @@ local function beacon_toggle()
     if #beacon_objs == 0 then speak("No objects found to beacon"); return end
     beacon_gen = beacon_gen + 1
     beacon_on = true
-    speak(string.format("Beacon on, %d objects", #beacon_objs))
+    speak(string.format("Beacon on, %d objects tracked", #beacon_objs))
     beacon_tick(beacon_gen)
 end
 do

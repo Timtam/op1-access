@@ -1,23 +1,27 @@
 // SpatialAudio.cpp -- HRTF-positioned audio cues for OP1Access.
 //
 // Steam Audio (phonon) does the binaural DSP; miniaudio owns the output device.
-// Each beacon is a mono tone source; in the audio thread we generate its samples,
+// Each beacon is a mono cue source; in the audio thread we generate its samples,
 // run Steam Audio's binaural effect for its current listener-relative direction,
 // and mix all sources to stereo. A fixed-block renderer bridges miniaudio's
 // variable callback size to Steam Audio's fixed 1024-sample frame.
 //
+// Cues are PERIODIC PINGS (a short enveloped tone repeating every CYCLE_LEN), with
+// a per-category frequency, so many simultaneous beacons stay legible instead of
+// blurring into a drone. Pings are staggered by source slot (a phase offset on a
+// global sample clock) so they don't all fire at once. The test tone is a
+// continuous tone (ping=false) for clean HRTF debugging.
+//
 // Threading: the game thread calls SA_SetListener / SA_SetSource (writes a few
-// floats + an active flag under a short mutex). The audio thread reads a snapshot
-// of those each block. Each source's tone phase + binaural effect are touched only
-// by the audio thread. Effects/HRTF/context are created on the game thread in
-// SA_Init (phonon create calls are not audio-thread safe) and not used after
-// SA_Shutdown stops the device.
+// fields + an active flag under a short mutex). The audio thread reads a snapshot
+// each block. Each source's oscillator phase + binaural effect are audio-thread
+// only. Effects/HRTF/context are created on the game thread in SA_Init and unused
+// after SA_Shutdown stops the device.
 //
 // Coordinate mapping (screen-fixed, since the overworld camera doesn't rotate):
-//   game world X = the UP/DOWN screen axis (UP = +X)   -> Steam Audio front (-Z)
-//   game world Y = the LEFT/RIGHT screen axis (RIGHT=+Y)-> Steam Audio right (+X)
-//   game world Z = vertical                             -> Steam Audio up   (+Y)
-// (calibrated 2026-06-07; verify by ear and flip a sign here if needed.)
+//   game world X = the UP/DOWN screen axis (UP = +X)    -> Steam Audio front (-Z)
+//   game world Y = the LEFT/RIGHT screen axis (RIGHT=+Y) -> Steam Audio right (+X)
+//   game world Z = vertical                              -> Steam Audio up   (+Y)
 
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
@@ -40,6 +44,10 @@ constexpr int    FS  = 1024;    // Steam Audio frame size (samples/channel)
 constexpr int    MAX_SOURCES = 32;
 constexpr double TWO_PI = 6.283185307179586;
 
+constexpr int    CYCLE_LEN = (int)(1.4 * SR);    // ping period per source
+constexpr int    CUE_LEN   = (int)(0.18 * SR);   // ping (cue) duration
+constexpr int    ATTACK    = (int)(0.012 * SR);  // ping attack ramp
+
 IPLContext       g_ctx   = nullptr;
 IPLHRTF          g_hrtf  = nullptr;
 IPLAudioSettings g_audio = { SR, FS };
@@ -49,17 +57,18 @@ IPLAudioBuffer   g_outBuf = {};   // 2 channels x FS (binaural output)
 
 ma_device        g_device = {};
 bool             g_deviceOk = false;
-bool             g_running  = false;   // audio callback may render only when true
+bool             g_running  = false;
 
 char             g_status[256] = "uninitialized";
 
 struct Source {
     bool   active       = false;
     bool   listenerSpace = false;  // true: (x,y,z) is already a listener-space dir (test tone)
+    bool   ping         = true;    // true: periodic ping; false: continuous tone (test)
+    int    cueType      = 0;       // category -> ping frequency (see cue_freq)
     float  x = 0, y = 0, z = 0;    // world position (or listener-space dir if listenerSpace)
-    float  freq = 432.0f;          // tone frequency
-    float  gain = 0.6f;
-    double phase = 0.0;            // audio-thread only
+    float  gain = 0.7f;
+    double phase = 0.0;            // oscillator phase (audio-thread only)
     IPLBinauralEffect effect = nullptr;
 };
 
@@ -67,11 +76,22 @@ Source     g_src[MAX_SOURCES];
 float      g_lx = 0, g_ly = 0, g_lz = 0;   // listener world position
 std::mutex g_mtx;
 
-// One rendered stereo block, interleaved L,R,L,R...; drained across callbacks.
-float g_block[FS * 2];
-int   g_blockPos = FS;   // start "empty" so the first callback renders
+float g_block[FS * 2];              // one rendered stereo block, interleaved L,R,...
+int   g_blockPos = FS;             // frames consumed; start "empty" so first callback renders
+unsigned long long g_clock = 0;    // global sample clock for ping staggering (audio thread)
 
 void set_status(const char* s) { std::snprintf(g_status, sizeof(g_status), "%s", s); }
+
+float cue_freq(int cueType) {
+    switch (cueType) {
+        case 0:  return 523.0f;  // chest
+        case 1:  return 392.0f;  // exit / area transition
+        case 2:  return 698.0f;  // npc
+        case 3:  return 294.0f;  // building entrance (low "doorway")
+        case 4:  return 880.0f;  // shop (high)
+        default: return 523.0f;
+    }
+}
 
 IPLVector3 normalize_or_front(float x, float y, float z) {
     IPLVector3 v{ x, y, z };
@@ -81,16 +101,14 @@ IPLVector3 normalize_or_front(float x, float y, float z) {
     return v;
 }
 
-// world delta (source - listener) -> Steam Audio listener-space unit vector
 IPLVector3 world_delta_to_sa(float ddx, float ddy, float ddz) {
-    // right = +Y world -> +X SA ; front(-Z) = +X world (screen up) ; up = +Z world
-    return normalize_or_front(ddy, ddz, -ddx);
+    return normalize_or_front(ddy, ddz, -ddx);   // right=+Y, up=+Z, front(-Z)=+X(screen up)
 }
 
 float dist_attenuation(float dist) {
-    constexpr float ref = 250.0f;       // full volume within ~a few steps
+    constexpr float ref = 250.0f;
     if (dist <= ref) return 1.0f;
-    float g = ref / dist;               // inverse rolloff
+    float g = ref / dist;
     return g < 0.04f ? 0.04f : g;
 }
 
@@ -102,25 +120,42 @@ void render_block() {
 
     if (g_running && g_ctx && g_hrtf) {
         for (int i = 0; i < MAX_SOURCES; ++i) {
-            // snapshot control fields under the lock; phase/effect are audio-thread only
-            bool active, lspace; float sx, sy, sz, freq, gain, lx, ly, lz;
+            bool active, lspace, ping; int cueType; float sx, sy, sz, gain, lx, ly, lz;
             {
                 std::lock_guard<std::mutex> lk(g_mtx);
-                active = g_src[i].active;
-                lspace = g_src[i].listenerSpace;
+                active  = g_src[i].active;
+                lspace  = g_src[i].listenerSpace;
+                ping    = g_src[i].ping;
+                cueType = g_src[i].cueType;
                 sx = g_src[i].x; sy = g_src[i].y; sz = g_src[i].z;
-                freq = g_src[i].freq; gain = g_src[i].gain;
+                gain = g_src[i].gain;
                 lx = g_lx; ly = g_ly; lz = g_lz;
             }
             if (!active || !g_src[i].effect) continue;
 
-            // generate the mono tone
+            // mono cue: a periodic ping (per-category freq, staggered by slot) or a
+            // continuous tone (test). The envelope keeps pings click-free even
+            // though the oscillator phase runs continuously.
             double ph  = g_src[i].phase;
-            double inc = TWO_PI * (double)freq / (double)SR;
-            for (int n = 0; n < FS; ++n) { g_inBuf.data[0][n] = (float)std::sin(ph) * 0.5f; ph += inc; }
+            double inc = TWO_PI * (double)cue_freq(cueType) / (double)SR;
+            if (ping) {
+                long long base = (long long)g_clock + (long long)i * (CYCLE_LEN / MAX_SOURCES);
+                for (int n = 0; n < FS; ++n) {
+                    long long cyc = (base + n) % CYCLE_LEN;
+                    float env = 0.0f;
+                    if (cyc < CUE_LEN) {
+                        if (cyc < ATTACK) env = (float)cyc / (float)ATTACK;
+                        else              env = 1.0f - (float)(cyc - ATTACK) / (float)(CUE_LEN - ATTACK);
+                        if (env < 0.0f) env = 0.0f;
+                    }
+                    g_inBuf.data[0][n] = (float)std::sin(ph) * 0.5f * env;
+                    ph += inc;
+                }
+            } else {
+                for (int n = 0; n < FS; ++n) { g_inBuf.data[0][n] = (float)std::sin(ph) * 0.5f; ph += inc; }
+            }
             g_src[i].phase = std::fmod(ph, TWO_PI);
 
-            // direction + distance attenuation
             IPLVector3 dir; float atten = 1.0f;
             if (lspace) {
                 dir = normalize_or_front(sx, sy, sz);
@@ -153,6 +188,7 @@ void render_block() {
         g_block[2 * n]     = l;
         g_block[2 * n + 1] = r;
     }
+    g_clock += (unsigned long long)FS;
     g_blockPos = 0;
 }
 
@@ -224,7 +260,7 @@ int SA_Init(void) {
 
 void SA_Shutdown(void) {
     g_running = false;
-    if (g_deviceOk) { ma_device_uninit(&g_device); g_deviceOk = false; }  // stops + joins the callback
+    if (g_deviceOk) { ma_device_uninit(&g_device); g_deviceOk = false; }
     for (int i = 0; i < MAX_SOURCES; ++i) {
         if (g_src[i].effect) { iplBinauralEffectRelease(&g_src[i].effect); g_src[i].effect = nullptr; }
         g_src[i].active = false;
@@ -241,11 +277,13 @@ void SA_SetListener(float x, float y, float z) {
     g_lx = x; g_ly = y; g_lz = z;
 }
 
-void SA_SetSource(int id, int active, float x, float y, float z) {
+void SA_SetSource(int id, int active, float x, float y, float z, int cueType) {
     if (id < 0 || id >= MAX_SOURCES) return;
     std::lock_guard<std::mutex> lk(g_mtx);
     g_src[id].active = (active != 0);
     g_src[id].listenerSpace = false;
+    g_src[id].ping = true;
+    g_src[id].cueType = cueType;
     g_src[id].x = x; g_src[id].y = y; g_src[id].z = z;
 }
 
@@ -255,6 +293,7 @@ void SA_TestTone(int dir) {
     if (dir == 4) { s.active = false; return; }
     s.active = true;
     s.listenerSpace = true;
+    s.ping = false;   // continuous tone for HRTF debugging
     switch (dir) {
         case 0: s.x =  1; s.y = 0; s.z =  0; break;  // right
         case 1: s.x = -1; s.y = 0; s.z =  0; break;  // left
