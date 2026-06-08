@@ -20,7 +20,8 @@ void SA_SetListener(float x, float y, float z);
 
 // Set/update beacon source `id` (0..SA_MaxSources-1). active=0 silences it.
 // (x,y,z) is a world position; direction + distance are derived vs the listener.
-void SA_SetSource(int id, int active, float x, float y, float z);
+// cueType selects the per-category ping frequency (0=chest, 1=exit, 2=npc).
+void SA_SetSource(int id, int active, float x, float y, float z, int cueType);
 
 // Quick isolation test independent of game data: play one continuous tone at a
 // fixed listener-relative direction. dir: 0=right 1=left 2=front 3=back 4=off.

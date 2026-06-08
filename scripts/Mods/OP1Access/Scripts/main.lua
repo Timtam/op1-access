@@ -1690,16 +1690,18 @@ end
 local beacon_on  = false
 local beacon_gen = 0
 local beacon_objs = {}
+local beacon_slotof = {}   -- stable beacon_objs index -> shim slot (declick: one object, one slot)
 -- Range model: ping EVERY object within a FIXED radius (no density filter), so an
 -- object's presence + loudness map STEADILY to its distance. A radius that grew/
 -- shrank with crowding could hide a nearby object just because the area was busy,
 -- which breaks the distance estimation blind players rely on. HARDCAP is only a
 -- slot-safety limit (the shim has 32 source slots).
-local BEACON_RANGE   = 3000     -- fixed audible radius (world units)
-local BEACON_HARDCAP = 32       -- slot-safety cap; if ever exceeded, nearest are kept
+local BEACON_RANGE   = 500      -- fixed audible radius (world units; ~500 each direction)
+local BEACON_HARDCAP = 28       -- object beacons use slots 0..27; 28..31 reserved for wall radar
 local CAT_CUE = { chest = 0, exit = 1, npc = 2, building = 3, shop = 4 }  -- category -> shim cue/freq
 local function beacon_rescan()
     beacon_objs = {}
+    beacon_slotof = {}
     for _, c in ipairs(NAV_CLASSES) do
         local list = nil
         pcall(function() list = FindAllOf(c.cls) end)
@@ -1724,32 +1726,44 @@ local function beacon_tick(mygen)
     if p then px, py, pz = read_actor_pos(p) end
     if px then
         pcall(function() shim.AudioSetListener(px, py, pz) end)
-        -- live positions + distances for every tracked object (handles wandering
-        -- NPCs + despawns)
-        local objs = {}
-        for _, o in ipairs(beacon_objs) do
+        -- which tracked objects are in range right now, keyed by their STABLE index
+        local r2 = BEACON_RANGE * BEACON_RANGE
+        local inrange = {}
+        for idx, o in ipairs(beacon_objs) do
             local okv = false
             pcall(function() okv = o.actor and o.actor:IsValid() end)
             if okv then
                 local ox, oy, oz = read_actor_pos(o.actor)
                 if ox then
                     local dx, dy = ox - px, oy - py
-                    objs[#objs + 1] = { x = ox, y = oy, z = oz, cat = o.cat, d = math.sqrt(dx * dx + dy * dy) }
+                    if dx * dx + dy * dy <= r2 then
+                        inrange[idx] = { x = ox, y = oy, z = oz, cat = o.cat }
+                    end
                 end
             end
         end
-        -- ping EVERY object within the fixed radius; sort by distance so the slot
-        -- cap, if ever hit in a huge crowd, keeps the nearest
-        table.sort(objs, function(a, b) return a.d < b.d end)
-        local slot = 0
-        for _, o in ipairs(objs) do
-            if o.d > BEACON_RANGE or slot >= BEACON_HARDCAP then break end
-            local s = slot
-            pcall(function() shim.AudioSetSource(s, true, o.x, o.y, o.z, CAT_CUE[o.cat] or 0) end)
-            slot = slot + 1
+        -- free slots whose object left range; remember which slots stay used
+        local used = {}
+        for idx, slot in pairs(beacon_slotof) do
+            if not inrange[idx] then
+                pcall(function() shim.AudioSetSource(slot, false, 0, 0, 0, 0) end)
+                beacon_slotof[idx] = nil
+            else
+                used[slot] = true
+            end
         end
-        for i = slot, BEACON_HARDCAP - 1 do
-            pcall(function() shim.AudioSetSource(i, false, 0, 0, 0, 0) end)
+        -- give each in-range object a STABLE slot (no rank-shuffle -> no position-jump
+        -- click) and refresh its position
+        for idx, info in pairs(inrange) do
+            local slot = beacon_slotof[idx]
+            if not slot then
+                for s = 0, BEACON_HARDCAP - 1 do
+                    if not used[s] then slot = s; used[s] = true; beacon_slotof[idx] = s; break end
+                end
+            end
+            if slot then
+                pcall(function() shim.AudioSetSource(slot, true, info.x, info.y, info.z, CAT_CUE[info.cat] or 0) end)
+            end
         end
     end
     ExecuteWithDelay(120, function() beacon_tick(mygen) end)
@@ -1758,6 +1772,7 @@ local function beacon_deactivate_all()
     for i = 0, BEACON_HARDCAP - 1 do
         pcall(function() shim.AudioSetSource(i, false, 0, 0, 0, 0) end)
     end
+    beacon_slotof = {}
 end
 local function beacon_toggle()
     if not (shim and shim.AudioInit) then speak("Audio module not loaded"); return end
@@ -1782,6 +1797,126 @@ end
 do
     local ok = pcall(RegisterKeyBind, Key.F6, { ModifierKey.CONTROL }, beacon_toggle)
     log("Bound beacon toggle (Ctrl+F6): " .. tostring(ok))
+end
+
+-- ===== Wall-radar probe (phase 4 / A6): validate engine line-tracing =====
+-- Before building the wall radar we must confirm we can cast a collision ray from
+-- Lua. KismetSystemLibrary:LineTraceSingle is a normal ray-cast; FVector *params*
+-- (as opposed to struct *returns*) marshal fine in UE4SS Lua. Ctrl+F5 traces the 4
+-- cardinal directions from the player and reports which are blocked. If this works,
+-- the radar is just "trace each tick -> panned tone for blocked dirs"; if it
+-- crashes/fails we fall back to a C++ ProcessEvent trace. Trace channel 0 =
+-- TraceTypeQuery1 (usually Visibility) -- tune if it doesn't see walls.
+local WALL_DIRS = {
+    { name = "up",    dx = 1,  dy = 0 },   -- world +X (screen up)
+    { name = "down",  dx = -1, dy = 0 },
+    { name = "right", dx = 0,  dy = 1 },   -- world +Y (screen right)
+    { name = "left",  dx = 0,  dy = -1 },
+}
+-- Working LineTraceSingle call form (confirmed): colon syntax, OutHit passed as a
+-- {} placeholder at param 8, returns the hit bool. Trace channel 0 = TraceTypeQuery1.
+local TRACE_COL = { R = 0, G = 0, B = 0, A = 1 }
+local function line_blocked(ksl, p, sx, sy, sz, ex, ey, ez)
+    local outHit = {}
+    local ok, hit = pcall(function()
+        return ksl:LineTraceSingle(p, { X = sx, Y = sy, Z = sz }, { X = ex, Y = ey, Z = ez },
+            0, false, {}, 0, outHit, true, TRACE_COL, TRACE_COL, 0.0)
+    end)
+    return ok, hit, outHit
+end
+local function wall_probe()
+    local p = get_player_obj()
+    if not p then speak("No player"); return end
+    local px, py, pz = read_actor_pos(p)
+    local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+    if not (ksl and px) then speak("No Kismet/pos"); return end
+    local LEN = 230
+    local blocked = {}
+    for _, d in ipairs(WALL_DIRS) do
+        local ok, hit, oh = line_blocked(ksl, p,
+            px + d.dx * 30,  py + d.dy * 30,  pz + 30,
+            px + d.dx * LEN, py + d.dy * LEN, pz + 30)
+        local dist = "-"
+        if type(oh) == "table" then pcall(function() if oh.Distance then dist = string.format("%.0f", oh.Distance) end end) end
+        log(string.format("WALL %s: ok=%s hit=%s dist=%s", d.name, tostring(ok), tostring(hit), dist))
+        if ok and hit then blocked[#blocked + 1] = d.name end
+    end
+    if #blocked == 0 then speak("No walls near") else speak("Blocked: " .. table.concat(blocked, ", ")) end
+end
+-- ===== Wall radar (phase 4 / A6): continuous panned wall tones =====
+-- Each tick, trace the 4 cardinals; a blocked direction gets a subtle continuous
+-- low hum placed in that direction (shim cue type 5 = wall, continuous + quiet).
+-- Dedicated source slots 28..31 so it coexists with the object beacon. Ctrl+F5
+-- toggles it; Ctrl+F4 is the one-shot speech scan.
+local wall_on   = false
+local wall_gen  = 0
+local wall_ticks = 0
+local WALL_SLOT = { 28, 29, 30, 31 }   -- one shim source per WALL_DIRS entry
+local WALL_CUE  = 5
+local WALL_LEN  = 175   -- only detect walls within ~a few steps (avoid panorama clutter)
+local function wall_tick(mygen)
+    if not wall_on or mygen ~= wall_gen then return end
+    wall_ticks = wall_ticks + 1
+    -- wrap the work so a stray error can never kill the reschedule below
+    pcall(function()
+        local p = get_player_obj()
+        local px, py, pz
+        if p then px, py, pz = read_actor_pos(p) end
+        local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+        if not (px and ksl) then
+            if wall_ticks % 8 == 0 then log(string.format("WALLTICK #%d no px/ksl", wall_ticks)) end
+            return
+        end
+        pcall(function() shim.AudioSetListener(px, py, pz) end)
+        local nblk, uphd = 0, "-"
+        for i, d in ipairs(WALL_DIRS) do
+            local ok, hit, oh = line_blocked(ksl, p,
+                px + d.dx * 30,       py + d.dy * 30,       pz + 30,
+                px + d.dx * WALL_LEN, py + d.dy * WALL_LEN, pz + 30)
+            local slot = WALL_SLOT[i]
+            if ok and hit then
+                nblk = nblk + 1
+                -- place the cue at the REAL wall distance (clamped) so volume + ping
+                -- rate reflect how close the wall is; fall back if OutHit isn't filled
+                local hd = 120
+                if type(oh) == "table" then
+                    pcall(function() if type(oh.Distance) == "number" and oh.Distance >= 1 then hd = oh.Distance end end)
+                end
+                if hd < 30 then hd = 30 elseif hd > WALL_LEN then hd = WALL_LEN end
+                if i == 1 then uphd = string.format("%.0f", hd) end
+                pcall(function() shim.AudioSetSource(slot, true, px + d.dx * hd, py + d.dy * hd, pz, WALL_CUE) end)
+            else
+                pcall(function() shim.AudioSetSource(slot, false, 0, 0, 0, WALL_CUE) end)
+            end
+        end
+        if wall_ticks % 8 == 0 then
+            log(string.format("WALLTICK #%d pos=(%.0f,%.0f) blocked=%d upHd=%s", wall_ticks, px, py, nblk, uphd))
+        end
+    end)
+    ExecuteWithDelay(160, function() wall_tick(mygen) end)
+end
+local function wall_toggle()
+    if not (shim and shim.AudioInit) then speak("Audio module not loaded"); return end
+    if wall_on then
+        wall_on = false; wall_gen = wall_gen + 1
+        for _, slot in ipairs(WALL_SLOT) do pcall(function() shim.AudioSetSource(slot, false, 0, 0, 0, WALL_CUE) end) end
+        speak("Wall radar off")
+        return
+    end
+    if not audio_inited then
+        local okk = false; pcall(function() okk = shim.AudioInit() end)
+        audio_inited = okk and true or false
+        if not audio_inited then speak("Audio init failed"); return end
+    end
+    wall_on = true; wall_gen = wall_gen + 1
+    speak("Wall radar on")
+    wall_tick(wall_gen)
+end
+do
+    local ok4 = pcall(RegisterKeyBind, Key.F4, { ModifierKey.CONTROL }, wall_probe)
+    log("Bound wall scan (Ctrl+F4): " .. tostring(ok4))
+    local ok5 = pcall(RegisterKeyBind, Key.F5, { ModifierKey.CONTROL }, wall_toggle)
+    log("Bound wall radar toggle (Ctrl+F5): " .. tostring(ok5))
 end
 
 -- Install the native GetTalkText hook (in C++, via the shim) so story/dialogue

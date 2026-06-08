@@ -495,7 +495,8 @@ int l_audio_set_listener(lua_State* L) {
 }
 int l_audio_set_source(lua_State* L) {
     SA_SetSource((int)luaL_checkinteger(L, 1), lua_toboolean(L, 2),
-                 (float)luaL_checknumber(L, 3), (float)luaL_checknumber(L, 4), (float)luaL_checknumber(L, 5));
+                 (float)luaL_checknumber(L, 3), (float)luaL_checknumber(L, 4), (float)luaL_checknumber(L, 5),
+                 (int)luaL_optinteger(L, 6, 0));
     return 0;
 }
 

@@ -44,9 +44,13 @@ constexpr int    FS  = 1024;    // Steam Audio frame size (samples/channel)
 constexpr int    MAX_SOURCES = 32;
 constexpr double TWO_PI = 6.283185307179586;
 
-constexpr int    CYCLE_LEN = (int)(1.4 * SR);    // ping period per source
-constexpr int    CUE_LEN   = (int)(0.18 * SR);   // ping (cue) duration
 constexpr int    ATTACK    = (int)(0.012 * SR);  // ping attack ramp
+constexpr int    PING_FAST = (int)(0.22 * SR);   // cycle length when near (fast pings)
+constexpr int    PING_SLOW = (int)(1.50 * SR);   // cycle length when far (slow pings)
+constexpr int    CUE_MAX   = (int)(0.13 * SR);   // max ping (cue) duration
+constexpr float  PING_NEAR = 100.0f;             // distance (units) at/below which rate is fastest
+constexpr float  PING_FAR  = 2500.0f;            // distance at/above which rate is slowest
+constexpr int    PING_STAGGER = 4000;            // per-slot phase offset so pings don't all align
 
 IPLContext       g_ctx   = nullptr;
 IPLHRTF          g_hrtf  = nullptr;
@@ -69,6 +73,7 @@ struct Source {
     float  x = 0, y = 0, z = 0;    // world position (or listener-space dir if listenerSpace)
     float  gain = 0.7f;
     double phase = 0.0;            // oscillator phase (audio-thread only)
+    float  env = 0.0f;            // smoothed on/off gain (declick fade; audio-thread only)
     IPLBinauralEffect effect = nullptr;
 };
 
@@ -89,6 +94,7 @@ float cue_freq(int cueType) {
         case 2:  return 698.0f;  // npc
         case 3:  return 294.0f;  // building entrance (low "doorway")
         case 4:  return 880.0f;  // shop (high)
+        case 5:  return 200.0f;  // wall (continuous low hum)
         default: return 523.0f;
     }
 }
@@ -102,21 +108,83 @@ IPLVector3 normalize_or_front(float x, float y, float z) {
 }
 
 IPLVector3 world_delta_to_sa(float ddx, float ddy, float ddz) {
-    return normalize_or_front(ddy, ddz, -ddx);   // right=+Y, up=+Z, front(-Z)=+X(screen up)
+    // X = -ddy: world +Y is the RIGHT-arrow direction, so a +Y object must pan to the
+    // RIGHT ear to match the key the player presses / the spoken direction. (Confirmed
+    // by ear: the un-negated form put walls on the opposite side from the speech.)
+    // up = +Z; front (-Z) = +X (screen up).
+    constexpr float WIDEN = 1.6f;   // exaggerate azimuth so close-together sources separate in stereo
+    return normalize_or_front(-ddy * WIDEN, ddz, -ddx);
 }
 
 float dist_attenuation(float dist) {
-    constexpr float ref = 250.0f;
-    if (dist <= ref) return 1.0f;
-    float g = ref / dist;
-    return g < 0.04f ? 0.04f : g;
+    constexpr float FALLOFF = 550.0f;   // volume reaches ~0 here (keep ~= the radar range)
+    float a = 1.0f - dist / FALLOFF;
+    if (a < 0.0f) a = 0.0f;
+    return a * a;                        // steep quadratic rolloff: loud near, ~silent at FALLOFF
+}
+
+// --- light Freeverb-style stereo reverb: room ambience to externalize the cues
+// (sounds outside the head are easier to localize + tell apart). Applied to the
+// whole mix; dry stays at full level so cues never get quieter from it.
+constexpr int   RV_COMB = 4, RV_AP = 2;
+constexpr int   rvCombL[RV_COMB] = { 1214, 1293, 1390, 1476 };
+constexpr int   rvCombR[RV_COMB] = { 1237, 1316, 1413, 1499 };
+constexpr int   rvApL[RV_AP]     = { 605, 480 };
+constexpr int   rvApR[RV_AP]     = { 628, 503 };
+constexpr float RV_FB = 0.80f, RV_DAMP = 0.25f, RV_APFB = 0.5f;
+float g_rvWet = 0.10f;            // master wet level (tunable)
+// reverb SEND rises with distance: the direct sound drops (attenuation) while the
+// room's reverberant field stays ~constant, so the wet/dry ratio grows with
+// distance -- the natural "farther = more reverberant" cue.
+constexpr float REV_NEAR = 150.0f, REV_FAR = 2500.0f;
+constexpr float REV_SEND_MIN = 0.10f, REV_SEND_MAX = 0.80f;
+inline float send_factor(float dist) {
+    float t = (dist - REV_NEAR) / (REV_FAR - REV_NEAR);
+    if (t < 0.0f) t = 0.0f; else if (t > 1.0f) t = 1.0f;
+    return REV_SEND_MIN + t * (REV_SEND_MAX - REV_SEND_MIN);
+}
+float rvCombBufL[RV_COMB][1600], rvCombBufR[RV_COMB][1600];
+int   rvCombPosL[RV_COMB] = {0},  rvCombPosR[RV_COMB] = {0};
+float rvCombStL[RV_COMB]  = {0},  rvCombStR[RV_COMB]  = {0};
+float rvApBufL[RV_AP][700], rvApBufR[RV_AP][700];
+int   rvApPosL[RV_AP] = {0}, rvApPosR[RV_AP] = {0};
+
+inline float rv_comb(float in, float* buf, int len, int& pos, float& st) {
+    float out = buf[pos];
+    st = out * (1.0f - RV_DAMP) + st * RV_DAMP;
+    buf[pos] = in + st * RV_FB;
+    if (++pos >= len) pos = 0;
+    return out;
+}
+inline float rv_ap(float in, float* buf, int len, int& pos) {
+    float bo = buf[pos];
+    float out = bo - in;
+    buf[pos] = in + bo * RV_APFB;
+    if (++pos >= len) pos = 0;
+    return out;
+}
+void reverb_process(float* L, float* R) {
+    for (int i = 0; i < FS; ++i) {
+        float input = (L[i] + R[i]) * 0.5f;
+        float wL = 0.0f, wR = 0.0f;
+        for (int c = 0; c < RV_COMB; ++c) wL += rv_comb(input, rvCombBufL[c], rvCombL[c], rvCombPosL[c], rvCombStL[c]);
+        for (int c = 0; c < RV_COMB; ++c) wR += rv_comb(input, rvCombBufR[c], rvCombR[c], rvCombPosR[c], rvCombStR[c]);
+        for (int a = 0; a < RV_AP; ++a)   wL = rv_ap(wL, rvApBufL[a], rvApL[a], rvApPosL[a]);
+        for (int a = 0; a < RV_AP; ++a)   wR = rv_ap(wR, rvApBufR[a], rvApR[a], rvApPosR[a]);
+        L[i] = wL * g_rvWet;   // output the WET only (caller adds it to the dry mix)
+        R[i] = wR * g_rvWet;
+    }
 }
 
 void render_block() {
     static float mixL[FS];
     static float mixR[FS];
+    static float revSendL[FS];
+    static float revSendR[FS];
     std::memset(mixL, 0, sizeof(mixL));
     std::memset(mixR, 0, sizeof(mixR));
+    std::memset(revSendL, 0, sizeof(revSendL));
+    std::memset(revSendR, 0, sizeof(revSendR));
 
     if (g_running && g_ctx && g_hrtf) {
         for (int i = 0; i < MAX_SOURCES; ++i) {
@@ -131,24 +199,49 @@ void render_block() {
                 gain = g_src[i].gain;
                 lx = g_lx; ly = g_ly; lz = g_lz;
             }
-            if (!active || !g_src[i].effect) continue;
+            if (!g_src[i].effect) continue;
+            if (!active && g_src[i].env <= 0.0005f) continue;   // fully faded out -> silent
 
-            // mono cue: a periodic ping (per-category freq, staggered by slot) or a
-            // continuous tone (test). The envelope keeps pings click-free even
-            // though the oscillator phase runs continuously.
+            // direction + distance FIRST: distance drives both attenuation and the
+            // ping rate (closer = faster pings).
+            float ddx = 0.0f, ddy = 0.0f, ddz = 0.0f, dist = 0.0f, atten = 1.0f;
+            IPLVector3 dir;
+            if (lspace) {
+                dir = normalize_or_front(sx, sy, sz);
+            } else {
+                ddx = sx - lx; ddy = sy - ly; ddz = sz - lz;
+                dist = std::sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
+                dir = world_delta_to_sa(ddx, ddy, ddz);
+                atten = dist_attenuation(dist);
+                if (cueType == 5) {
+                    // walls: steeper rolloff so they get clearly louder up close
+                    float wa = 120.0f / (dist > 1.0f ? dist : 1.0f);
+                    if (wa > 1.6f) wa = 1.6f; else if (wa < 0.25f) wa = 0.25f;
+                    atten = wa;
+                }
+            }
+
+            // mono cue: a ping whose RATE encodes distance (near=fast, far=slow);
+            // pitch encodes category (cue_freq). Or a continuous tone (test). The
+            // envelope keeps pings click-free though the oscillator runs continuously.
             double ph  = g_src[i].phase;
             double inc = TWO_PI * (double)cue_freq(cueType) / (double)SR;
             if (ping) {
-                long long base = (long long)g_clock + (long long)i * (CYCLE_LEN / MAX_SOURCES);
+                float t = (dist - PING_NEAR) / (PING_FAR - PING_NEAR);
+                if (t < 0.0f) t = 0.0f; else if (t > 1.0f) t = 1.0f;
+                int cycleLen = PING_FAST + (int)(t * (float)(PING_SLOW - PING_FAST));
+                if (cycleLen < 2) cycleLen = 2;
+                int cueLen = cycleLen / 2; if (cueLen > CUE_MAX) cueLen = CUE_MAX;
+                long long base = (long long)g_clock + (long long)i * PING_STAGGER;
                 for (int n = 0; n < FS; ++n) {
-                    long long cyc = (base + n) % CYCLE_LEN;
-                    float env = 0.0f;
-                    if (cyc < CUE_LEN) {
-                        if (cyc < ATTACK) env = (float)cyc / (float)ATTACK;
-                        else              env = 1.0f - (float)(cyc - ATTACK) / (float)(CUE_LEN - ATTACK);
-                        if (env < 0.0f) env = 0.0f;
+                    long long cyc = (base + n) % cycleLen;
+                    float penv = 0.0f;
+                    if (cyc < cueLen) {
+                        if (cyc < ATTACK) penv = (float)cyc / (float)ATTACK;
+                        else              penv = 1.0f - (float)(cyc - ATTACK) / (float)(cueLen - ATTACK);
+                        if (penv < 0.0f) penv = 0.0f;
                     }
-                    g_inBuf.data[0][n] = (float)std::sin(ph) * 0.5f * env;
+                    g_inBuf.data[0][n] = (float)std::sin(ph) * 0.5f * penv;
                     ph += inc;
                 }
             } else {
@@ -156,33 +249,38 @@ void render_block() {
             }
             g_src[i].phase = std::fmod(ph, TWO_PI);
 
-            IPLVector3 dir; float atten = 1.0f;
-            if (lspace) {
-                dir = normalize_or_front(sx, sy, sz);
-            } else {
-                float ddx = sx - lx, ddy = sy - ly, ddz = sz - lz;
-                float dist = std::sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
-                dir = world_delta_to_sa(ddx, ddy, ddz);
-                atten = dist_attenuation(dist);
-            }
+            // per-source fade env declicks activate/deactivate (~30ms ramp).
+            float env = g_src[i].env;
+            const float target = active ? 1.0f : 0.0f;
+            const float step = 1.0f / (0.015f * (float)SR);   // ~15ms declick fade
+            const float dryG  = gain * atten;               // direct sound: drops with distance
+            const float sendG = gain * send_factor(dist);   // reverb send: rises with distance
 
+            // HRTF binaural for ALL cues (walls + objects); reverb (below) adds the
+            // room ambience, sent more strongly the farther the source is.
             IPLBinauralEffectParams p = {};
             p.direction     = dir;
             p.interpolation = IPL_HRTFINTERPOLATION_BILINEAR;
             p.spatialBlend  = 1.0f;
             p.hrtf          = g_hrtf;
             iplBinauralEffectApply(g_src[i].effect, &p, &g_inBuf, &g_outBuf);
-
-            float g = gain * atten;
             for (int n = 0; n < FS; ++n) {
-                mixL[n] += g_outBuf.data[0][n] * g;
-                mixR[n] += g_outBuf.data[1][n] * g;
+                if (env < target)      { env += step; if (env > target) env = target; }
+                else if (env > target) { env -= step; if (env < target) env = target; }
+                float l = g_outBuf.data[0][n] * env;
+                float r = g_outBuf.data[1][n] * env;
+                mixL[n]     += l * dryG;
+                mixR[n]     += r * dryG;
+                revSendL[n] += l * sendG;
+                revSendR[n] += r * sendG;
             }
+            g_src[i].env = env;
         }
     }
 
+    reverb_process(revSendL, revSendR);   // revSend buffers now hold the wet signal
     for (int n = 0; n < FS; ++n) {
-        float l = mixL[n], r = mixR[n];
+        float l = mixL[n] + revSendL[n], r = mixR[n] + revSendR[n];
         if (l > 1.0f) l = 1.0f; else if (l < -1.0f) l = -1.0f;
         if (r > 1.0f) r = 1.0f; else if (r < -1.0f) r = -1.0f;
         g_block[2 * n]     = l;
@@ -264,6 +362,7 @@ void SA_Shutdown(void) {
     for (int i = 0; i < MAX_SOURCES; ++i) {
         if (g_src[i].effect) { iplBinauralEffectRelease(&g_src[i].effect); g_src[i].effect = nullptr; }
         g_src[i].active = false;
+        g_src[i].env = 0.0f;
     }
     if (g_inBuf.data)  { iplAudioBufferFree(g_ctx, &g_inBuf);  g_inBuf  = {}; }
     if (g_outBuf.data) { iplAudioBufferFree(g_ctx, &g_outBuf); g_outBuf = {}; }
@@ -282,7 +381,8 @@ void SA_SetSource(int id, int active, float x, float y, float z, int cueType) {
     std::lock_guard<std::mutex> lk(g_mtx);
     g_src[id].active = (active != 0);
     g_src[id].listenerSpace = false;
-    g_src[id].ping = true;
+    g_src[id].ping = true;                            // all cues ping; the rate encodes distance
+    g_src[id].gain = (cueType == 5) ? 0.55f : 0.7f;   // walls a touch under objects (steeper rolloff below)
     g_src[id].cueType = cueType;
     g_src[id].x = x; g_src[id].y = y; g_src[id].z = z;
 }
