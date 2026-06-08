@@ -499,6 +499,10 @@ int l_audio_set_source(lua_State* L) {
                  (int)luaL_optinteger(L, 6, 0));
     return 0;
 }
+int l_audio_load_cue(lua_State* L) {
+    lua_pushboolean(L, SA_LoadCue((int)luaL_checkinteger(L, 1), luaL_checkstring(L, 2)));
+    return 1;
+}
 
 const luaL_Reg op1access_funcs[] = {
     {"Speak",                l_speak},
@@ -515,6 +519,7 @@ const luaL_Reg op1access_funcs[] = {
     {"AudioTest",            l_audio_test},
     {"AudioSetListener",     l_audio_set_listener},
     {"AudioSetSource",       l_audio_set_source},
+    {"AudioLoadCue",         l_audio_load_cue},
     {nullptr, nullptr},
 };
 

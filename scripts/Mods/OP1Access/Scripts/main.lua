@@ -1699,6 +1699,27 @@ local beacon_slotof = {}   -- stable beacon_objs index -> shim slot (declick: on
 local BEACON_RANGE   = 500      -- fixed audible radius (world units; ~500 each direction)
 local BEACON_HARDCAP = 28       -- object beacons use slots 0..27; 28..31 reserved for wall radar
 local CAT_CUE = { chest = 0, exit = 1, npc = 2, building = 3, shop = 4 }  -- category -> shim cue/freq
+
+-- Custom cue assets: drop chest/exit/npc/building/shop/wall .flac|.mp3|.wav into the
+-- mod's Assets/ folder and they replace the generated tones (played at the same
+-- distance-driven ping rate). Missing files fall back to tones. Loaded once, lazily.
+local ASSET_DIR = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\OCTOPATH TRAVELER\\Octopath_Traveler\\Binaries\\Win64\\Mods\\OP1Access\\Assets\\"
+local CUE_FILE  = { [0] = "chest", [1] = "exit", [2] = "npc", [3] = "building", [4] = "shop", [5] = "wall" }
+local CUE_EXTS  = { "flac", "mp3", "wav" }   -- preference order; FLAC/MP3 keep files small
+local cues_loaded = false
+local function load_cues()
+    if cues_loaded then return end
+    if not (shim and shim.AudioLoadCue) then return end
+    cues_loaded = true   -- try once per session; add files then restart to (re)load
+    for ct = 0, 5 do
+        for _, ext in ipairs(CUE_EXTS) do
+            local ok = false
+            pcall(function() ok = shim.AudioLoadCue(ct, ASSET_DIR .. CUE_FILE[ct] .. "." .. ext) end)
+            if ok then log("CUE " .. CUE_FILE[ct] .. " <- " .. ext); break end
+        end
+    end
+end
+
 local function beacon_rescan()
     beacon_objs = {}
     beacon_slotof = {}
@@ -1787,6 +1808,7 @@ local function beacon_toggle()
         audio_inited = ok and true or false
         if not audio_inited then speak("Audio init failed"); return end
     end
+    load_cues()
     beacon_rescan()
     if #beacon_objs == 0 then speak("No objects found to beacon"); return end
     beacon_gen = beacon_gen + 1
@@ -1908,6 +1930,7 @@ local function wall_toggle()
         audio_inited = okk and true or false
         if not audio_inited then speak("Audio init failed"); return end
     end
+    load_cues()
     wall_on = true; wall_gen = wall_gen + 1
     speak("Wall radar on")
     wall_tick(wall_gen)

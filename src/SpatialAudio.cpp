@@ -34,6 +34,7 @@ extern "C" {
 #include <cmath>
 #include <cstring>
 #include <cstdio>
+#include <vector>
 
 #include "SpatialAudio.h"
 
@@ -80,6 +81,10 @@ struct Source {
 Source     g_src[MAX_SOURCES];
 float      g_lx = 0, g_ly = 0, g_lz = 0;   // listener world position
 std::mutex g_mtx;
+
+constexpr int NUM_CUES = 6;                 // cue types 0..5 (chest/exit/npc/building/shop/wall)
+float* g_cueBuf[NUM_CUES] = { nullptr };    // decoded mono @ SR samples per category (null = generated tone)
+int    g_cueLen[NUM_CUES] = { 0 };
 
 float g_block[FS * 2];              // one rendered stereo block, interleaved L,R,...
 int   g_blockPos = FS;             // frames consumed; start "empty" so first callback renders
@@ -189,6 +194,7 @@ void render_block() {
     if (g_running && g_ctx && g_hrtf) {
         for (int i = 0; i < MAX_SOURCES; ++i) {
             bool active, lspace, ping; int cueType; float sx, sy, sz, gain, lx, ly, lz;
+            const float* cueBuf = nullptr; int cueBufLen = 0;
             {
                 std::lock_guard<std::mutex> lk(g_mtx);
                 active  = g_src[i].active;
@@ -198,6 +204,7 @@ void render_block() {
                 sx = g_src[i].x; sy = g_src[i].y; sz = g_src[i].z;
                 gain = g_src[i].gain;
                 lx = g_lx; ly = g_ly; lz = g_lz;
+                if (cueType >= 0 && cueType < NUM_CUES) { cueBuf = g_cueBuf[cueType]; cueBufLen = g_cueLen[cueType]; }
             }
             if (!g_src[i].effect) continue;
             if (!active && g_src[i].env <= 0.0005f) continue;   // fully faded out -> silent
@@ -231,18 +238,27 @@ void render_block() {
                 if (t < 0.0f) t = 0.0f; else if (t > 1.0f) t = 1.0f;
                 int cycleLen = PING_FAST + (int)(t * (float)(PING_SLOW - PING_FAST));
                 if (cycleLen < 2) cycleLen = 2;
-                int cueLen = cycleLen / 2; if (cueLen > CUE_MAX) cueLen = CUE_MAX;
                 long long base = (long long)g_clock + (long long)i * PING_STAGGER;
-                for (int n = 0; n < FS; ++n) {
-                    long long cyc = (base + n) % cycleLen;
-                    float penv = 0.0f;
-                    if (cyc < cueLen) {
-                        if (cyc < ATTACK) penv = (float)cyc / (float)ATTACK;
-                        else              penv = 1.0f - (float)(cyc - ATTACK) / (float)(cueLen - ATTACK);
-                        if (penv < 0.0f) penv = 0.0f;
+                if (cueBuf && cueBufLen > 0) {
+                    // play the LOADED cue sample once per cycle (rate = distance)
+                    for (int n = 0; n < FS; ++n) {
+                        long long cyc = (base + n) % cycleLen;
+                        g_inBuf.data[0][n] = (cyc < (long long)cueBufLen) ? cueBuf[(size_t)cyc] : 0.0f;
                     }
-                    g_inBuf.data[0][n] = (float)std::sin(ph) * 0.5f * penv;
-                    ph += inc;
+                } else {
+                    // generated tone: sine + short envelope (fallback when no asset file)
+                    int cueLen = cycleLen / 2; if (cueLen > CUE_MAX) cueLen = CUE_MAX;
+                    for (int n = 0; n < FS; ++n) {
+                        long long cyc = (base + n) % cycleLen;
+                        float penv = 0.0f;
+                        if (cyc < cueLen) {
+                            if (cyc < ATTACK) penv = (float)cyc / (float)ATTACK;
+                            else              penv = 1.0f - (float)(cyc - ATTACK) / (float)(cueLen - ATTACK);
+                            if (penv < 0.0f) penv = 0.0f;
+                        }
+                        g_inBuf.data[0][n] = (float)std::sin(ph) * 0.5f * penv;
+                        ph += inc;
+                    }
                 }
             } else {
                 for (int n = 0; n < FS; ++n) { g_inBuf.data[0][n] = (float)std::sin(ph) * 0.5f; ph += inc; }
@@ -364,6 +380,7 @@ void SA_Shutdown(void) {
         g_src[i].active = false;
         g_src[i].env = 0.0f;
     }
+    for (int i = 0; i < NUM_CUES; ++i) { delete[] g_cueBuf[i]; g_cueBuf[i] = nullptr; g_cueLen[i] = 0; }
     if (g_inBuf.data)  { iplAudioBufferFree(g_ctx, &g_inBuf);  g_inBuf  = {}; }
     if (g_outBuf.data) { iplAudioBufferFree(g_ctx, &g_outBuf); g_outBuf = {}; }
     if (g_hrtf) { iplHRTFRelease(&g_hrtf); g_hrtf = nullptr; }
@@ -385,6 +402,35 @@ void SA_SetSource(int id, int active, float x, float y, float z, int cueType) {
     g_src[id].gain = (cueType == 5) ? 0.55f : 0.7f;   // walls a touch under objects (steeper rolloff below)
     g_src[id].cueType = cueType;
     g_src[id].x = x; g_src[id].y = y; g_src[id].z = z;
+}
+
+int SA_LoadCue(int cueType, const char* path) {
+    if (cueType < 0 || cueType >= NUM_CUES || !path) return 0;
+    // miniaudio decodes WAV / FLAC / MP3 (built-in) -> mono f32 at our sample rate.
+    ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 1, SR);
+    ma_decoder dec;
+    if (ma_decoder_init_file(path, &cfg, &dec) != MA_SUCCESS) return 0;
+    std::vector<float> samples;
+    samples.reserve(SR);
+    float tmp[4096];
+    for (;;) {
+        ma_uint64 got = 0;
+        if (ma_decoder_read_pcm_frames(&dec, tmp, 4096, &got) != MA_SUCCESS) break;
+        if (got == 0) break;
+        samples.insert(samples.end(), tmp, tmp + (size_t)got);
+        if (samples.size() > (size_t)SR * 10) break;   // cap a cue at 10 seconds
+    }
+    ma_decoder_uninit(&dec);
+    if (samples.empty()) return 0;
+    float* buf = new float[samples.size()];
+    std::memcpy(buf, samples.data(), samples.size() * sizeof(float));
+    {
+        std::lock_guard<std::mutex> lk(g_mtx);
+        delete[] g_cueBuf[cueType];
+        g_cueBuf[cueType] = buf;
+        g_cueLen[cueType] = (int)samples.size();
+    }
+    return 1;
 }
 
 void SA_TestTone(int dir) {

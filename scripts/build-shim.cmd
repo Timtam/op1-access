@@ -149,5 +149,8 @@ copy /Y "%STEAMAUDIO%\lib\windows-x64\phonon.dll" "%GAME_BIN%\phonon.dll" >nul |
 )
 copy /Y "%NVDA_DLL%" "%GAME_MODS%\Scripts\nvdaControllerClient64.dll" >nul
 if exist "%SAAPI_DLL%" copy /Y "%SAAPI_DLL%" "%GAME_MODS%\Scripts\SAAPI64.dll" >nul
+:: Assets folder for custom cue sounds: ensure it exists + ship the README (never clobber user files)
+if not exist "%GAME_MODS%\Assets" mkdir "%GAME_MODS%\Assets"
+if exist "%REPO%\scripts\Mods\OP1Access\Assets\README.md" copy /Y "%REPO%\scripts\Mods\OP1Access\Assets\README.md" "%GAME_MODS%\Assets\README.md" >nul
 echo [build] Deployed to: "%GAME_MODS%\Scripts"
 echo [build] Done.
