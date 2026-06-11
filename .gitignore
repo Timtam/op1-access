@@ -33,3 +33,6 @@ unpacked/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# user's local cue staging folder (canonical copies live in scripts/Mods/OP1Access/Assets/)
+/Assets/

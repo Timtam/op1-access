@@ -1320,7 +1320,14 @@ local cs_prev_key   = nil  -- previous arrow press
 local cs_move_key   = nil  -- last arrow that produced steady movement
 local cs_pp_x, cs_pp_y = nil, nil  -- previous press cursor pos (numbers)
 local cs_key_delta  = {}   -- arrow -> {dx,dy} sign of the world movement it causes
+local radar_pump   -- forward decl: assigned in the radar-pump section (field radar driver)
+local bump_arrow_t   = 0.0   -- last arrow keypress time (bump detection, any screen)
+local bump_arrow_key = nil   -- which arrow ("UP_ARROW", ...)
+local wall_blocked   = {}    -- wall radar's latest blocked dirs (up/down/left/right -> true)
+local beacon_rescan_at = nil -- set after a door/transition; beacon_step rescans the new area then
 local function on_arrow_log(kname)
+    bump_arrow_t = os.clock(); bump_arrow_key = kname
+    if radar_pump then pcall(radar_pump, "key") end   -- arrow presses drive the field radar pump
     do return end   -- superseded by the OnCursor* hooks (correct instance + event-driven)
     if dlg_visible then return end          -- a confirm dialog owns the keys; stay quiet
     local inst, x, y = cs_live_instance()
@@ -1594,6 +1601,133 @@ local function get_player_obj()
     if p and p:IsValid() then return p, "charmgr" end
     return nil, "none"
 end
+
+-- RECON (Ctrl+F3): to add a "bumped into a wall" sound we must detect "trying to move
+-- but not moving". This probe logs the candidate signals each tick so we can see which
+-- one distinguishes walking-free from walking-into-a-wall. Walk freely, then hold a
+-- direction into a wall, and compare: speed should drop to ~0 while some input/accel
+-- signal stays non-zero.
+local mvp_on = false
+local mvp_lx, mvp_ly
+local function mvp_step()   -- driven by radar_pump while mvp_on
+    local p = get_player_obj()
+    if not p then return end
+    local px, py = read_actor_pos(p)
+    local spd = "?"
+    if px and mvp_lx then spd = string.format("%.0f", math.sqrt((px - mvp_lx)^2 + (py - mvp_ly)^2)) end
+    mvp_lx, mvp_ly = px, py
+    local gv, cmv, cma, inp = "-", "-", "-", "-"
+    pcall(function() local v = p:GetVelocity();                 gv  = string.format("%.0f,%.0f", v.X, v.Y) end)
+    pcall(function() local v = p.CharacterMovement.Velocity;     cmv = string.format("%.0f,%.0f", v.X, v.Y) end)
+    pcall(function() local a = p.CharacterMovement.Acceleration; cma = string.format("%.0f,%.0f", a.X, a.Y) end)
+    pcall(function() local iv = p:GetLastMovementInputVector();  inp = string.format("%.2f,%.2f", iv.X, iv.Y) end)
+    log(string.format("MVP spd=%s getvel=%s cmVel=%s cmAcc=%s inp=%s", spd, gv, cmv, cma, inp))
+end
+local function mvp_toggle()
+    mvp_on = not mvp_on
+    if mvp_on then mvp_lx = nil; speak("Move probe on") else speak("Move probe off") end
+end
+
+-- Wall-bump feedback: input held (GetLastMovementInputVector) but velocity ~0 means
+-- the player is pushing into a wall. Play a one-shot bump cue (type 6, Assets/bump.*)
+-- on each fresh bump, with a short cooldown so holding gives a gentle repeat, not a
+-- buzz. Driven by radar_pump whenever audio is initialized, radar on or off.
+local BUMP_CUE = 6
+local DOOR_CUE = 7
+-- Stuck detection uses POSITION DISPLACEMENT between pumps, not velocity: most
+-- pumps run inside the game's frame tick (EventManagerBP hook), where the
+-- engine's velocity value is mid-update and reads as "moving" even against a
+-- wall (that intermittently reset the old streak counter, killing retriggers).
+-- Displacement is phase-immune: walking covers ~670 u/s, blocked is ~0.
+local KEYDIR = { UP_ARROW = "up", DOWN_ARROW = "down", LEFT_ARROW = "left", RIGHT_ARROW = "right" }
+local bump_px, bump_py, bump_pt          -- previous pump's position + time
+local bump_pass0    = nil                -- hold-streak window start
+local bump_lastpass = 0.0                -- last pump that saw "pushing + not moving"
+local bump_inp_t    = 0.0                -- last time any pump saw movement input
+local bump_snap     = nil                -- press-synchronized check: {t, x, y, key}
+local bump_seen_press = 0.0              -- last bump_arrow_t already snapshotted
+local bump_lastfire = 0.0
+local bump_lastlog  = 0.0
+local function bump_fire(now, why)
+    if now - bump_lastfire < 0.35 then return end
+    bump_lastfire = now
+    log("BUMP fire (" .. why .. ")")
+    pcall(function() shim.AudioPlayCue(BUMP_CUE) end)
+end
+local function bump_step()
+    local p = get_player_obj()
+    if not p then bump_px = nil; bump_snap = nil; return end
+    local px, py = read_actor_pos(p)
+    if not px then bump_px = nil; bump_snap = nil; return end
+    local now = os.clock()
+    local inpMag = 0
+    pcall(function() local iv = p:GetLastMovementInputVector(); inpMag = math.sqrt(iv.X * iv.X + iv.Y * iv.Y) end)
+    if inpMag > 0.5 then bump_inp_t = now end
+
+    -- (1) press-synchronized check, DETERMINISTIC per tap: the keybind stamps every
+    -- arrow press; the next pump snapshots the position; a pump 0.15-0.8s later
+    -- measures how far we actually got. A blocked press moves ~0 units. This does
+    -- not depend on the input vector, whose mid-frame reads miss most taps.
+    if bump_arrow_t > bump_seen_press then
+        bump_seen_press = bump_arrow_t
+        bump_snap = { t = now, x = px, y = py, key = bump_arrow_key }
+    elseif bump_snap then
+        local age = now - bump_snap.t
+        if age > 0.8 then
+            bump_snap = nil
+        elseif age >= 0.15 then
+            local moved = math.sqrt((px - bump_snap.x) ^ 2 + (py - bump_snap.y) ^ 2)
+            local dirname = bump_snap.key and KEYDIR[bump_snap.key]
+            -- gate against menu/dialog arrow presses (those move nothing either):
+            -- need EITHER movement input seen recently (we're really steering the
+            -- character) OR the wall radar's independent "that direction is blocked"
+            local infield = (now - bump_inp_t) < 0.8
+            local atwall  = (dirname and wall_blocked[dirname]) and true or false
+            -- blocked presses measure EXACTLY 0 (log-verified); even the lightest
+            -- real tap moves 15+. 6 units = blocked + tiny corner slides only.
+            if moved < 6 and (infield or atwall) then
+                bump_fire(now, string.format("press %s moved=%.0f", dirname or "?", moved))
+            end
+            bump_snap = nil
+        end
+    end
+
+    -- (2) sustained-hold streak (time-window; one context-poisoned pump can't reset
+    -- it -- only 0.45s without a passing pump does)
+    local lx, ly, lt = bump_px, bump_py, bump_pt
+    bump_px, bump_py, bump_pt = px, py, now
+    if not (lx and lt) then return end
+    local dt = now - lt
+    local moved = math.sqrt((px - lx) ^ 2 + (py - ly) ^ 2)
+    -- door / transition = a TELEPORT: displacement RATE far above any movement
+    -- speed (in-building doors hop only a few hundred units, so distance alone
+    -- can't tell them from walking -- but walking never exceeds ~1000 u/s while a
+    -- hop between two pumps reads as 2000+). The absolute clause catches big map
+    -- loads, where a long loading gap makes the rate small but the distance huge.
+    local rate = moved / math.max(dt, 0.08)
+    if (moved > 250 and rate > 2200) or moved > 1200 then
+        log(string.format("DOOR jump=%.0f dt=%.2f rate=%.0f", moved, dt, rate))
+        pcall(function() shim.AudioPlayCue(DOOR_CUE) end)
+        if beacon_on then beacon_rescan_at = now + 0.7 end
+        bump_snap = nil
+        return
+    end
+    if dt < 0.05 or dt > 0.6 then return end      -- odd pump gap: just re-sample
+    -- 25 u/s: pressed-against-wall is ~0 u/s, while even slow TAP-walking averages
+    -- 100+ u/s (the old 120 u/s threshold made careful tapping read as "stuck")
+    if inpMag > 0.5 and moved < 25 * dt then      -- pushing, but ~not moving
+        if (not bump_pass0) or (now - bump_lastpass > 0.45) then bump_pass0 = now end
+        bump_lastpass = now
+        if now - bump_lastlog > 1.0 then
+            bump_lastlog = now
+            log(string.format("BUMP stuck %.2fs inp=%.2f moved=%.0f dt=%.2f", now - bump_pass0, inpMag, moved, dt))
+        end
+        if now - bump_pass0 >= 0.10 and now - bump_lastfire > 0.7 then
+            bump_fire(now, "hold")
+        end
+    end
+end
+
 -- Calibrated 2026-06-07 (held each arrow ~2s, watched the world delta): movement
 -- is world-axis-aligned, and the axes are SWAPPED vs screen intuition --
 -- world X = the UP/DOWN arrow axis (UP=+X, DOWN=-X); world Y = the LEFT/RIGHT
@@ -1619,6 +1753,24 @@ local function nav_probe()
         log(string.format("NAVDELTA since last Ctrl+F8: dX=%.0f dY=%.0f", px - nav_last_px, py - nav_last_py))
     end
     nav_last_px, nav_last_py = px, py
+    -- camera/facing yaw diagnostics: if some maps rotate the camera, the arrow-key
+    -- frame rotates with it and the radar's world->ear mapping must follow. Compare
+    -- these on a "consistent" map vs a "diagonal-feeling" map.
+    do
+        local yp, yc, ycam = "-", "-", "-"
+        pcall(function() local r = p:K2_GetActorRotation(); yp = string.format("%.0f", r.Yaw) end)
+        pcall(function() local r = p:GetControlRotation();  yc = string.format("%.0f", r.Yaw) end)
+        pcall(function()
+            local cams = FindAllOf("PlayerCameraManager")
+            if cams then
+                for _, c in pairs(cams) do
+                    local okv = false; pcall(function() okv = c and c:IsValid() end)
+                    if okv then local r = c:GetCameraRotation(); ycam = string.format("%.0f", r.Yaw); break end
+                end
+            end
+        end)
+        log(string.format("YAW pawn=%s ctrl=%s cam=%s", yp, yc, ycam))
+    end
     local bestd, bestcat, bdx, bdy, bdz
     for _, c in ipairs(NAV_CLASSES) do
         local list = nil
@@ -1660,8 +1812,23 @@ end
 -- the shim's Steam Audio engine. Confirms audio comes out of the shim in-process
 -- AND that the direction is audible, before we drive sources from object positions.
 local audio_inited = false
-local audio_test_dir = 4
-local AUDIO_DIR_NAME = { [0] = "right", [1] = "left", [2] = "front", [3] = "back", [4] = "off" }
+-- Ctrl+F7 test cycle. Phases 1-4 test the RENDERER alone (listener-space dirs,
+-- bypassing the world mapping). Phases 5-8 place a real pinging source 300 units
+-- away in WORLD space -- the end-to-end ground truth for the radar's axis mapping
+-- ("world right" = the right-arrow side and MUST sound in the right ear). Phase 9
+-- = off. Run with the radars off (the world test borrows beacon slot 0).
+local audio_test_phase = 0
+local AUDIO_TESTS = {
+    { say = "engine right",                       sa = 0 },
+    { say = "engine left",                        sa = 1 },
+    { say = "engine front",                       sa = 2 },
+    { say = "engine behind",                      sa = 3 },
+    { say = "world right, the right arrow side",  dx = 0,    dy = 300 },
+    { say = "world left, the left arrow side",    dx = 0,    dy = -300 },
+    { say = "world front, the up arrow side",     dx = 300,  dy = 0 },
+    { say = "world behind, the down arrow side",  dx = -300, dy = 0 },
+    { say = "bump sound",                         bump = true },   -- direct one-shot playback check
+}
 local function audio_test_cycle()
     if not (shim and shim.AudioInit) then speak("Audio module not loaded"); return end
     if not audio_inited then
@@ -1671,10 +1838,26 @@ local function audio_test_cycle()
         local st = "?"; pcall(function() st = shim.AudioStatus() end)
         log("AudioInit: " .. tostring(ok) .. " status=" .. tostring(st))
         if not audio_inited then speak("Audio init failed: " .. tostring(st)); return end
+        load_cues()
     end
-    audio_test_dir = (audio_test_dir + 1) % 5
-    pcall(function() shim.AudioTest(audio_test_dir) end)
-    speak("tone " .. (AUDIO_DIR_NAME[audio_test_dir] or "?"))
+    audio_test_phase = (audio_test_phase % (#AUDIO_TESTS + 1)) + 1
+    pcall(function() shim.AudioTest(4) end)                          -- engine test off
+    pcall(function() shim.AudioSetSource(0, false, 0, 0, 0, 0) end)  -- world test off
+    local t = AUDIO_TESTS[audio_test_phase]
+    if not t then speak("test off"); return end
+    if t.bump then
+        pcall(function() shim.AudioPlayCue(BUMP_CUE) end)
+    elseif t.sa then
+        pcall(function() shim.AudioTest(t.sa) end)
+    else
+        local p = get_player_obj()
+        local px, py, pz
+        if p then px, py, pz = read_actor_pos(p) end
+        if not px then speak("No player position"); return end
+        pcall(function() shim.AudioSetListener(px, py, pz) end)
+        pcall(function() shim.AudioSetSource(0, true, px + t.dx, py + t.dy, pz, 2) end)
+    end
+    speak(t.say)
 end
 do
     local ok = pcall(RegisterKeyBind, Key.F7, { ModifierKey.CONTROL }, audio_test_cycle)
@@ -1688,7 +1871,6 @@ end
 -- player position as the Steam Audio listener and the nearest object as source 0,
 -- so the cue pans + swells as you walk. Re-toggle after a map change to rescan.
 local beacon_on  = false
-local beacon_gen = 0
 local beacon_objs = {}
 local beacon_slotof = {}   -- stable beacon_objs index -> shim slot (declick: one object, one slot)
 -- Range model: ping EVERY object within a FIXED radius (no density filter), so an
@@ -1704,14 +1886,14 @@ local CAT_CUE = { chest = 0, exit = 1, npc = 2, building = 3, shop = 4 }  -- cat
 -- mod's Assets/ folder and they replace the generated tones (played at the same
 -- distance-driven ping rate). Missing files fall back to tones. Loaded once, lazily.
 local ASSET_DIR = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\OCTOPATH TRAVELER\\Octopath_Traveler\\Binaries\\Win64\\Mods\\OP1Access\\Assets\\"
-local CUE_FILE  = { [0] = "chest", [1] = "exit", [2] = "npc", [3] = "building", [4] = "shop", [5] = "wall" }
+local CUE_FILE  = { [0] = "chest", [1] = "exit", [2] = "npc", [3] = "building", [4] = "shop", [5] = "wall", [6] = "bump", [7] = "door" }
 local CUE_EXTS  = { "flac", "mp3", "wav" }   -- preference order; FLAC/MP3 keep files small
 local cues_loaded = false
 local function load_cues()
     if cues_loaded then return end
     if not (shim and shim.AudioLoadCue) then return end
-    cues_loaded = true   -- try once per session; add files then restart to (re)load
-    for ct = 0, 5 do
+    cues_loaded = true   -- once per session; changed files need a game restart
+    for ct = 0, 7 do
         for _, ext in ipairs(CUE_EXTS) do
             local ok = false
             pcall(function() ok = shim.AudioLoadCue(ct, ASSET_DIR .. CUE_FILE[ct] .. "." .. ext) end)
@@ -1720,6 +1902,24 @@ local function load_cues()
     end
 end
 
+-- Background NPCs that can't be talked to just stand around and block paths --
+-- useless on the radar. NPCInfoData tells them apart: real NPCs have entries in
+-- ConnectionTalkList and/or a path-action ID (purchase/battle/search/lure).
+-- Fail OPEN (keep the NPC) if the struct can't be read, so we never hide real ones.
+local function npc_interesting(o)
+    local ntalk, pid, bid, sid, lid, nm
+    local ok = pcall(function()
+        local info = o.NPCInfoData
+        ntalk = #info.ConnectionTalkList
+        pid, bid, sid, lid = info.PurchaseID, info.BattleID, info.SearchID, info.LureID
+        nm = "?"
+        pcall(function() nm = info.Name:ToString() end)
+    end)
+    if not ok or ntalk == nil then return true, "read-fail (kept)" end
+    local keep = ntalk > 0 or (pid or 0) > 0 or (bid or 0) > 0 or (sid or 0) > 0 or (lid or 0) > 0
+    return keep, string.format("name=%s talk=%d p=%s b=%s s=%s l=%s",
+        tostring(nm), ntalk, tostring(pid), tostring(bid), tostring(sid), tostring(lid))
+end
 local function beacon_rescan()
     beacon_objs = {}
     beacon_slotof = {}
@@ -1733,21 +1933,41 @@ local function beacon_rescan()
                 -- store the ACTOR (not a fixed position): NPCs wander, so the tick
                 -- reads each one's live position. Cap defends against huge towns.
                 if okv and #beacon_objs < 128 then
-                    beacon_objs[#beacon_objs + 1] = { actor = o, cat = c.name }
+                    local keep = true
+                    if c.name == "npc" then
+                        local why
+                        keep, why = npc_interesting(o)
+                        log("NPC " .. (keep and "keep" or "omit") .. ": " .. why)
+                    end
+                    if keep then
+                        beacon_objs[#beacon_objs + 1] = { actor = o, cat = c.name }
+                    end
                 end
             end
         end
     end
     log("BEACON rescan: " .. #beacon_objs .. " objects")
 end
-local function beacon_tick(mygen)
-    if not beacon_on or mygen ~= beacon_gen then return end
+local function beacon_step()   -- driven by radar_pump while beacon_on
+    -- pending post-door rescan: silence everything, re-enumerate the NEW area's
+    -- actors (the old handles died with the old map), report the fresh count
+    if beacon_rescan_at and os.clock() >= beacon_rescan_at then
+        beacon_rescan_at = nil
+        for i = 0, BEACON_HARDCAP - 1 do pcall(function() shim.AudioSetSource(i, false, 0, 0, 0, 0) end) end
+        beacon_rescan()
+        speak(string.format("%d objects here", #beacon_objs))
+    end
     local p = get_player_obj()
     local px, py, pz
     if p then px, py, pz = read_actor_pos(p) end
     if px then
         pcall(function() shim.AudioSetListener(px, py, pz) end)
-        -- which tracked objects are in range right now, keyed by their STABLE index
+        -- which tracked objects are in range right now, keyed by their STABLE index.
+        -- SAME LEVEL ONLY: objects a floor above/below are unreachable and their
+        -- mostly-vertical direction reads as vague/drifting left-right -- on
+        -- multi-level maps (prologue building!) they just pollute the panorama.
+        -- Crossing stairs changes pz, so the audible set re-filters itself live.
+        -- Ctrl+F8 still reports off-level objects explicitly ("below"/"above").
         local r2 = BEACON_RANGE * BEACON_RANGE
         local inrange = {}
         for idx, o in ipairs(beacon_objs) do
@@ -1757,7 +1977,7 @@ local function beacon_tick(mygen)
                 local ox, oy, oz = read_actor_pos(o.actor)
                 if ox then
                     local dx, dy = ox - px, oy - py
-                    if dx * dx + dy * dy <= r2 then
+                    if dx * dx + dy * dy <= r2 and math.abs((oz or pz) - pz) <= LEVEL_THRESH then
                         inrange[idx] = { x = ox, y = oy, z = oz, cat = o.cat }
                     end
                 end
@@ -1787,7 +2007,6 @@ local function beacon_tick(mygen)
             end
         end
     end
-    ExecuteWithDelay(120, function() beacon_tick(mygen) end)
 end
 local function beacon_deactivate_all()
     for i = 0, BEACON_HARDCAP - 1 do
@@ -1798,7 +2017,7 @@ end
 local function beacon_toggle()
     if not (shim and shim.AudioInit) then speak("Audio module not loaded"); return end
     if beacon_on then
-        beacon_on = false; beacon_gen = beacon_gen + 1
+        beacon_on = false
         beacon_deactivate_all()
         speak("Beacon off")
         return
@@ -1811,10 +2030,9 @@ local function beacon_toggle()
     load_cues()
     beacon_rescan()
     if #beacon_objs == 0 then speak("No objects found to beacon"); return end
-    beacon_gen = beacon_gen + 1
     beacon_on = true
     speak(string.format("Beacon on, %d objects tracked", #beacon_objs))
-    beacon_tick(beacon_gen)
+    pcall(beacon_step)   -- immediate first update; the radar pump keeps it fresh
 end
 do
     local ok = pcall(RegisterKeyBind, Key.F6, { ModifierKey.CONTROL }, beacon_toggle)
@@ -1871,22 +2089,19 @@ end
 -- Dedicated source slots 28..31 so it coexists with the object beacon. Ctrl+F5
 -- toggles it; Ctrl+F4 is the one-shot speech scan.
 local wall_on   = false
-local wall_gen  = 0
 local wall_ticks = 0
 local WALL_SLOT = { 28, 29, 30, 31 }   -- one shim source per WALL_DIRS entry
 local WALL_CUE  = 5
 local WALL_LEN  = 175   -- only detect walls within ~a few steps (avoid panorama clutter)
-local function wall_tick(mygen)
-    if not wall_on or mygen ~= wall_gen then return end
+local function wall_step()   -- driven by radar_pump while wall_on
     wall_ticks = wall_ticks + 1
-    -- wrap the work so a stray error can never kill the reschedule below
     pcall(function()
         local p = get_player_obj()
         local px, py, pz
         if p then px, py, pz = read_actor_pos(p) end
         local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
         if not (px and ksl) then
-            if wall_ticks % 8 == 0 then log(string.format("WALLTICK #%d no px/ksl", wall_ticks)) end
+            if wall_ticks % 16 == 0 then log(string.format("WALLTICK #%d no px/ksl", wall_ticks)) end
             return
         end
         pcall(function() shim.AudioSetListener(px, py, pz) end)
@@ -1898,6 +2113,7 @@ local function wall_tick(mygen)
             local slot = WALL_SLOT[i]
             if ok and hit then
                 nblk = nblk + 1
+                wall_blocked[d.name] = true        -- shared with bump detection
                 -- place the cue at the REAL wall distance (clamped) so volume + ping
                 -- rate reflect how close the wall is; fall back if OutHit isn't filled
                 local hd = 120
@@ -1908,19 +2124,20 @@ local function wall_tick(mygen)
                 if i == 1 then uphd = string.format("%.0f", hd) end
                 pcall(function() shim.AudioSetSource(slot, true, px + d.dx * hd, py + d.dy * hd, pz, WALL_CUE) end)
             else
+                wall_blocked[d.name] = nil
                 pcall(function() shim.AudioSetSource(slot, false, 0, 0, 0, WALL_CUE) end)
             end
         end
-        if wall_ticks % 8 == 0 then
+        if wall_ticks % 16 == 0 then
             log(string.format("WALLTICK #%d pos=(%.0f,%.0f) blocked=%d upHd=%s", wall_ticks, px, py, nblk, uphd))
         end
     end)
-    ExecuteWithDelay(160, function() wall_tick(mygen) end)
 end
 local function wall_toggle()
     if not (shim and shim.AudioInit) then speak("Audio module not loaded"); return end
     if wall_on then
-        wall_on = false; wall_gen = wall_gen + 1
+        wall_on = false
+        wall_blocked = {}
         for _, slot in ipairs(WALL_SLOT) do pcall(function() shim.AudioSetSource(slot, false, 0, 0, 0, WALL_CUE) end) end
         speak("Wall radar off")
         return
@@ -1931,15 +2148,94 @@ local function wall_toggle()
         if not audio_inited then speak("Audio init failed"); return end
     end
     load_cues()
-    wall_on = true; wall_gen = wall_gen + 1
+    wall_on = true
     speak("Wall radar on")
-    wall_tick(wall_gen)
+    pcall(wall_step)   -- immediate first update; the radar pump keeps it fresh
 end
 do
     local ok4 = pcall(RegisterKeyBind, Key.F4, { ModifierKey.CONTROL }, wall_probe)
     log("Bound wall scan (Ctrl+F4): " .. tostring(ok4))
     local ok5 = pcall(RegisterKeyBind, Key.F5, { ModifierKey.CONTROL }, wall_toggle)
     log("Bound wall radar toggle (Ctrl+F5): " .. tostring(ok5))
+    local ok3 = pcall(RegisterKeyBind, Key.F3, { ModifierKey.CONTROL }, mvp_toggle)
+    log("Bound move probe (Ctrl+F3): " .. tostring(ok3))
+end
+
+-- ===== Radar pump: one update step, three independent drivers =====
+-- ExecuteWithDelay self-rescheduling chains silently die mid-session in this game
+-- (the frozen wall radar / beacon / bump of 2026-06-11), while keybinds, hooks and
+-- boot-created LoopAsyncs keep firing. So every periodic field job above is a plain
+-- step function, and this pump runs them all, throttled, from THREE independent
+-- drivers -- any one alive keeps the radar updating:
+--   1) LoopAsync(100) created here at mod load (same pattern as the talk poll),
+--   2) a per-frame hook on EventManagerBP:ReceiveTick (armed lazily -- the BP loads
+--      with the field map -- and re-tried from the pump until it arms),
+--   3) every arrow-key press via on_arrow_log (keybinds are the most reliable
+--      driver, and movement is exactly when updates matter).
+-- Multi-driving is harmless: the pump no-ops if called within PUMP_MIN_DT of the
+-- last run.
+local pump_count  = 0
+local pump_lastt  = 0.0
+local PUMP_MIN_DT = 0.09
+local pump_n      = { hook = 0, loop = 0, key = 0 }   -- per-driver pump counts (diagnostics)
+local pump_loop_t = 0.0                               -- last LoopAsync tick (liveness)
+local pump_heals  = 0
+-- several per-frame tick hooks: different maps have different BPs loaded; any one
+-- that arms gives the pump a per-frame driver on that map
+local PUMP_TICK_HOOKS = {
+    "/Game/Event/BP/EventManagerBP.EventManagerBP_C:ReceiveTick",
+    "/Game/Level/LevelTrigger.LevelTrigger_C:ReceiveTick",
+    "/Game/Map/BP/Blueprint/HouseEnterTriggerBP.HouseEnterTriggerBP_C:ReceiveTick",
+    "/Game/Object/BP/TreasureBoxBP.TreasureBoxBP_C:ReceiveTick",
+}
+local pump_hooked = {}
+local function arm_pump_tickhook()
+    for _, path in ipairs(PUMP_TICK_HOOKS) do
+        if not pump_hooked[path] then
+            local ok = pcall(RegisterHook, path, function() if radar_pump then pcall(radar_pump, "hook") end end)
+            if ok then pump_hooked[path] = true; log("Pump tick hook armed: " .. path) end
+        end
+    end
+end
+local function start_pump_loop()
+    return pcall(LoopAsync, 100, function()
+        pump_loop_t = os.clock()
+        pcall(radar_pump, "loop")
+        return false
+    end)
+end
+radar_pump = function(src)
+    local now = os.clock()
+    if now - pump_lastt < PUMP_MIN_DT then return end
+    pump_lastt = now
+    pump_count = pump_count + 1
+    local s = src or "key"
+    pump_n[s] = (pump_n[s] or 0) + 1
+    if mvp_on then pcall(mvp_step) end
+    if audio_inited then pcall(bump_step) end
+    if beacon_on then pcall(beacon_step) end
+    if wall_on then pcall(wall_step) end
+    if pump_count % 30 == 1 then pcall(arm_pump_tickhook) end
+    -- self-heal: LoopAsyncs can die on level load; if ours has gone quiet, start a
+    -- fresh one (multi-driving is throttled-safe, dead loops just stay dead)
+    if src ~= "loop" and pump_loop_t > 0 and now - pump_loop_t > 5.0 and pump_heals < 30 then
+        pump_heals = pump_heals + 1
+        pump_loop_t = now
+        local ok = start_pump_loop()
+        log("Pump loop re-armed (#" .. pump_heals .. "): " .. tostring(ok))
+    end
+    if (beacon_on or wall_on) and pump_count % 64 == 0 then
+        log(string.format("PUMP #%d hook=%d loop=%d key=%d", pump_count,
+            pump_n.hook or 0, pump_n.loop or 0, pump_n.key or 0))
+    end
+end
+do
+    local okl = start_pump_loop()
+    pump_loop_t = os.clock()
+    pcall(arm_pump_tickhook)
+    local armed = 0
+    for _ in pairs(pump_hooked) do armed = armed + 1 end
+    log(string.format("Radar pump: loop=%s tickhooks=%d (+arrow keys)", tostring(okl), armed))
 end
 
 -- Install the native GetTalkText hook (in C++, via the shim) so story/dialogue

@@ -52,6 +52,7 @@ constexpr int    CUE_MAX   = (int)(0.13 * SR);   // max ping (cue) duration
 constexpr float  PING_NEAR = 100.0f;             // distance (units) at/below which rate is fastest
 constexpr float  PING_FAR  = 2500.0f;            // distance at/above which rate is slowest
 constexpr int    PING_STAGGER = 4000;            // per-slot phase offset so pings don't all align
+constexpr int    PING_MINGAP  = (int)(0.05 * SR); // min silence after a loaded cue before it repeats
 
 IPLContext       g_ctx   = nullptr;
 IPLHRTF          g_hrtf  = nullptr;
@@ -75,6 +76,7 @@ struct Source {
     float  gain = 0.7f;
     double phase = 0.0;            // oscillator phase (audio-thread only)
     float  env = 0.0f;            // smoothed on/off gain (declick fade; audio-thread only)
+    float  lpL = 0.0f, lpR = 0.0f; // rear-darkening LPF state (audio-thread only)
     IPLBinauralEffect effect = nullptr;
 };
 
@@ -82,9 +84,15 @@ Source     g_src[MAX_SOURCES];
 float      g_lx = 0, g_ly = 0, g_lz = 0;   // listener world position
 std::mutex g_mtx;
 
-constexpr int NUM_CUES = 6;                 // cue types 0..5 (chest/exit/npc/building/shop/wall)
+constexpr int NUM_CUES = 8;                 // cue types 0..7 (chest/exit/npc/building/shop/wall/bump/door)
 float* g_cueBuf[NUM_CUES] = { nullptr };    // decoded mono @ SR samples per category (null = generated tone)
 int    g_cueLen[NUM_CUES] = { 0 };
+
+// one-shot (non-looping, 2D) cue, e.g. the wall-bump. -1 = nothing playing.
+constexpr int THUD_LEN  = (int)(0.15 * SR);  // generated fallback thud length (bump)
+constexpr int SWEEP_LEN = (int)(0.28 * SR);  // generated fallback chirp length (door)
+int g_osCue = -1;
+int g_osPos = 0;
 
 float g_block[FS * 2];              // one rendered stereo block, interleaved L,R,...
 int   g_blockPos = FS;             // frames consumed; start "empty" so first callback renders
@@ -113,19 +121,27 @@ IPLVector3 normalize_or_front(float x, float y, float z) {
 }
 
 IPLVector3 world_delta_to_sa(float ddx, float ddy, float ddz) {
-    // X = -ddy: world +Y is the RIGHT-arrow direction, so a +Y object must pan to the
-    // RIGHT ear to match the key the player presses / the spoken direction. (Confirmed
-    // by ear: the un-negated form put walls on the opposite side from the speech.)
-    // up = +Z; front (-Z) = +X (screen up).
-    constexpr float WIDEN = 1.6f;   // exaggerate azimuth so close-together sources separate in stereo
-    return normalize_or_front(-ddy * WIDEN, ddz, -ddx);
+    // Geometric mapping, anchored to TWO confirmed-by-ear ground truths: the
+    // listener-space test tones verified the renderer (SA +X = right ear, -Z =
+    // front), and the Ctrl+F8 walk calibration verified the world axes (+Y =
+    // right-arrow side, +X = up-arrow side). Therefore: right-arrow side -> right
+    // ear (x=+ddy), up-arrow side -> front (z=-ddx), world up -> SA up (y=+ddz).
+    // (An earlier -ddy flip was chasing a wall report that was almost certainly a
+    // perception artifact -- pure 200 Hz tones barely lateralize. The Ctrl+F7
+    // world-relative test phases are the ground-truth arbiter for this mapping.)
+    // WIDEN exaggerates azimuth to separate close-together sources, but it WARPS the
+    // angle field: walking straight toward an off-axis source makes it swing sideways
+    // faster than geometry, which reads as "diagonal drift". Keep 1.0 (pure geometry)
+    // unless separation proves more important than consistency.
+    constexpr float WIDEN = 1.0f;
+    return normalize_or_front(ddy * WIDEN, ddz, -ddx);
 }
 
 float dist_attenuation(float dist) {
     constexpr float FALLOFF = 550.0f;   // volume reaches ~0 here (keep ~= the radar range)
     float a = 1.0f - dist / FALLOFF;
     if (a < 0.0f) a = 0.0f;
-    return a * a;                        // steep quadratic rolloff: loud near, ~silent at FALLOFF
+    return a * std::sqrt(a);             // ^1.5 rolloff: louder through the mid-range, still ~0 at FALLOFF
 }
 
 // --- light Freeverb-style stereo reverb: room ambience to externalize the cues
@@ -238,6 +254,9 @@ void render_block() {
                 if (t < 0.0f) t = 0.0f; else if (t > 1.0f) t = 1.0f;
                 int cycleLen = PING_FAST + (int)(t * (float)(PING_SLOW - PING_FAST));
                 if (cycleLen < 2) cycleLen = 2;
+                // never repeat a loaded cue faster than it can fully play -> no clipping
+                // even for long sounds; distance then sets the GAP, not the rate.
+                if (cueBuf && cueBufLen + PING_MINGAP > cycleLen) cycleLen = cueBufLen + PING_MINGAP;
                 long long base = (long long)g_clock + (long long)i * PING_STAGGER;
                 if (cueBuf && cueBufLen > 0) {
                     // play the LOADED cue sample once per cycle (rate = distance)
@@ -256,12 +275,17 @@ void render_block() {
                             else              penv = 1.0f - (float)(cyc - ATTACK) / (float)(cueLen - ATTACK);
                             if (penv < 0.0f) penv = 0.0f;
                         }
-                        g_inBuf.data[0][n] = (float)std::sin(ph) * 0.5f * penv;
+                        // harmonics (2f, 3f) so even low cues lateralize -- pure low
+                        // sines carry almost no left/right information to the ear
+                        g_inBuf.data[0][n] = (float)(std::sin(ph) + 0.4 * std::sin(2.0 * ph) + 0.2 * std::sin(3.0 * ph)) * 0.35f * penv;
                         ph += inc;
                     }
                 }
             } else {
-                for (int n = 0; n < FS; ++n) { g_inBuf.data[0][n] = (float)std::sin(ph) * 0.5f; ph += inc; }
+                for (int n = 0; n < FS; ++n) {
+                    g_inBuf.data[0][n] = (float)(std::sin(ph) + 0.4 * std::sin(2.0 * ph) + 0.2 * std::sin(3.0 * ph)) * 0.35f;
+                    ph += inc;
+                }
             }
             g_src[i].phase = std::fmod(ph, TWO_PI);
 
@@ -280,17 +304,52 @@ void render_block() {
             p.spatialBlend  = 1.0f;
             p.hrtf          = g_hrtf;
             iplBinauralEffectApply(g_src[i].effect, &p, &g_inBuf, &g_outBuf);
+            // rear darkening: sources BEHIND get low-passed (duller); front stays
+            // bright. An exaggerated version of the natural cue, to fight HRTF
+            // front/back reversal (ambiguous sources tend to read as "behind").
+            float rear = dir.z > 0.0f ? dir.z : 0.0f;   // 0 = front .. 1 = fully behind
+            const float dk = rear * 0.75f;
+            float lpL = g_src[i].lpL, lpR = g_src[i].lpR;
             for (int n = 0; n < FS; ++n) {
                 if (env < target)      { env += step; if (env > target) env = target; }
                 else if (env > target) { env -= step; if (env < target) env = target; }
                 float l = g_outBuf.data[0][n] * env;
                 float r = g_outBuf.data[1][n] * env;
+                lpL += 0.12f * (l - lpL);
+                lpR += 0.12f * (r - lpR);
+                l = l * (1.0f - dk) + lpL * dk;
+                r = r * (1.0f - dk) + lpR * dk;
                 mixL[n]     += l * dryG;
                 mixR[n]     += r * dryG;
                 revSendL[n] += l * sendG;
                 revSendR[n] += r * sendG;
             }
             g_src[i].env = env;
+            g_src[i].lpL = lpL; g_src[i].lpR = lpR;
+        }
+        // one-shot bump (2D, dry): a brief non-looping cue, or a generated thud fallback
+        {
+            std::lock_guard<std::mutex> lk(g_mtx);
+            if (g_osCue >= 0 && g_osCue < NUM_CUES) {
+                const float* buf = g_cueBuf[g_osCue];
+                int len = buf ? g_cueLen[g_osCue] : (g_osCue == 7 ? SWEEP_LEN : THUD_LEN);
+                for (int n = 0; n < FS && g_osPos < len; ++n, ++g_osPos) {
+                    float s;
+                    if (buf) s = buf[g_osPos] * 0.85f;
+                    else if (g_osCue == 7) {
+                        // door/transition fallback: rising chirp 280->720 Hz, half-sine envelope
+                        double t = (double)g_osPos / (double)SR;
+                        double T = (double)SWEEP_LEN / (double)SR;
+                        double phs = TWO_PI * (280.0 * t + 0.5 * (440.0 / T) * t * t);
+                        float  e = (float)std::sin(3.14159265 * (double)g_osPos / (double)SWEEP_LEN);
+                        s = (float)std::sin(phs) * 0.5f * e;
+                    }
+                    else { float e = 1.0f - (float)g_osPos / (float)THUD_LEN;
+                           s = (float)std::sin(TWO_PI * 140.0 * (double)g_osPos / (double)SR) * e * e * 0.6f; }
+                    mixL[n] += s; mixR[n] += s;
+                }
+                if (g_osPos >= len) g_osCue = -1;
+            }
         }
     }
 
@@ -381,6 +440,7 @@ void SA_Shutdown(void) {
         g_src[i].env = 0.0f;
     }
     for (int i = 0; i < NUM_CUES; ++i) { delete[] g_cueBuf[i]; g_cueBuf[i] = nullptr; g_cueLen[i] = 0; }
+    g_osCue = -1; g_osPos = 0;
     if (g_inBuf.data)  { iplAudioBufferFree(g_ctx, &g_inBuf);  g_inBuf  = {}; }
     if (g_outBuf.data) { iplAudioBufferFree(g_ctx, &g_outBuf); g_outBuf = {}; }
     if (g_hrtf) { iplHRTFRelease(&g_hrtf); g_hrtf = nullptr; }
@@ -422,6 +482,10 @@ int SA_LoadCue(int cueType, const char* path) {
     }
     ma_decoder_uninit(&dec);
     if (samples.empty()) return 0;
+    // peak-normalize so cue files of any export loudness play at a consistent level
+    float peak = 0.0f;
+    for (size_t k = 0; k < samples.size(); ++k) { float a = std::fabs(samples[k]); if (a > peak) peak = a; }
+    if (peak > 1e-4f) { float sc = 0.9f / peak; for (size_t k = 0; k < samples.size(); ++k) samples[k] *= sc; }
     float* buf = new float[samples.size()];
     std::memcpy(buf, samples.data(), samples.size() * sizeof(float));
     {
@@ -431,6 +495,11 @@ int SA_LoadCue(int cueType, const char* path) {
         g_cueLen[cueType] = (int)samples.size();
     }
     return 1;
+}
+
+void SA_PlayCue(int cueType) {
+    std::lock_guard<std::mutex> lk(g_mtx);
+    g_osCue = cueType; g_osPos = 0;
 }
 
 void SA_TestTone(int dir) {

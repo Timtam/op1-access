@@ -12,6 +12,9 @@ category. They play at the radar's distance-driven ping rate and are spatialized
     building   building entrances
     shop       shops
     wall       wall radar (the obstacle ahead or to the side)
+    bump       plays once when you walk INTO a wall (a built-in thud is used if absent)
+    door       plays once when you pass through a door / area transition (built-in
+               rising chirp if absent)
 
 ## Formats (the extension)
 
@@ -24,7 +27,9 @@ Example: `chest.flac`, `npc.mp3`, `wall.wav`.
 
 ## Tips
 
-- Keep them SHORT: a blip ~50–300 ms. Long sounds get cut off at fast (close-range) ping rates.
+- Short blips (~50–300 ms) give the strongest distance-via-rate cue. Longer sounds work
+  fine too — a cue never repeats faster than it can fully play, so it won't clip; up close
+  its repeats just sit back-to-back and distance shows through volume + reverb.
 - Make categories sound DISTINCT (different timbre/pitch) so they're easy to tell apart.
 - Mono or stereo both work (downmixed to mono, then spatialized). Normalize the level.
 - Files are loaded once at startup. After adding or changing files, restart the game.

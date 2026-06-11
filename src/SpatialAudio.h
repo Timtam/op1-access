@@ -29,6 +29,10 @@ void SA_SetSource(int id, int active, float x, float y, float z, int cueType);
 // success, 0 if the file is missing or cannot be decoded.
 int  SA_LoadCue(int cueType, const char* path);
 
+// Play a cue once (non-looping, 2D / centred), e.g. a wall-bump. If that cueType has
+// no loaded buffer, a short generated thud is played instead.
+void SA_PlayCue(int cueType);
+
 // Quick isolation test independent of game data: play one continuous tone at a
 // fixed listener-relative direction. dir: 0=right 1=left 2=front 3=back 4=off.
 void SA_TestTone(int dir);
