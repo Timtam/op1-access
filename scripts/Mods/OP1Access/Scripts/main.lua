@@ -653,16 +653,63 @@ local function poll_active_menu()
     end
 end
 
+-- Talkable-NPC learning: no static data distinguishes talkable NPCs from set
+-- dressing (NPCInfoData, event arrays and trigger collision all read identical),
+-- so talkability is LEARNED: when dialogue text arrives via the native talk
+-- hook, the nearest NPC gets marked. The radar pings only learned NPCs.
+local npc_learned = {}        -- actor address -> learned record (this session)
+local npc_talking = nil       -- {addr,cat,t}: the EXACT actor whose Talk just fired
+local learn_talk_npc          -- assigned later (needs the overworld helpers)
+
+-- Precise talkable detection: hook the NPC Talk function. It takes no params, so
+-- a Lua RegisterHook is safe (no struct marshalling). The context object IS the
+-- NPC being talked to -- exact, not a "nearest" guess (which kept marking mute
+-- bystanders 100+ units away). Also logs the real CLASS, so we learn what
+-- talkable NPCs actually are (suspected: NOT KSFieldNPCCharacter_C).
+local function on_talk_hook(ctx)
+    pcall(function()
+        local o = ctx
+        if type(o) == "userdata" and o.get then local g = o:get(); if g then o = g end end
+        if not (o and o.GetAddress) then return end
+        local addr = o:GetAddress()
+        if not addr or addr == 0 then return end
+        local cls = "?"
+        pcall(function() cls = o:GetClass():GetFName():ToString() end)
+        local full = "?"
+        pcall(function() full = o:GetFullName() end)
+        npc_talking = { addr = addr, t = os.clock() }
+        local rec = npc_learned[addr]
+        if type(rec) ~= "table" then rec = {} ; npc_learned[addr] = rec end
+        rec.learned = true; rec.keep = true
+        log(string.format("TALKHOOK class=%s addr=%X full=%s", cls, addr, full))
+    end)
+end
+-- RegisterHook fails at mod load (the NPC Blueprint class isn't loaded at the
+-- title screen). Re-attempt from the radar pump until it takes -- same
+-- load-timing lesson as the dialogue + cursor hooks.
+local talk_hook_armed = false
+local function arm_talk_hook()
+    if talk_hook_armed then return end
+    for _, path in ipairs({
+        "/Game/Character/BP/Type/KSFieldNPCCharacter.KSFieldNPCCharacter_C:Talk",
+        "/Game/Character/BP/Type/KSFieldCharacter.KSFieldCharacter_C:Talk",
+    }) do
+        local ok, id = pcall(RegisterHook, path, on_talk_hook)
+        if ok and id ~= nil then
+            talk_hook_armed = true
+            log("Talk hook ARMED: " .. path)
+        end
+    end
+end
+
 -- Fire-and-forget polling loop. Wrap each tick in pcall: a Lua error
 -- inside LoopAsync would otherwise stop subsequent ticks (or worse).
 local ok_loop = pcall(LoopAsync, POLL_INTERVAL_MS, function()
     pcall(poll_active_menu)
     -- The native GetTalkText hook speaks dialogue directly (independent of this
     -- loop, which can die after a level load). The loop just logs the line.
-    if shim and shim.PollTalk then
-        local t = shim.PollTalk()
-        if t and t ~= "" then log("STORY: " .. t) end
-    end
+    -- (dialogue polling moved into the radar pump: this loop dies intermittently
+    -- after loads, and talkable-NPC learning must not die with it)
 end)
 log("Polling loop started: " .. tostring(ok_loop))
 
@@ -1336,6 +1383,7 @@ local bump_arrow_t   = 0.0   -- last arrow keypress time (bump detection, any sc
 local bump_arrow_key = nil   -- which arrow ("UP_ARROW", ...)
 local wall_blocked   = {}    -- wall radar's latest blocked dirs (up/down/left/right -> true)
 local beacon_rescan_at = nil -- set after a door/transition; beacon_step rescans the new area then
+local world_susp  = false    -- radar pump's scene guard (true during events/transitions)
 local function on_arrow_log(kname)
     bump_arrow_t = os.clock(); bump_arrow_key = kname
     if radar_pump then pcall(radar_pump, "key") end   -- arrow presses drive the field radar pump
@@ -1613,31 +1661,8 @@ local function get_player_obj()
     return nil, "none"
 end
 
--- RECON (Ctrl+F3): to add a "bumped into a wall" sound we must detect "trying to move
--- but not moving". This probe logs the candidate signals each tick so we can see which
--- one distinguishes walking-free from walking-into-a-wall. Walk freely, then hold a
--- direction into a wall, and compare: speed should drop to ~0 while some input/accel
--- signal stays non-zero.
-local mvp_on = false
-local mvp_lx, mvp_ly
-local function mvp_step()   -- driven by radar_pump while mvp_on
-    local p = get_player_obj()
-    if not p then return end
-    local px, py = read_actor_pos(p)
-    local spd = "?"
-    if px and mvp_lx then spd = string.format("%.0f", math.sqrt((px - mvp_lx)^2 + (py - mvp_ly)^2)) end
-    mvp_lx, mvp_ly = px, py
-    local gv, cmv, cma, inp = "-", "-", "-", "-"
-    pcall(function() local v = p:GetVelocity();                 gv  = string.format("%.0f,%.0f", v.X, v.Y) end)
-    pcall(function() local v = p.CharacterMovement.Velocity;     cmv = string.format("%.0f,%.0f", v.X, v.Y) end)
-    pcall(function() local a = p.CharacterMovement.Acceleration; cma = string.format("%.0f,%.0f", a.X, a.Y) end)
-    pcall(function() local iv = p:GetLastMovementInputVector();  inp = string.format("%.2f,%.2f", iv.X, iv.Y) end)
-    log(string.format("MVP spd=%s getvel=%s cmVel=%s cmAcc=%s inp=%s", spd, gv, cmv, cma, inp))
-end
-local function mvp_toggle()
-    mvp_on = not mvp_on
-    if mvp_on then mvp_lx = nil; speak("Move probe on") else speak("Move probe off") end
-end
+-- (The Ctrl+F3 move probe that calibrated bump detection was removed once its
+-- findings were baked in -- the main chunk lives at Lua's 200-local limit.)
 
 -- Wall-bump feedback: input held (GetLastMovementInputVector) but velocity ~0 means
 -- the player is pushing into a wall. Play a one-shot bump cue (type 6, Assets/bump.*)
@@ -1755,6 +1780,7 @@ end
 local nav_last_px, nav_last_py = nil, nil
 local LEVEL_THRESH = 250  -- |dz| beyond this = another floor (one floor measured ~502 units; 250 clears same-floor jitter)
 local function nav_probe()
+    if world_susp then speak("Scene running"); return end
     local p, phow = get_player_obj()
     if not p then log("NAV: no player object"); speak("No player position"); return end
     local px, py, pz, pposhow = read_actor_pos(p)
@@ -1913,33 +1939,132 @@ local function load_cues()
     end
 end
 
--- Background NPCs that can't be talked to just stand around and block paths --
--- useless on the radar. NPCInfoData tells them apart: real NPCs have entries in
--- ConnectionTalkList and/or a path-action ID (purchase/battle/search/lure).
--- Fail OPEN (keep the NPC) if the struct can't be read, so we never hide real ones.
+-- RADAR rule for NPCs: LEARNED-ONLY. Every static field (NPCInfoData, the
+-- EventID/EvetName arrays, trigger collision -- tcol=3 across all 17) reads
+-- identical for talkable NPCs and set dressing, so talkability is learned at
+-- runtime: when dialogue opens, learn_talk_npc marks the nearest NPC. The radar
+-- starts quiet and grows as you meet people; targeting still lists everyone.
+-- An NPC is real if its PLACEMENT DATA carries dialogue or event wiring: the
+-- map's spawn table (GetPlacementData) holds TextLabel (the key the talk-text
+-- database is queried with -- the exact linkage the talk boxes use), five
+-- EventLabel slots, and the path-action IDs. Set dressing has none of them.
+-- Session-learning (dialogue actually opened nearby) stays as a supplement.
+-- npc_interesting -> keep, why, name. Decided by the NATIVE probe (shim
+-- NpcProbe): GetPlacementData via ProcessEvent (Lua cannot touch BP struct
+-- out-params -- that hard-crashed), TextLabel looked up in the talk database
+-- silently, speaker name resolved to the localized display name. Results are
+-- cached per actor in npc_learned (true = learned by real dialogue;
+-- table = probe result).
 local function npc_interesting(o)
-    local ntalk, pid, bid, sid, lid, nm, nid, cid, aid
-    local ok = pcall(function()
-        local info = o.NPCInfoData
-        ntalk = #info.ConnectionTalkList
-        pid, bid, sid, lid = info.PurchaseID, info.BattleID, info.SearchID, info.LureID
-        pcall(function() nid = info.ID; cid = info.CharacterID; aid = info.ActionID end)
-        nm = "?"
-        pcall(function() nm = info.Name:ToString() end)
-    end)
-    if not ok or ntalk == nil then return true, "read-fail (kept)" end
-    -- NPCInfoData proved all-zero even for talkable NPCs; the REAL wiring lives on
-    -- the parent class: EventID / EvetName (sic, game's typo) arrays + the
-    -- interaction Trigger object. Anything event-wired or triggerable is real.
-    local nev, nevn, trig = 0, 0, false
-    pcall(function() nev = #o.EventID end)
-    pcall(function() nevn = #o.EvetName end)
-    pcall(function() local t = o.Trigger; trig = (t and t:IsValid()) and true or false end)
-    local keep = ntalk > 0 or (pid or 0) > 0 or (bid or 0) > 0 or (sid or 0) > 0 or (lid or 0) > 0
-        or nev > 0 or nevn > 0 or trig
-    return keep, string.format("name=%s talk=%d p=%s b=%s s=%s l=%s id=%s char=%s act=%s ev=%d evn=%d trig=%s",
-        tostring(nm), ntalk, tostring(pid), tostring(bid), tostring(sid), tostring(lid),
-        tostring(nid), tostring(cid), tostring(aid), nev, nevn, tostring(trig))
+    local addr = nil
+    pcall(function() addr = o:GetAddress() end)
+    if not addr then return false, "no-addr", nil end
+    local c = npc_learned[addr]
+    if c == true then return true, "learned", nil end
+    if type(c) == "table" and c.learned then return true, "learned", c.name end
+    if type(c) == "table" then
+        -- re-probe kept-but-nameless NPCs a few times: the name resolver only
+        -- arms after the session's first real dialogue line
+        if not (c.keep and not c.name and (c.tries or 0) < 3) then
+            return c.keep, c.dbg or "cached", c.name
+        end
+    end
+    local keep, name, dbg = false, nil, "probe-unavailable"
+    if shim and shim.NpcProbe then
+        local pf, lf = nil, nil
+        pcall(function()
+            local f = StaticFindObject("/Game/Character/BP/Type/KSFieldCharacter.KSFieldCharacter_C:GetPlacementData")
+            if f and f:IsValid() then pf = f:GetAddress() end
+        end)
+        pcall(function()
+            local f = StaticFindObject("/Game/Character/BP/Type/KSFieldCharacter.KSFieldCharacter_C:GetNpcLabel")
+            if f and f:IsValid() then lf = f:GetAddress() end
+        end)
+        local locf = nil
+        pcall(function()
+            local f = StaticFindObject("/Script/Engine.Actor:K2_GetActorLocation")
+            if f and f:IsValid() then locf = f:GetAddress() end
+        end)
+        if pf then
+            pcall(function()
+                local ok, talky, nm, d = shim.NpcProbe(addr, pf, lf or 0, locf or 0)
+                dbg = tostring(d)
+                if ok then
+                    keep = talky and true or false
+                    name = nm
+                end
+            end)
+        else
+            dbg = "no GetPlacementData ufunc"
+        end
+    end
+    npc_learned[addr] = { keep = keep, name = name, dbg = dbg,
+        tries = ((type(c) == "table" and c.tries) or 0) + 1 }
+    log("NPCPROBE " .. (keep and "keep " or "omit ") .. dbg .. (name and (" name=" .. name) or ""))
+    return keep, dbg, name
+end
+
+learn_talk_npc = function(ox, oy)
+    -- dialogue raises the scene guard, so scanning is forbidden exactly when
+    -- dialogue text arrives: QUEUE the player's last pre-dialogue position (the
+    -- bump tracker freezes during suspension) and the pump processes it after
+    -- the guard lifts.
+    if world_susp then
+        if not npc_learned._pend and bump_px then
+            npc_learned._pend = { x = bump_px, y = bump_py, t = os.clock() }
+        end
+        return
+    end
+    local now = os.clock()
+    -- precise path: the Talk hook already pinned the EXACT actor -- just attach
+    -- the resolved speaker name to it, no proximity guessing
+    if npc_talking and (now - npc_talking.t) < 30 then
+        local nm = nil
+        pcall(function() if shim and shim.LastSpeakerName then nm = shim.LastSpeakerName() end end)
+        local rec = npc_learned[npc_talking.addr]
+        if type(rec) ~= "table" then rec = {}; npc_learned[npc_talking.addr] = rec end
+        rec.learned = true; rec.keep = true; rec.name = nm or rec.name
+        log("LEARNED (talk hook) name=" .. tostring(rec.name))
+        return
+    end
+    if not ox then
+        -- a couple of lines arrive per dialogue box; one scan per few seconds is plenty
+        if now - (npc_learned._t or 0) < 3.0 then return end
+        npc_learned._t = now
+    end
+    local p = get_player_obj()
+    if not p then return end
+    local px, py, pz = read_actor_pos(p)
+    if not px then return end
+    if ox then px, py = ox, oy end
+    local list = nil
+    pcall(function() list = FindAllOf("KSFieldNPCCharacter_C") end)
+    if not list then return end
+    local best, bd = nil, 350      -- speakers stand close; same level only
+    for _, o in pairs(list) do
+        local okv = false
+        pcall(function() okv = o and o:IsValid() end)
+        if okv then
+            local ox, oy, oz = read_actor_pos(o)
+            if ox and math.abs((oz or pz) - pz) <= LEVEL_THRESH then
+                local d = math.sqrt((ox - px) ^ 2 + (oy - py) ^ 2)
+                if d < bd then best, bd = o, d end
+            end
+        end
+    end
+    if best then
+        local addr = nil
+        pcall(function() addr = best:GetAddress() end)
+        local nm = nil
+        pcall(function() if shim and shim.LastSpeakerName then nm = shim.LastSpeakerName() end end)
+        local cur = npc_learned[addr]
+        if addr and not (type(cur) == "table" and cur.learned and cur.name) then
+            -- real dialogue OVERRIDES any cached probe verdict, and carries the
+            -- speaker's resolved display name (from the talk hook)
+            npc_learned[addr] = { learned = true, keep = true, name = nm, dbg = "learned" }
+            log(string.format("LEARNED talkable npc, d=%.0f name=%s", bd, tostring(nm)))
+        end
+    end
 end
 local function beacon_rescan()
     beacon_objs = {}
@@ -1956,9 +2081,9 @@ local function beacon_rescan()
                 if okv and #beacon_objs < 128 then
                     local keep = true
                     if c.name == "npc" then
-                        local why
-                        keep, why = npc_interesting(o)
-                        log("NPC " .. (keep and "keep" or "omit") .. ": " .. why)
+                        local why, nm
+                        keep, why, nm = npc_interesting(o)
+                        log("NPC " .. (keep and "keep" or "omit") .. ": " .. why .. (nm and (" name=" .. nm) or ""))
                     end
                     if keep then
                         beacon_objs[#beacon_objs + 1] = { actor = o, cat = c.name }
@@ -1972,9 +2097,15 @@ end
 local function beacon_step()   -- driven by radar_pump while beacon_on
     -- pending post-door rescan: silence everything, re-enumerate the NEW area's
     -- actors (the old handles died with the old map), report the fresh count
-    if beacon_rescan_at and os.clock() >= beacon_rescan_at then
+    if beacon_rescan_at then
+        if os.clock() < beacon_rescan_at then
+            -- a transition invalidated the cached handles: NEVER read the old
+            -- actors while the rescan is pending (that was the door crash) --
+            -- silence the slots and sit tight
+            for i = 0, BEACON_HARDCAP - 1 do pcall(function() shim.AudioSetSource(i, false, 0, 0, 0, 0) end) end
+            return
+        end
         beacon_rescan_at = nil
-        for i = 0, BEACON_HARDCAP - 1 do pcall(function() shim.AudioSetSource(i, false, 0, 0, 0, 0) end) end
         beacon_rescan()
         speak(string.format("%d objects here", #beacon_objs))
     end
@@ -2043,6 +2174,7 @@ local function beacon_toggle()
         speak("Beacon off")
         return
     end
+    if world_susp then speak("Scene running"); return end   -- never scan a world mid-event
     if not audio_inited then
         local ok = false; pcall(function() ok = shim.AudioInit() end)
         audio_inited = ok and true or false
@@ -2086,6 +2218,7 @@ local function line_blocked(ksl, p, sx, sy, sz, ex, ey, ez)
     return ok, hit, outHit
 end
 local function wall_probe()
+    if world_susp then speak("Scene running"); return end
     local p = get_player_obj()
     if not p then speak("No player"); return end
     local px, py, pz = read_actor_pos(p)
@@ -2163,6 +2296,7 @@ local function wall_toggle()
         speak("Wall radar off")
         return
     end
+    if world_susp then speak("Scene running"); return end   -- never trace a world mid-event
     if not audio_inited then
         local okk = false; pcall(function() okk = shim.AudioInit() end)
         audio_inited = okk and true or false
@@ -2178,8 +2312,6 @@ do
     log("Bound wall scan (Ctrl+F4): " .. tostring(ok4))
     local ok5 = pcall(RegisterKeyBind, Key.F5, { ModifierKey.CONTROL }, wall_toggle)
     log("Bound wall radar toggle (Ctrl+F5): " .. tostring(ok5))
-    local ok3 = pcall(RegisterKeyBind, Key.F3, { ModifierKey.CONTROL }, mvp_toggle)
-    log("Bound move probe (Ctrl+F3): " .. tostring(ok3))
 end
 
 -- ===== Pillar B v1: target selection + auto-walk =====
@@ -2192,8 +2324,8 @@ end
 -- real player input, so collisions, triggers and random encounters behave
 -- naturally.
 local nav_walking = false             -- read by the radar pump
-local world_susp  = false             -- written by the radar pump's scene guard
 local nav_drive, nav_tick             -- assigned in the do-block; called by hooks/pump
+local nav_guard_dispatch              -- combo id -> handler (set when the key guard arms)
 -- everything else lives in a do-block: the main chunk is near Lua's 200-local limit
 do
 -- single state table: the main chunk is hard against Lua's 200-local limit
@@ -2230,24 +2362,21 @@ local function nav_build_list()
     local list = nil
     pcall(function() list = FindAllOf(c.cls) end)
     if not list then return end
-    -- targeting lists ALL NPCs: the "interesting" filter proved too strict
-    -- (plain-dialogue NPCs carry no connection/path-action data and were wrongly
-    -- hidden). The radar keeps the strict filter; here an extra target to skip
-    -- past beats a missing one. Until the right discriminator is known, dump the
-    -- candidate fields (throttled) so the logs can teach us what separates them.
-    local npclog = (c.name == "npc") and (os.clock() - (NV.npclog_t or 0) > 30)
-    if npclog then NV.npclog_t = os.clock() end
+    -- targeting lists EVERY NPC (you must be able to walk to one to TRY talking
+    -- -- that's how learning happens); learned ones are announced as "talks".
+    -- The radar pings learned-only.
     for _, o in pairs(list) do
         local okv = false
         pcall(function() okv = o and o:IsValid() end)
         if okv and #NV.list < 60 then
             local ox, oy = read_actor_pos(o)
             if ox then
-                if npclog then
-                    local k, why = npc_interesting(o)
-                    log("NAVNPC " .. (k and "talky " or "plain ") .. why)
+                local known, nm = false, nil
+                if c.name == "npc" then
+                    local _w
+                    known, _w, nm = npc_interesting(o)
                 end
-                NV.list[#NV.list + 1] = { actor = o, cat = c.name,
+                NV.list[#NV.list + 1] = { actor = o, cat = c.name, known = known, name = nm,
                     d = math.sqrt((ox - px) ^ 2 + (oy - py) ^ 2) }
             end
         end
@@ -2266,12 +2395,15 @@ local function nav_announce(prefix)
     local d = math.floor(math.sqrt(dx * dx + dy * dy) + 0.5)
     local lvl = ""
     if dz > LEVEL_THRESH then lvl = ", above" elseif dz < -LEVEL_THRESH then lvl = ", below" end
-    speak(string.format("%s%s %d of %d: %s, %d%s",
-        prefix or "", t.cat, NV.idx, #NV.list, nav_dir(dx, dy), d, lvl))
+    local talks = t.known and ", talks" or ""
+    local who = t.name and (t.name .. ", ") or ""
+    speak(string.format("%s%s %d of %d: %s%s, %d%s%s",
+        prefix or "", t.cat, NV.idx, #NV.list, who, nav_dir(dx, dy), d, lvl, talks))
 end
 
 local function nav_cat_cycle(delta)
     NV.ctrlkey_t = os.clock()
+    if world_susp then speak("Scene running"); return end
     for _ = 1, #NAV_CLASSES do
         NV.cat = ((NV.cat - 1 + delta) % #NAV_CLASSES) + 1
         nav_build_list()
@@ -2286,6 +2418,7 @@ end
 
 local function nav_obj_cycle(delta)
     NV.ctrlkey_t = os.clock()
+    if world_susp then speak("Scene running"); return end
     if #NV.list == 0 then nav_build_list() end
     if #NV.list == 0 then speak("No targets here, control left or right for categories"); return end
     NV.idx = ((NV.idx - 1 + delta) % #NV.list) + 1
@@ -2631,6 +2764,8 @@ local function nav_walk_start()
     if not (px and ox) then speak("Target lost"); return end
     NV.goal = { x = ox, y = oy, z = oz, cat = t.cat }
     NV.retries = 0
+    NV.bestgoal = nil
+    NV.noimprove = 0
     -- navmesh first (free + instant if the game has it), else our traced A*
     local pts = nav_find_path(p, px, py, pz, ox, oy, oz)
     if pts then
@@ -2738,6 +2873,13 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
     end
     local p = get_player_obj(); if not p then return end
     local px, py, pz = read_actor_pos(p); if not px then return end
+    -- arrival forgiveness: within interaction range of the GOAL counts as
+    -- arrived, even when the exact spot is blocked (counters, furniture) --
+    -- chasing the unreachable final meters caused endless circling
+    if NV.goal then
+        local gd = math.sqrt((px - NV.goal.x) ^ 2 + (py - NV.goal.y) ^ 2)
+        if gd < 170 then nav_walk_stop("Arrived"); return end
+    end
     local jump = math.sqrt((px - NV.prog.x) ^ 2 + (py - NV.prog.y) ^ 2)
     if jump > 900 then nav_walk_stop("Walk ended, went through a door"); return end
     if jump > 40 then
@@ -2785,16 +2927,32 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
         end
         local prog = NV.attempt_start
             and math.sqrt((px - NV.attempt_start.x) ^ 2 + (py - NV.attempt_start.y) ^ 2) or 0
+        local gd = NV.goal and math.sqrt((px - NV.goal.x) ^ 2 + (py - NV.goal.y) ^ 2) or -1
+        log(string.format("WALKSTUCK at (%.0f,%.0f) goalDist=%.0f prog=%.0f best=%.0f",
+            px, py, gd, prog, NV.bestgoal or -1))
         nav_walking = false
         NV.path = nil
         NV.held = nil
         pcall(function() if shim and shim.HoldKeys then shim.HoldKeys(false, false, false, false) end end)
-        if NV.goal and (NV.retries or 0) < 4 and prog > 150 then
+        -- CONVERGENCE-based give-up (replaces the blind retry cap that let the
+        -- walker orbit an unreachable NPC). Track the closest we've ever gotten
+        -- to the GOAL; a reroute is only worth it if it's still meaningfully
+        -- improving that. Otherwise stop -- gracefully "arrived" if we're within
+        -- a body's reach, else honestly "can't reach, closest N".
+        if gd >= 0 and (NV.bestgoal == nil or gd < NV.bestgoal - 40) then
+            NV.bestgoal = gd
+            NV.noimprove = 0
+        else
+            NV.noimprove = (NV.noimprove or 0) + 1
+        end
+        if gd >= 0 and gd < 220 then
+            speak("Arrived")                       -- close enough to interact
+        elseif NV.goal and (NV.noimprove or 0) < 2 and (NV.retries or 0) < 5 then
             NV.retries = (NV.retries or 0) + 1
             speak("Rerouting")
             nav_route_begin("walk", NV.goal.x, NV.goal.y, NV.goal.z)
         else
-            speak("Walk interrupted, backspace to resume")
+            speak(string.format("Can't reach, closest %d", math.floor((NV.bestgoal or gd) + 0.5)))
         end
     end
 end
@@ -2859,6 +3017,34 @@ do
         if not p then return false end
         pcall(nav_obj_cycle, delta)
         return true
+    end
+
+    -- KEY GUARD: the shim's low-level keyboard hook swallows these combos
+    -- BEFORE the game's input layer -- Ctrl+arrows no longer step the
+    -- character, Ctrl+Enter no longer opens NPC dialogue -- and queues them;
+    -- the radar pump polls and dispatches. The Home/End/PageUp/PageDown/
+    -- Backspace keys stay bound as alternates.
+    if shim and shim.GuardCombo and shim.GuardPoll then
+        local VK = { LEFT = 0x25, UP = 0x26, RIGHT = 0x27, DOWN = 0x28, RETURN = 0x0D, BACK = 0x08 }
+        local ok = pcall(function()
+            shim.GuardCombo(1, VK.LEFT,   true, false, false)
+            shim.GuardCombo(2, VK.RIGHT,  true, false, false)
+            shim.GuardCombo(3, VK.UP,     true, false, false)
+            shim.GuardCombo(4, VK.DOWN,   true, false, false)
+            shim.GuardCombo(5, VK.BACK,   true, false, false)
+            shim.GuardCombo(6, VK.RETURN, true, false, false)
+        end)
+        if ok then
+            nav_guard_dispatch = {
+                [1] = function() nav_cat_cycle(-1) end,   -- Ctrl+Left:  previous category
+                [2] = function() nav_cat_cycle(1) end,    -- Ctrl+Right: next category
+                [3] = function() nav_obj_cycle(-1) end,   -- Ctrl+Up:    previous target
+                [4] = function() nav_obj_cycle(1) end,    -- Ctrl+Down:  next target
+                [5] = function() nav_info() end,          -- Ctrl+Backspace: info + path
+                [6] = function() nav_walk_start() end,    -- Ctrl+Enter: walk / stop
+            }
+        end
+        log("Key guard armed: " .. tostring(ok))
     end
 end
 end   -- nav do-block
@@ -2929,29 +3115,84 @@ radar_pump = function(src)
     pump_count = pump_count + 1
     local s = src or "key"
     pump_n[s] = (pump_n[s] or 0) + 1
+    if not talk_hook_armed and pump_count % 20 == 7 then pcall(arm_talk_hook) end
+    -- dialogue capture rides the pump (multi-driven, survives loads): log the
+    -- line and feed talkable-NPC learning. The native hook already SPOKE it.
+    if shim and shim.PollTalk then
+        local t
+        pcall(function() t = shim.PollTalk() end)
+        if t and t ~= "" then
+            log("STORY: " .. t)
+            if learn_talk_npc then pcall(learn_talk_npc) end
+        end
+    end
     do
         local ev = false
         pcall(function()
             local ef = StaticFindObject("/Script/Octopath_Traveler.Default__EventFunction")
-            if ef then ev = ef:IsEventPlaying() and true or false end
+            if ef then
+                ev = ef:IsEventPlaying() and true or false
+                if not ev then ev = ef:IsEventPlayTheater() and true or false end
+            end
         end)
         if ev then WS.ev_t = now end
-        local p = get_player_obj()
-        local px, py
-        if p then px, py = read_actor_pos(p) end
-        if px then
-            if WS.px then
-                local dm = math.sqrt((px - WS.px) ^ 2 + (py - WS.py) ^ 2)
-                if dm > 900 then WS.hold = now + 1.5 end
+        if not ev then
+            -- position reads PAUSE during events: scenes teleport the player step
+            -- by step (tracking them hid the cross-scene jump, so the radar
+            -- resumed into a still-loading map and crashed). Freezing WS.px makes
+            -- the whole scene displacement register as ONE jump at resume.
+            local p = get_player_obj()
+            local px, py
+            if p then px, py = read_actor_pos(p) end
+            if px then
+                if WS.px then
+                    local dm = math.sqrt((px - WS.px) ^ 2 + (py - WS.py) ^ 2)
+                    if dm > 900 then WS.hold = now + 2.5 end
+                end
+                WS.px, WS.py = px, py
             end
-            WS.px, WS.py = px, py
         end
-        local susp = ev or (now - WS.ev_t < 1.2) or (now < WS.hold)
+        local susp = ev or (now - WS.ev_t < 2.5) or (now < WS.hold)
+        world_susp = susp   -- update BEFORE the transition handling below: the
+                            -- deferred learn there must see the world as RESUMED
+                            -- (it used to re-queue itself forever on stale state)
         if susp ~= WS.susp then
             WS.susp = susp
             log(susp and "RADAR suspended (event/transition)" or "RADAR resumed")
+            if susp then
+                -- MUTE the whole soundscape: suspended sources otherwise keep
+                -- ringing their last state straight through scene dialogue
+                -- (engine-side calls only -- no world access)
+                for i = 0, 31 do
+                    pcall(function() shim.AudioSetSource(i, false, 0, 0, 0, 0) end)
+                end
+            else
+                -- deferred talk-learning first: dialogue arrived while the
+                -- guard was up; mark the NPC nearest the player's talk spot
+                if npc_learned._pend then
+                    local pd = npc_learned._pend
+                    npc_learned._pend = nil
+                    if now - pd.t < 60 and learn_talk_npc then
+                        pcall(learn_talk_npc, pd.x, pd.y)
+                    end
+                end
+                -- the scene may have swapped the map behind us: never reuse the
+                -- old actor handles -- rescan shortly after the world settles
+                if beacon_on then beacon_rescan_at = now + 1.0 end
+            end
         end
-        world_susp = susp   -- the nav driver checks this itself (it runs per frame)
+    end
+    -- dispatch combos the shim's keyboard guard swallowed for us (handlers carry
+    -- their own scene checks, so this stays outside the suspension gate)
+    if nav_guard_dispatch then
+        local q
+        pcall(function() q = shim.GuardPoll() end)
+        if q then
+            for _, id in ipairs(q) do
+                local fn = nav_guard_dispatch[id]
+                if fn then pcall(fn) end
+            end
+        end
     end
     if not WS.susp then
         -- lazy audio bring-up on the first field pump: bump + door cues work
@@ -2964,7 +3205,6 @@ radar_pump = function(src)
             if audio_inited then pcall(load_cues) end
             log("Audio auto-init: " .. tostring(okA))
         end
-        if mvp_on then pcall(mvp_step) end
         if audio_inited then pcall(bump_step) end
         if beacon_on then pcall(beacon_step) end
         if wall_on then pcall(wall_step) end
