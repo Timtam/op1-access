@@ -657,7 +657,7 @@ end
 -- dressing (NPCInfoData, event arrays and trigger collision all read identical),
 -- so talkability is LEARNED: when dialogue text arrives via the native talk
 -- hook, the nearest NPC gets marked. The radar pings only learned NPCs.
-local npc_learned = {}        -- actor address -> learned record (this session)
+local npc_learned = {}        -- actor address -> record {learned?, name, namedone} (this session)
 local npc_talking = nil       -- {addr,cat,t}: the EXACT actor whose Talk just fired
 local learn_talk_npc          -- assigned later (needs the overworld helpers)
 
@@ -1955,54 +1955,44 @@ end
 -- silently, speaker name resolved to the localized display name. Results are
 -- cached per actor in npc_learned (true = learned by real dialogue;
 -- table = probe result).
+-- Talkable detection by DIRECT PROPERTY READS (no Blueprint calls -> safe). The
+-- NPC is stamped at spawn with its placement identity -- NPCUniqID + NPCLabel +
+-- a cached PlacementData struct -- which keys /Game/Character/Database/
+-- PlacementInfoList. A talkable NPC carries a non-empty TextLabel / NPCLabel;
+-- set dressing carries None. Learning (a real Talk) always overrides.
+local function fname_to_str(v)
+    local s = nil
+    pcall(function() s = v:ToString() end)
+    if s == nil then pcall(function() s = tostring(v) end) end
+    return s or ""
+end
 local function npc_interesting(o)
     local addr = nil
     pcall(function() addr = o:GetAddress() end)
-    if not addr then return false, "no-addr", nil end
-    local c = npc_learned[addr]
-    if c == true then return true, "learned", nil end
-    if type(c) == "table" and c.learned then return true, "learned", c.name end
-    if type(c) == "table" then
-        -- re-probe kept-but-nameless NPCs a few times: the name resolver only
-        -- arms after the session's first real dialogue line
-        if not (c.keep and not c.name and (c.tries or 0) < 3) then
-            return c.keep, c.dbg or "cached", c.name
-        end
-    end
-    local keep, name, dbg = false, nil, "probe-unavailable"
-    if shim and shim.NpcProbe then
-        local pf, lf = nil, nil
-        pcall(function()
-            local f = StaticFindObject("/Game/Character/BP/Type/KSFieldCharacter.KSFieldCharacter_C:GetPlacementData")
-            if f and f:IsValid() then pf = f:GetAddress() end
-        end)
-        pcall(function()
-            local f = StaticFindObject("/Game/Character/BP/Type/KSFieldCharacter.KSFieldCharacter_C:GetNpcLabel")
-            if f and f:IsValid() then lf = f:GetAddress() end
-        end)
-        local locf = nil
-        pcall(function()
-            local f = StaticFindObject("/Script/Engine.Actor:K2_GetActorLocation")
-            if f and f:IsValid() then locf = f:GetAddress() end
-        end)
-        if pf then
-            pcall(function()
-                local ok, talky, nm, d = shim.NpcProbe(addr, pf, lf or 0, locf or 0)
-                dbg = tostring(d)
-                if ok then
-                    keep = talky and true or false
-                    name = nm
-                end
-            end)
-        else
-            dbg = "no GetPlacementData ufunc"
-        end
-    end
-    npc_learned[addr] = { keep = keep, name = name, dbg = dbg,
-        tries = ((type(c) == "table" and c.tries) or 0) + 1 }
-    log("NPCPROBE " .. (keep and "keep " or "omit ") .. dbg .. (name and (" name=" .. name) or ""))
-    return keep, dbg, name
+    local rec = addr and npc_learned[addr]
+    local learned = (rec == true) or (type(rec) == "table" and rec.learned) or false
+    local lname = (type(rec) == "table" and rec.name) or nil
+
+    local uniq, label, ptext = nil, "", ""
+    pcall(function() uniq = o.NPCUniqID end)
+    pcall(function() local f = o.NPCLabel; if f then label = fname_to_str(f) end end)
+    pcall(function()
+        local pd = o.PlacementData
+        if pd then local f = pd.TextLabel; if f then ptext = fname_to_str(f) end end
+    end)
+    -- TextLabel is CN_NP_<TYPE>_<dialogueID>_<sub>. A zero dialogue ID (..._000000_..)
+    -- means no lines (the COM_000000 placeholder); TEST_* are editor dummies. So:
+    -- talkable iff the placement TextLabel carries a non-zero dialogue ID.
+    local id = 0
+    do local a = ptext:match("_(%d+)_%d+$"); if a then id = tonumber(a) or 0 end end
+    local istest = label:find("^TEST_") ~= nil
+
+    local keep = learned or (not istest and id > 0)
+    local dbg = string.format("uniq=%s label=%s ptext=%s id=%d learned=%s",
+        tostring(uniq), label == "" and "-" or label, ptext == "" and "-" or ptext, id, tostring(learned))
+    return keep, dbg, lname
 end
+
 
 learn_talk_npc = function(ox, oy)
     -- dialogue raises the scene guard, so scanning is forbidden exactly when
@@ -2343,6 +2333,34 @@ local NV = {
     STEP = 130,         -- routing grid cell size (world units)
 }
 
+-- Resolve a talkable NPC's display name ON DEMAND (one GetTalkText-via-ProcessEvent
+-- call, only for the SELECTED target -- never a per-list sweep, which stalled).
+-- Cached per actor in npc_learned; pcall-wrapped so it can never break announce.
+-- A field on NV (not a chunk local -- the main chunk is at Lua's 200-local cap).
+NV.resolve_name = function(o)
+    if not (o and shim and shim.NpcName) then return nil end
+    local addr = nil
+    pcall(function() addr = o:GetAddress() end)
+    if not addr then return nil end
+    local rec = npc_learned[addr]
+    if type(rec) == "table" and rec.name then return rec.name end
+    if type(rec) == "table" and rec.namedone then return nil end
+    if NV.gttfn == nil then
+        NV.gttfn = false
+        pcall(function() local f = StaticFindObject("/Script/Octopath_Traveler.KSTextStatics:GetTalkText"); if f and f:IsValid() then NV.gttfn = f:GetAddress() end end)
+        pcall(function() local f = StaticFindObject("/Script/Octopath_Traveler.Default__KSTextStatics"); if f and f:IsValid() then NV.gttcdo = f:GetAddress() end end)
+        pcall(function() local f = StaticFindObject("/Script/Engine.Actor:K2_GetActorLocation"); if f and f:IsValid() then NV.locfn = f:GetAddress() end end)
+    end
+    local nm, nd = nil, nil
+    pcall(function() nm, nd = shim.NpcName(addr, NV.gttcdo or 0, NV.gttfn or 0, NV.locfn or 0) end)
+    if nd then log("NPCNAME " .. tostring(nd) .. " -> " .. tostring(nm)) end
+    local r = (type(rec) == "table") and rec or {}
+    r.name = nm or r.name
+    r.namedone = true
+    npc_learned[addr] = r
+    return r.name
+end
+
 local function nav_target()
     local t = NV.list[NV.idx]
     if not t then return nil end
@@ -2362,22 +2380,27 @@ local function nav_build_list()
     local list = nil
     pcall(function() list = FindAllOf(c.cls) end)
     if not list then return end
-    -- targeting lists EVERY NPC (you must be able to walk to one to TRY talking
-    -- -- that's how learning happens); learned ones are announced as "talks".
-    -- The radar pings learned-only.
+    -- NPC category: list ONLY talkable NPCs (property-detected or learned). Other
+    -- categories list everything. A throttled per-NPC log surfaces the property
+    -- values so we can verify the discriminator.
+    local dolog = (c.name == "npc") and (os.clock() - (NV.npc_logt or 0) > 5)
+    if dolog then NV.npc_logt = os.clock() end
     for _, o in pairs(list) do
         local okv = false
         pcall(function() okv = o and o:IsValid() end)
         if okv and #NV.list < 60 then
             local ox, oy = read_actor_pos(o)
             if ox then
-                local known, nm = false, nil
+                local keep, nm = true, nil
                 if c.name == "npc" then
-                    local _w
-                    known, _w, nm = npc_interesting(o)
+                    local ok2, k, why, n = pcall(npc_interesting, o)
+                    if ok2 then keep, nm = k, n else keep = false end
+                    if dolog and ok2 then log("NPC " .. (keep and "keep " or "omit ") .. tostring(why)) end
                 end
-                NV.list[#NV.list + 1] = { actor = o, cat = c.name, known = known, name = nm,
-                    d = math.sqrt((ox - px) ^ 2 + (oy - py) ^ 2) }
+                if keep then
+                    NV.list[#NV.list + 1] = { actor = o, cat = c.name, known = true, name = nm,
+                        d = math.sqrt((ox - px) ^ 2 + (oy - py) ^ 2) }
+                end
             end
         end
     end
@@ -2396,6 +2419,9 @@ local function nav_announce(prefix)
     local lvl = ""
     if dz > LEVEL_THRESH then lvl = ", above" elseif dz < -LEVEL_THRESH then lvl = ", below" end
     local talks = t.known and ", talks" or ""
+    -- name comes from learning (a real Talk). Static before-contact naming via
+    -- GetTalkText returned empty (engine boundary) -- NV.resolve_name is kept,
+    -- unused, for the planned reverse-engineering attempt.
     local who = t.name and (t.name .. ", ") or ""
     speak(string.format("%s%s %d of %d: %s%s, %d%s%s",
         prefix or "", t.cat, NV.idx, #NV.list, who, nav_dir(dx, dy), d, lvl, talks))
