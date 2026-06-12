@@ -1255,16 +1255,27 @@ local function cycle_player_select(direction)
     end)
 end
 
+-- Page Up/Down serve TWO features from ONE binding (double-registering a key in
+-- UE4SS is undefined): traveler cycling in char-select, nav-target cycling in the
+-- field. The nav section (later in the file) installs its handler into nav_keys;
+-- when it claims the press (returns true), char-select cycling is skipped.
+nav_keys = nav_keys or {}
 do
     local up, down = nil, nil
     pcall(function() up   = Key.PAGE_UP   end)
     pcall(function() down = Key.PAGE_DOWN end)
     if up then
-        local ok = pcall(RegisterKeyBind, up, function() cycle_player_select(-1) end)
+        local ok = pcall(RegisterKeyBind, up, function()
+            if nav_keys.obj and nav_keys.obj(-1) then return end
+            cycle_player_select(-1)
+        end)
         log("Bound Page Up cycle: " .. tostring(ok))
     end
     if down then
-        local ok = pcall(RegisterKeyBind, down, function() cycle_player_select(1) end)
+        local ok = pcall(RegisterKeyBind, down, function()
+            if nav_keys.obj and nav_keys.obj(1) then return end
+            cycle_player_select(1)
+        end)
         log("Bound Page Down cycle: " .. tostring(ok))
     end
 end
@@ -1907,18 +1918,28 @@ end
 -- ConnectionTalkList and/or a path-action ID (purchase/battle/search/lure).
 -- Fail OPEN (keep the NPC) if the struct can't be read, so we never hide real ones.
 local function npc_interesting(o)
-    local ntalk, pid, bid, sid, lid, nm
+    local ntalk, pid, bid, sid, lid, nm, nid, cid, aid
     local ok = pcall(function()
         local info = o.NPCInfoData
         ntalk = #info.ConnectionTalkList
         pid, bid, sid, lid = info.PurchaseID, info.BattleID, info.SearchID, info.LureID
+        pcall(function() nid = info.ID; cid = info.CharacterID; aid = info.ActionID end)
         nm = "?"
         pcall(function() nm = info.Name:ToString() end)
     end)
     if not ok or ntalk == nil then return true, "read-fail (kept)" end
+    -- NPCInfoData proved all-zero even for talkable NPCs; the REAL wiring lives on
+    -- the parent class: EventID / EvetName (sic, game's typo) arrays + the
+    -- interaction Trigger object. Anything event-wired or triggerable is real.
+    local nev, nevn, trig = 0, 0, false
+    pcall(function() nev = #o.EventID end)
+    pcall(function() nevn = #o.EvetName end)
+    pcall(function() local t = o.Trigger; trig = (t and t:IsValid()) and true or false end)
     local keep = ntalk > 0 or (pid or 0) > 0 or (bid or 0) > 0 or (sid or 0) > 0 or (lid or 0) > 0
-    return keep, string.format("name=%s talk=%d p=%s b=%s s=%s l=%s",
-        tostring(nm), ntalk, tostring(pid), tostring(bid), tostring(sid), tostring(lid))
+        or nev > 0 or nevn > 0 or trig
+    return keep, string.format("name=%s talk=%d p=%s b=%s s=%s l=%s id=%s char=%s act=%s ev=%d evn=%d trig=%s",
+        tostring(nm), ntalk, tostring(pid), tostring(bid), tostring(sid), tostring(lid),
+        tostring(nid), tostring(cid), tostring(aid), nev, nevn, tostring(trig))
 end
 local function beacon_rescan()
     beacon_objs = {}
@@ -2161,6 +2182,687 @@ do
     log("Bound move probe (Ctrl+F3): " .. tostring(ok3))
 end
 
+-- ===== Pillar B v1: target selection + auto-walk =====
+-- Ctrl+Left/Right cycles categories, Ctrl+Up/Down cycles that category's targets
+-- (sorted nearest-first), Ctrl+Backspace speaks details + the walk path,
+-- Ctrl+Enter walks there (press again to stop; any manual arrow press cancels).
+-- Paths come from the engine navmesh when available (NavigationSystem:
+-- FindPathToLocationSynchronously); otherwise a straight line. The walk driver
+-- feeds AddMovementInput once per FRAME (from the tick hooks) -- exactly like
+-- real player input, so collisions, triggers and random encounters behave
+-- naturally.
+local nav_walking = false             -- read by the radar pump
+local world_susp  = false             -- written by the radar pump's scene guard
+local nav_drive, nav_tick             -- assigned in the do-block; called by hooks/pump
+-- everything else lives in a do-block: the main chunk is near Lua's 200-local limit
+do
+-- single state table: the main chunk is hard against Lua's 200-local limit
+local NV = {
+    cat = 1,            -- selected category index (NAV_CLASSES)
+    list = {},          -- targets of that category, nearest first
+    idx = 0,            -- selected target
+    path = nil,         -- walk waypoints {x,y} ([1] = start)
+    wp = 2,             -- current waypoint index
+    started = 0.0,      -- walk start time
+    prog = nil,         -- {t,x,y} last progress sample (stuck/battle watch)
+    drive_t = 0.0,      -- per-frame driver throttle
+    ctrlkey_t = 0.0,    -- last nav hotkey press (its plain-arrow echo must not cancel)
+    route = nil,        -- active A* routing job, sliced across pump ticks
+    STEP = 130,         -- routing grid cell size (world units)
+}
+
+local function nav_target()
+    local t = NV.list[NV.idx]
+    if not t then return nil end
+    local okv = false
+    pcall(function() okv = t.actor and t.actor:IsValid() end)
+    if not okv then return nil end
+    return t
+end
+
+local function nav_build_list()
+    NV.list = {}
+    local c = NAV_CLASSES[NV.cat]
+    if not c then return end
+    local p = get_player_obj()
+    local px, py = 0, 0
+    if p then local x, y = read_actor_pos(p); px, py = x or 0, y or 0 end
+    local list = nil
+    pcall(function() list = FindAllOf(c.cls) end)
+    if not list then return end
+    -- targeting lists ALL NPCs: the "interesting" filter proved too strict
+    -- (plain-dialogue NPCs carry no connection/path-action data and were wrongly
+    -- hidden). The radar keeps the strict filter; here an extra target to skip
+    -- past beats a missing one. Until the right discriminator is known, dump the
+    -- candidate fields (throttled) so the logs can teach us what separates them.
+    local npclog = (c.name == "npc") and (os.clock() - (NV.npclog_t or 0) > 30)
+    if npclog then NV.npclog_t = os.clock() end
+    for _, o in pairs(list) do
+        local okv = false
+        pcall(function() okv = o and o:IsValid() end)
+        if okv and #NV.list < 60 then
+            local ox, oy = read_actor_pos(o)
+            if ox then
+                if npclog then
+                    local k, why = npc_interesting(o)
+                    log("NAVNPC " .. (k and "talky " or "plain ") .. why)
+                end
+                NV.list[#NV.list + 1] = { actor = o, cat = c.name,
+                    d = math.sqrt((ox - px) ^ 2 + (oy - py) ^ 2) }
+            end
+        end
+    end
+    table.sort(NV.list, function(a, b) return a.d < b.d end)
+end
+
+local function nav_announce(prefix)
+    local t = nav_target()
+    if not t then speak("No target"); return end
+    local p = get_player_obj(); if not p then speak("No player"); return end
+    local px, py, pz = read_actor_pos(p); if not px then speak("No position"); return end
+    local ox, oy, oz = read_actor_pos(t.actor)
+    if not ox then speak("Target lost"); return end
+    local dx, dy, dz = ox - px, oy - py, (oz or pz) - pz
+    local d = math.floor(math.sqrt(dx * dx + dy * dy) + 0.5)
+    local lvl = ""
+    if dz > LEVEL_THRESH then lvl = ", above" elseif dz < -LEVEL_THRESH then lvl = ", below" end
+    speak(string.format("%s%s %d of %d: %s, %d%s",
+        prefix or "", t.cat, NV.idx, #NV.list, nav_dir(dx, dy), d, lvl))
+end
+
+local function nav_cat_cycle(delta)
+    NV.ctrlkey_t = os.clock()
+    for _ = 1, #NAV_CLASSES do
+        NV.cat = ((NV.cat - 1 + delta) % #NAV_CLASSES) + 1
+        nav_build_list()
+        if #NV.list > 0 then
+            NV.idx = 1
+            nav_announce(string.format("%s, %d targets. ", NAV_CLASSES[NV.cat].name, #NV.list))
+            return
+        end
+    end
+    speak("No targets in any category")
+end
+
+local function nav_obj_cycle(delta)
+    NV.ctrlkey_t = os.clock()
+    if #NV.list == 0 then nav_build_list() end
+    if #NV.list == 0 then speak("No targets here, control left or right for categories"); return end
+    NV.idx = ((NV.idx - 1 + delta) % #NV.list) + 1
+    nav_announce()
+end
+
+local function nav_find_path(p, sx, sy, sz, ex, ey, ez)
+    -- the engine query failed every time on this game (no navmesh shipped);
+    -- after a couple of confirmations stop asking
+    if (NV.nomesh or 0) >= 2 then return nil end
+    local pts, why = nil, "call failed"
+    pcall(function()
+        local nav = StaticFindObject("/Script/Engine.Default__NavigationSystem")
+        if not nav then why = "no NavigationSystem CDO"; return end
+        local po = nav:FindPathToLocationSynchronously(p,
+            { X = sx, Y = sy, Z = sz }, { X = ex, Y = ey, Z = ez }, nil, nil)
+        if not po then why = "nil path object"; return end
+        local pp = po.PathPoints
+        local n = #pp
+        why = "PathPoints=" .. tostring(n)
+        if n >= 2 then
+            pts = {}
+            for i = 1, n do
+                local v = pp[i]
+                pts[#pts + 1] = { x = v.X, y = v.Y, z = v.Z }
+            end
+        end
+    end)
+    if not pts then NV.nomesh = (NV.nomesh or 0) + 1 end
+    log("NAVMESH query: " .. why)
+    return pts
+end
+
+local function nav_describe_path(pts)
+    -- collapse waypoint deltas into runs named by their dominant arrow direction
+    local segs = {}
+    for i = 2, #pts do
+        local dx, dy = pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y
+        local dirname
+        if math.abs(dx) >= math.abs(dy) then dirname = (dx >= 0) and "up" or "down"
+        else dirname = (dy >= 0) and "right" or "left" end
+        local len = math.sqrt(dx * dx + dy * dy)
+        if #segs > 0 and segs[#segs].dir == dirname then
+            segs[#segs].len = segs[#segs].len + len
+        else
+            segs[#segs + 1] = { dir = dirname, len = len }
+        end
+    end
+    local parts, total = {}, 0
+    for i, s in ipairs(segs) do
+        total = total + s.len
+        if i <= 8 then parts[#parts + 1] = string.format("%s %d", s.dir, math.floor(s.len / 10 + 0.5) * 10) end
+    end
+    if #segs > 8 then parts[#parts + 1] = "and more" end
+    return table.concat(parts, ", "), math.floor(total + 0.5)
+end
+
+local function nav_walk_begin_path(pts, label)
+    NV.path = pts
+    NV.wp = 2
+    nav_walking = true
+    NV.started = os.clock()
+    NV.prog = { t = NV.started, x = pts[1].x, y = pts[1].y }
+    NV.attempt_start = { x = pts[1].x, y = pts[1].y }
+    NV.unwedged = false
+    NV.unwedge = nil
+    local total = 0
+    for i = 2, #pts do
+        total = total + math.sqrt((pts[i].x - pts[i - 1].x) ^ 2 + (pts[i].y - pts[i - 1].y) ^ 2)
+    end
+    log(string.format("NAVWALK start mode=%s wps=%d total=%d", label, #pts, math.floor(total)))
+    speak(string.format("Walking, %s, total %d", label, math.floor(total + 0.5)))
+end
+
+-- ===== Trace-grid A*: own pathfinding, since the game ships no navmesh =====
+-- Grid of NV.STEP cells around the player; an edge is walkable if a line trace
+-- between the two cell centers (at knee height, like the wall radar) hits
+-- nothing. The search is SLICED: ~70 traces per pump tick so the game never
+-- hitches; typical indoor routes resolve in a second or two.
+local function cellkey(ix, iy) return ix * 8192 + iy end
+
+-- The grid is a HEIGHTFIELD: each cell's ground height comes from a down-trace,
+-- and a step between neighbors is walkable when the ground changes GENTLY
+-- (stairs and ramps are exactly that) and no wall blocks at knee height. Floors
+-- are layers: the same x,y can exist upstairs AND downstairs as separate route
+-- nodes, so routes can take staircases between levels.
+local function zlayer(R, z) return math.floor((z - R.pz) / 200 + 0.5) end
+local function key3(x, y, zl) return (x * 8192 + y) * 131 + zl end
+
+-- ground height at cell (bx,by) approached from height za (down-trace from
+-- za+160 to za-240; false = void / too big a drop). Cached per cell + band.
+local function nav_ground(R, ksl, p, bx, by, za)
+    local gk = cellkey(bx, by) .. "@" .. math.floor((za - R.pz) / 200 + 0.5)
+    local c = R.gcache[gk]
+    if c ~= nil then return c, 0 end
+    local wx, wy = R.px + bx * NV.STEP, R.py + by * NV.STEP
+    R.traces = R.traces + 1
+    local ok, hit, oh = line_blocked(ksl, p, wx, wy, za + 160, wx, wy, za - 240)
+    local z = false
+    if ok and hit then
+        local dist
+        pcall(function() if type(oh.Distance) == "number" then dist = oh.Distance end end)
+        z = dist and (za + 160 - dist) or za
+    end
+    R.gcache[gk] = z
+    return z, 1
+end
+
+local function nav_route_finish(goalnode)
+    local R = NV.route
+    NV.route = nil
+    if not R then return end
+    if not goalnode then
+        log(string.format("ROUTE fail traces=%d pops=%d %.1fs", R.traces, R.pops, os.clock() - R.started))
+        if R.mode == "walk" then
+            -- NO blind straight-line fallback (it marched endlessly into walls):
+            -- walk direct only if a body-width corridor is genuinely clear
+            local clear = false
+            local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+            local p = get_player_obj()
+            if ksl and p then
+                local ddx, ddy = R.ox - R.px, R.oy - R.py
+                local dl = math.sqrt(ddx * ddx + ddy * ddy)
+                local pox, poy = 0, 0
+                if dl > 1 then pox, poy = ddy / dl * 42, -ddx / dl * 42 end
+                clear = true
+                for _, off in ipairs({ 0, 1, -1 }) do
+                    local ok, hit = line_blocked(ksl, p,
+                        R.px + pox * off, R.py + poy * off, R.pz + 30,
+                        R.ox + pox * off, R.oy + poy * off, R.pz + 30)
+                    if not (ok and not hit) then clear = false; break end
+                end
+            end
+            if clear then
+                nav_walk_begin_path({ { x = R.px, y = R.py }, { x = R.ox, y = R.oy } }, "direct")
+            else
+                speak("No route found, not walking")
+            end
+        else
+            speak("No route found")
+        end
+        return
+    end
+    -- goal -> start node chain (parent pointers), then waypoints, runs merged
+    local chain = {}
+    local n = goalnode
+    while n and n.k ~= R.startk do
+        chain[#chain + 1] = n
+        n = R.came[n.k]
+    end
+    local raw = { { x = R.px, y = R.py } }
+    for i = #chain, 1, -1 do
+        raw[#raw + 1] = { x = R.px + chain[i].x * NV.STEP, y = R.py + chain[i].y * NV.STEP }
+    end
+    raw[#raw + 1] = { x = R.ox, y = R.oy }
+    local pts = { raw[1] }
+    for i = 2, #raw - 1 do
+        local a, b, c = pts[#pts], raw[i], raw[i + 1]
+        local d1x, d1y = b.x - a.x, b.y - a.y
+        local d2x, d2y = c.x - b.x, c.y - b.y
+        if d1x * d2y - d1y * d2x ~= 0 or (d1x * d2x + d1y * d2y) < 0 then
+            pts[#pts + 1] = b      -- keep corners and reversals, drop straight runs
+        end
+    end
+    pts[#pts + 1] = raw[#raw]
+    local floorword = ""
+    if R.oz - R.pz < -250 then floorword = ", downstairs"
+    elseif R.oz - R.pz > 250 then floorword = ", upstairs" end
+    log(string.format("ROUTE ok cells=%d wps=%d traces=%d %.1fs", #chain, #pts, R.traces, os.clock() - R.started))
+    if R.mode == "walk" then
+        nav_walk_begin_path(pts, "traced route" .. floorword)
+    else
+        local desc, total = nav_describe_path(pts)
+        speak(string.format("Path: %s. Total %d%s.", desc, total, floorword))
+    end
+end
+
+local function nav_route_step()
+    local R = NV.route
+    if not R then return end
+    local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+    local p = get_player_obj()
+    if not (ksl and p) then nav_route_finish(nil); return end
+    local budget = 110                     -- traces per pump tick (keeps frames smooth)
+    while budget > 0 do
+        local bi, best
+        for i, n in ipairs(R.open) do
+            if not best or n.f < best.f then bi, best = i, n end
+        end
+        if not best then nav_route_finish(nil); return end
+        table.remove(R.open, bi)
+        if not R.closed[best.k] then
+            R.closed[best.k] = true
+            R.pops = R.pops + 1
+            if best.x == R.gx and best.y == R.gy and math.abs(best.z - R.oz) <= 300 then
+                nav_route_finish(best); return
+            end
+            for _, d in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
+                local nx, ny = best.x + d[1], best.y + d[2]
+                if nx >= R.minx and nx <= R.maxx and ny >= R.miny and ny <= R.maxy then
+                    local zb, used = nav_ground(R, ksl, p, nx, ny, best.z)
+                    budget = budget - used
+                    if zb and math.abs(zb - best.z) <= 200 then
+                        local nk = key3(nx, ny, zlayer(R, zb))
+                        if not R.closed[nk] then
+                            -- wall check at knee height between the two ground points
+                            local ekey = best.k .. ">" .. nk
+                            local w = R.ecache[ekey]
+                            if w == nil then
+                                -- CAPSULE-WIDTH clearance: 3 parallel knee-height
+                                -- lines (center and +-42 units). A single ray can
+                                -- thread banister gaps the character cannot fit
+                                -- through -- that wedged the stair walks.
+                                local pox, poy = d[2] * 42, -d[1] * 42
+                                local ax0, ay0 = R.px + best.x * NV.STEP, R.py + best.y * NV.STEP
+                                local bx0, by0 = R.px + nx * NV.STEP, R.py + ny * NV.STEP
+                                w = true
+                                for _, off in ipairs({ 0, 1, -1 }) do
+                                    R.traces = R.traces + 1
+                                    budget = budget - 1
+                                    local ok2, hit2 = line_blocked(ksl, p,
+                                        ax0 + pox * off, ay0 + poy * off, best.z + 55,
+                                        bx0 + pox * off, by0 + poy * off, zb + 55)
+                                    if not (ok2 and not hit2) then w = false; break end
+                                end
+                                R.ecache[ekey] = w
+                            end
+                            if w then
+                                local ng = best.g + 1
+                                if ng < (R.gbest[nk] or 1e9) then
+                                    R.gbest[nk] = ng
+                                    R.came[nk] = best
+                                    R.open[#R.open + 1] = { x = nx, y = ny, z = zb, k = nk, g = ng,
+                                        f = ng + math.abs(R.gx - nx) + math.abs(R.gy - ny) }
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        if R.traces > 5200 or os.clock() - R.started > 8 then nav_route_finish(nil); return end
+    end
+    if os.clock() - R.started > 2 and not R.saidlong then
+        R.saidlong = true
+        speak("Still routing")
+    end
+end
+
+local function nav_route_begin(mode, ox, oy, oz)
+    local p = get_player_obj(); if not p then speak("No player"); return end
+    local px, py, pz = read_actor_pos(p); if not px then speak("No position"); return end
+    oz = oz or pz
+    local samelevel = math.abs(oz - pz) <= 200
+    local gx = math.floor((ox - px) / NV.STEP + 0.5)
+    local gy = math.floor((oy - py) / NV.STEP + 0.5)
+    if gx == 0 and gy == 0 and samelevel then
+        if mode == "walk" then
+            nav_walk_begin_path({ { x = px, y = py }, { x = ox, y = oy } }, "close by")
+        else
+            speak("Right here")
+        end
+        return
+    end
+    -- direct-line shortcut (same level only): if a BODY-WIDTH corridor (3 lines,
+    -- center +-42) to the target is clear, skip the search entirely
+    local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+    if ksl and samelevel then
+        local ddx, ddy = ox - px, oy - py
+        local dl = math.sqrt(ddx * ddx + ddy * ddy)
+        local pox, poy = 0, 0
+        if dl > 1 then pox, poy = ddy / dl * 42, -ddx / dl * 42 end
+        local clear = true
+        for _, off in ipairs({ 0, 1, -1 }) do
+            local ok, hit = line_blocked(ksl, p,
+                px + pox * off, py + poy * off, pz + 30,
+                ox + pox * off, oy + poy * off, pz + 30)
+            if not (ok and not hit) then clear = false; break end
+        end
+        if clear then
+            if mode == "walk" then
+                nav_walk_begin_path({ { x = px, y = py }, { x = ox, y = oy } }, "direct")
+            else
+                local d = math.floor(math.sqrt((ox - px) ^ 2 + (oy - py) ^ 2) + 0.5)
+                speak(string.format("Path: straight ahead, %d", d))
+            end
+            return
+        end
+    end
+    local startk = key3(0, 0, 0)
+    NV.route = {
+        mode = mode, ox = ox, oy = oy, oz = oz,
+        px = px, py = py, pz = pz, gx = gx, gy = gy, startk = startk,
+        open = { { x = 0, y = 0, z = pz, k = startk, g = 0, f = math.abs(gx) + math.abs(gy) } },
+        came = {}, gbest = { [startk] = 0 }, closed = {},
+        ecache = {}, gcache = {}, traces = 0, pops = 0, started = os.clock(),
+        minx = math.min(0, gx) - 9, maxx = math.max(0, gx) + 9,
+        miny = math.min(0, gy) - 9, maxy = math.max(0, gy) + 9,
+    }
+end
+
+local function nav_info()
+    NV.ctrlkey_t = os.clock()
+    local t = nav_target()
+    if not t then speak("No target selected. Home and end pick a category, page up and down a target."); return end
+    local p = get_player_obj(); if not p then speak("No player"); return end
+    local px, py, pz = read_actor_pos(p)
+    local ox, oy, oz = read_actor_pos(t.actor)
+    if not (px and ox) then speak("Target lost"); return end
+    local dx, dy, dz = ox - px, oy - py, (oz or pz) - pz
+    local d = math.floor(math.sqrt(dx * dx + dy * dy) + 0.5)
+    local lvl = "same level"
+    if dz > LEVEL_THRESH then lvl = "above" elseif dz < -LEVEL_THRESH then lvl = "below" end
+    local base = string.format("%s %d of %d, %s, %d, %s. ", t.cat, NV.idx, #NV.list, nav_dir(dx, dy), d, lvl)
+    local pts = nav_find_path(p, px, py, pz, ox, oy, oz)
+    if pts then
+        local desc, total = nav_describe_path(pts)
+        speak(base .. string.format("Path: %s. Total %d.", desc, total))
+    else
+        speak(base .. "Routing.")
+        nav_route_begin("info", ox, oy, oz)
+    end
+end
+
+local function nav_walk_stop(msg)
+    nav_walking = false
+    NV.path = nil
+    NV.held = nil
+    pcall(function() if shim and shim.HoldKeys then shim.HoldKeys(false, false, false, false) end end)
+    if msg then speak(msg) end
+end
+
+local function nav_walk_start()
+    NV.ctrlkey_t = os.clock()
+    if nav_walking then nav_walk_stop("Walk stopped"); return end
+    if NV.route then NV.route = nil; speak("Routing cancelled"); return end
+    if world_susp then speak("Scene running, try again after"); return end
+    local t = nav_target()
+    if not t then speak("No target selected"); return end
+    local p = get_player_obj(); if not p then speak("No player"); return end
+    local px, py, pz = read_actor_pos(p)
+    local ox, oy, oz = read_actor_pos(t.actor)
+    if not (px and ox) then speak("Target lost"); return end
+    NV.goal = { x = ox, y = oy, z = oz, cat = t.cat }
+    NV.retries = 0
+    -- navmesh first (free + instant if the game has it), else our traced A*
+    local pts = nav_find_path(p, px, py, pz, ox, oy, oz)
+    if pts then
+        nav_walk_begin_path(pts, "navmesh path")
+        return
+    end
+    local d = math.floor(math.sqrt((ox - px) ^ 2 + (oy - py) ^ 2) + 0.5)
+    speak(string.format("Routing to %s, %d", t.cat, d))
+    nav_route_begin("walk", ox, oy, oz)
+end
+
+nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arrow keys
+    if world_susp then
+        -- scene/transition: end any walk or routing NOW and release the keys.
+        -- (The driver runs outside the pump's gate, so it must check itself --
+        -- it once kept keys held through a whole cutscene and the character
+        -- marched through a door into the next crash.)
+        if nav_walking or NV.route then
+            local waswalking = nav_walking
+            nav_walking = false
+            NV.path = nil
+            NV.route = nil
+            NV.unwedge = nil
+            NV.held = nil
+            pcall(function() shim.HoldKeys(false, false, false, false) end)
+            if waswalking then speak("Walk stopped") end
+        end
+        return
+    end
+    if not nav_walking then return end
+    local now = os.clock()
+    if now - NV.drive_t < 0.012 then return end
+    NV.drive_t = now
+    -- unwedge sidestep phase: hold the perpendicular key briefly, then re-route
+    if NV.unwedge then
+        if now < NV.unwedge.till then
+            NV.held = NV.unwedge.held
+            pcall(function() shim.HoldKeys(NV.unwedge.u, NV.unwedge.d, NV.unwedge.l, NV.unwedge.r) end)
+            return
+        end
+        NV.unwedge = nil
+        nav_walking = false
+        NV.path = nil
+        NV.held = nil
+        pcall(function() shim.HoldKeys(false, false, false, false) end)
+        if NV.goal and (NV.retries or 0) < 4 then
+            NV.retries = (NV.retries or 0) + 1
+            speak("Rerouting")
+            nav_route_begin("walk", NV.goal.x, NV.goal.y, NV.goal.z)
+        else
+            speak("Walk interrupted, backspace to resume")
+        end
+        return
+    end
+    if not NV.path then return end
+    local p = get_player_obj()
+    local px, py
+    if p then px, py = read_actor_pos(p) end
+    if not px then
+        -- world unstable (transition in progress): stop NOW, never idle with keys held
+        nav_walking = false
+        NV.path = nil
+        NV.held = nil
+        pcall(function() shim.HoldKeys(false, false, false, false) end)
+        return
+    end
+    local wp = NV.path[NV.wp]
+    while wp do
+        local dx, dy = wp.x - px, wp.y - py
+        local reach = (NV.wp == #NV.path) and 110 or 40   -- small turn radius: no corner cutting
+        if math.sqrt(dx * dx + dy * dy) >= reach then break end
+        NV.wp = NV.wp + 1
+        wp = NV.path[NV.wp]
+    end
+    if not wp then
+        nav_walk_stop("Arrived")
+        return
+    end
+    local dx, dy = wp.x - px, wp.y - py
+    local d = math.sqrt(dx * dx + dy * dy)
+    if d < 1 then return end
+    dx, dy = dx / d, dy / d
+    -- NATIVE input: hold the real arrow keys (8-way) via the shim -- the game
+    -- walks the character itself: true speed, footsteps, animations, encounters.
+    local u  = dx > 0.38
+    local dn = dx < -0.38
+    local r  = dy > 0.38
+    local l  = dy < -0.38
+    NV.held = { UP_ARROW = u or nil, DOWN_ARROW = dn or nil, LEFT_ARROW = l or nil, RIGHT_ARROW = r or nil }
+    pcall(function() shim.HoldKeys(u, dn, l, r) end)
+end
+
+local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
+    if not nav_walking then return end
+    local now = os.clock()
+    -- manual override: an arrow press for a key WE are not synthetically holding
+    -- means the player intervened (our own HoldKeys transitions echo into the
+    -- keybinds too, so held keys must not cancel)
+    if bump_arrow_t > NV.started + 0.5 and math.abs(bump_arrow_t - NV.ctrlkey_t) > 0.25 then
+        local held = NV.held or {}
+        if not (bump_arrow_key and held[bump_arrow_key]) then
+            nav_walk_stop("Walk cancelled")
+            return
+        end
+    end
+    local p = get_player_obj(); if not p then return end
+    local px, py, pz = read_actor_pos(p); if not px then return end
+    local jump = math.sqrt((px - NV.prog.x) ^ 2 + (py - NV.prog.y) ^ 2)
+    if jump > 900 then nav_walk_stop("Walk ended, went through a door"); return end
+    if jump > 40 then
+        NV.prog = { t = now, x = px, y = py }
+    elseif now - NV.prog.t > 2.0 and not NV.unwedge then
+        -- stuck: wedged on geometry, a blocker, a battle, or a cutscene.
+        -- If we hold keys but the pawn reports no movement input, the game has
+        -- taken input away (cutscene/battle): stop quietly, never fight it.
+        local inpMag = 0
+        pcall(function() local iv = p:GetLastMovementInputVector(); inpMag = math.sqrt(iv.X * iv.X + iv.Y * iv.Y) end)
+        if NV.held and inpMag < 0.3 then
+            nav_walk_stop("Walk interrupted")
+            return
+        end
+        if not NV.unwedged and NV.path then
+            -- one automatic SIDESTEP perpendicular to travel (the manual recovery
+            -- that worked on the stairs), then re-route from the freed spot
+            NV.unwedged = true
+            local wp = NV.path[NV.wp]
+            local vx, vy = 0, 0
+            if wp then
+                vx, vy = wp.x - px, wp.y - py
+                local vl = math.sqrt(vx * vx + vy * vy)
+                if vl > 1 then vx, vy = vx / vl, vy / vl end
+            end
+            local cands = { { -vy, vx }, { vy, -vx } }
+            local pick = nil
+            local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+            if ksl then
+                for _, c in ipairs(cands) do
+                    local ok, hit = line_blocked(ksl, p, px, py, pz + 30,
+                        px + c[1] * 170, py + c[2] * 170, pz + 30)
+                    if ok and not hit then pick = c; break end
+                end
+            end
+            pick = pick or cands[1]
+            local u  = pick[1] > 0.38
+            local dn = pick[1] < -0.38
+            local r  = pick[2] > 0.38
+            local l  = pick[2] < -0.38
+            NV.unwedge = { till = now + 0.4, u = u, d = dn, l = l, r = r,
+                held = { UP_ARROW = u or nil, DOWN_ARROW = dn or nil, LEFT_ARROW = l or nil, RIGHT_ARROW = r or nil } }
+            NV.prog = { t = now, x = px, y = py }
+            return
+        end
+        local prog = NV.attempt_start
+            and math.sqrt((px - NV.attempt_start.x) ^ 2 + (py - NV.attempt_start.y) ^ 2) or 0
+        nav_walking = false
+        NV.path = nil
+        NV.held = nil
+        pcall(function() if shim and shim.HoldKeys then shim.HoldKeys(false, false, false, false) end end)
+        if NV.goal and (NV.retries or 0) < 4 and prog > 150 then
+            NV.retries = (NV.retries or 0) + 1
+            speak("Rerouting")
+            nav_route_begin("walk", NV.goal.x, NV.goal.y, NV.goal.z)
+        else
+            speak("Walk interrupted, backspace to resume")
+        end
+    end
+end
+
+nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervision
+    if NV.route then
+        local ok, err = pcall(nav_route_step)
+        if not ok then
+            local msg = tostring(err)
+            if msg ~= NV.lasterr then
+                NV.lasterr = msg
+                log("ROUTE ERR: " .. msg)
+            end
+        end
+    end
+    if nav_walking then pcall(nav_walk_watch) end
+end
+
+-- Laptop-friendly keys (no numpad in the target audience's baseline):
+--   Home / End           = category prev / next
+--   Page Up / Page Down  = target prev / next (shared binding: char-select keeps
+--                          its traveler cycling; the field gets target cycling)
+--   Ctrl+Backspace       = target info + path
+--   Ctrl+Enter           = walk / stop
+do
+    local function bind(kn, mods, fn, label)
+        local k = nil
+        pcall(function() k = Key[kn] end)
+        if not k then return false end
+        local ok
+        if mods then ok = pcall(RegisterKeyBind, k, mods, fn)
+        else ok = pcall(RegisterKeyBind, k, fn) end
+        log("Bound " .. label .. " (" .. (mods and "Ctrl+" or "") .. kn .. "): " .. tostring(ok))
+        return ok and true or false
+    end
+    local function bindany(names, mods, fn, label)
+        for _, kn in ipairs(names) do
+            if bind(kn, mods, fn, label) then return true end
+        end
+        log("Bind FAILED: " .. label)
+        return false
+    end
+    bindany({ "HOME" }, nil, function() pcall(nav_cat_cycle, -1) end, "nav category prev")
+    bindany({ "END" },  nil, function() pcall(nav_cat_cycle, 1) end,  "nav category next")
+    -- BACKSPACE is the walk key (pairs with Ctrl+Backspace = info). Safe by
+    -- evidence: the game reads keys modifier-blind, and Ctrl+Backspace never
+    -- triggered anything in-game -- so plain Backspace is equally inert.
+    -- (Enter was unusable: Ctrl+Enter in front of an NPC opened their dialogue.)
+    bindany({ "BACKSPACE", "BACK" }, nil, function()
+        -- if UE4SS also fires plain binds while Ctrl is down, a Ctrl+Backspace
+        -- (info) press must not ALSO start a walk: skip when a Ctrl-nav action
+        -- just ran
+        if os.clock() - NV.ctrlkey_t < 0.35 then return end
+        pcall(nav_walk_start)
+    end, "nav walk")
+    bindany({ "BACKSPACE", "BACK" }, { ModifierKey.CONTROL }, function() pcall(nav_info) end,       "nav info")
+    bindany({ "RETURN", "ENTER" },   { ModifierKey.CONTROL }, function() pcall(nav_walk_start) end, "nav walk alt")
+    -- claim Page Up/Down in the field: with a live field player we handle the
+    -- press (return true); otherwise char-select keeps it
+    nav_keys.obj = function(delta)
+        local p = get_player_obj()
+        if not p then return false end
+        pcall(nav_obj_cycle, delta)
+        return true
+    end
+end
+end   -- nav do-block
+
 -- ===== Radar pump: one update step, three independent drivers =====
 -- ExecuteWithDelay self-rescheduling chains silently die mid-session in this game
 -- (the frozen wall radar / beacon / bump of 2026-06-11), while keybinds, hooks and
@@ -2180,8 +2882,12 @@ local PUMP_MIN_DT = 0.09
 local pump_n      = { hook = 0, loop = 0, key = 0 }   -- per-driver pump counts (diagnostics)
 local pump_loop_t = 0.0                               -- last LoopAsync tick (liveness)
 local pump_heals  = 0
--- several per-frame tick hooks: different maps have different BPs loaded; any one
--- that arms gives the pump a per-frame driver on that map
+-- Per-frame tick hooks. EventManagerBP turned out to tick only DURING events on
+-- some maps, so the map-local BPs (triggers/chests -- something is on every
+-- field map) are required: without them the pump starves the moment the
+-- LoopAsync dies (post-prologue: routing froze, the walker stood still, bump
+-- could not get its second sample). Teardown safety now comes from the scene
+-- guard, not from avoiding these hooks.
 local PUMP_TICK_HOOKS = {
     "/Game/Event/BP/EventManagerBP.EventManagerBP_C:ReceiveTick",
     "/Game/Level/LevelTrigger.LevelTrigger_C:ReceiveTick",
@@ -2192,7 +2898,10 @@ local pump_hooked = {}
 local function arm_pump_tickhook()
     for _, path in ipairs(PUMP_TICK_HOOKS) do
         if not pump_hooked[path] then
-            local ok = pcall(RegisterHook, path, function() if radar_pump then pcall(radar_pump, "hook") end end)
+            local ok = pcall(RegisterHook, path, function()
+                pcall(nav_drive)   -- per-frame walk driver (cheap no-op when not walking)
+                if radar_pump then pcall(radar_pump, "hook") end
+            end)
             if ok then pump_hooked[path] = true; log("Pump tick hook armed: " .. path) end
         end
     end
@@ -2200,10 +2909,19 @@ end
 local function start_pump_loop()
     return pcall(LoopAsync, 100, function()
         pump_loop_t = os.clock()
+        pcall(nav_drive)            -- 10 Hz steering fallback if no tick hook fires
         pcall(radar_pump, "loop")
         return false
     end)
 end
+-- SCENE GUARD: the crash at a cutscene's end came from world-poking (traces /
+-- actor reads) continuing through the level teardown. The game itself is the
+-- discriminator: EventFunction:IsEventPlaying() is true during cutscenes (and
+-- scripted events), so the radar suspends exactly then -- standing around
+-- thinking keeps the radar fully alive. Event end and teleports get a short
+-- grace so the teardown/loading moments pass before world-poking resumes.
+local WS = { px = nil, py = nil, ev_t = 0.0, hold = 0.0, susp = false }
+local audio_autotry = false   -- one-shot lazy audio init (bump works without radar toggles)
 radar_pump = function(src)
     local now = os.clock()
     if now - pump_lastt < PUMP_MIN_DT then return end
@@ -2211,10 +2929,47 @@ radar_pump = function(src)
     pump_count = pump_count + 1
     local s = src or "key"
     pump_n[s] = (pump_n[s] or 0) + 1
-    if mvp_on then pcall(mvp_step) end
-    if audio_inited then pcall(bump_step) end
-    if beacon_on then pcall(beacon_step) end
-    if wall_on then pcall(wall_step) end
+    do
+        local ev = false
+        pcall(function()
+            local ef = StaticFindObject("/Script/Octopath_Traveler.Default__EventFunction")
+            if ef then ev = ef:IsEventPlaying() and true or false end
+        end)
+        if ev then WS.ev_t = now end
+        local p = get_player_obj()
+        local px, py
+        if p then px, py = read_actor_pos(p) end
+        if px then
+            if WS.px then
+                local dm = math.sqrt((px - WS.px) ^ 2 + (py - WS.py) ^ 2)
+                if dm > 900 then WS.hold = now + 1.5 end
+            end
+            WS.px, WS.py = px, py
+        end
+        local susp = ev or (now - WS.ev_t < 1.2) or (now < WS.hold)
+        if susp ~= WS.susp then
+            WS.susp = susp
+            log(susp and "RADAR suspended (event/transition)" or "RADAR resumed")
+        end
+        world_susp = susp   -- the nav driver checks this itself (it runs per frame)
+    end
+    if not WS.susp then
+        -- lazy audio bring-up on the first field pump: bump + door cues work
+        -- without ever toggling a radar (step toward always-on radars)
+        if WS.px and not audio_inited and not audio_autotry and shim and shim.AudioInit then
+            audio_autotry = true
+            local okA = false
+            pcall(function() okA = shim.AudioInit() end)
+            audio_inited = okA and true or false
+            if audio_inited then pcall(load_cues) end
+            log("Audio auto-init: " .. tostring(okA))
+        end
+        if mvp_on then pcall(mvp_step) end
+        if audio_inited then pcall(bump_step) end
+        if beacon_on then pcall(beacon_step) end
+        if wall_on then pcall(wall_step) end
+        pcall(nav_tick)
+    end
     if pump_count % 30 == 1 then pcall(arm_pump_tickhook) end
     -- self-heal: LoopAsyncs can die on level load; if ours has gone quiet, start a
     -- fresh one (multi-driving is throttled-safe, dead loops just stay dead)

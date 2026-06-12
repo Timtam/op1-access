@@ -508,6 +508,32 @@ int l_audio_play_cue(lua_State* L) {
     return 0;
 }
 
+// Hold/release the arrow keys via synthesized hardware input (SendInput), so the
+// auto-walk drives the game through its OWN input path: native walk speed,
+// footstep sounds, animations, encounters. Args: up, down, left, right (booleans).
+// Diff-based: events are only sent on state transitions; all keys must be
+// released by calling with four falses (the Lua walker does this on every stop).
+void send_arrow_key(WORD vk, bool down) {
+    INPUT in{};
+    in.type = INPUT_KEYBOARD;
+    in.ki.wVk = vk;
+    in.ki.wScan = (WORD)MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
+    in.ki.dwFlags = KEYEVENTF_EXTENDEDKEY | (down ? 0 : KEYEVENTF_KEYUP);
+    SendInput(1, &in, sizeof(INPUT));
+}
+int l_hold_keys(lua_State* L) {
+    static bool held[4] = { false, false, false, false };
+    static const WORD vks[4] = { VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT };
+    for (int i = 0; i < 4; ++i) {
+        bool want = lua_toboolean(L, i + 1) != 0;
+        if (want != held[i]) {
+            send_arrow_key(vks[i], want);
+            held[i] = want;
+        }
+    }
+    return 0;
+}
+
 const luaL_Reg op1access_funcs[] = {
     {"Speak",                l_speak},
     {"Silence",              l_silence},
@@ -525,6 +551,7 @@ const luaL_Reg op1access_funcs[] = {
     {"AudioSetSource",       l_audio_set_source},
     {"AudioLoadCue",         l_audio_load_cue},
     {"AudioPlayCue",         l_audio_play_cue},
+    {"HoldKeys",             l_hold_keys},
     {nullptr, nullptr},
 };
 
