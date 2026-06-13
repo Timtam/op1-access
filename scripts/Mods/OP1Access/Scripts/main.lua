@@ -2333,10 +2333,12 @@ local NV = {
     STEP = 130,         -- routing grid cell size (world units)
 }
 
--- Resolve a talkable NPC's display name ON DEMAND (one GetTalkText-via-ProcessEvent
--- call, only for the SELECTED target -- never a per-list sweep, which stalled).
--- Cached per actor in npc_learned; pcall-wrapped so it can never break announce.
--- A field on NV (not a chunk local -- the main chunk is at Lua's 200-local cap).
+-- Resolve a talkable NPC's display name from STATIC data (no contact needed): the
+-- name handle IS the placement TextLabel, so shim.NpcName reads actor+0xA10 and
+-- runs it through GetGameTextString. Cheap (same as a speaker-name resolve), but
+-- still cached per actor in npc_learned and called per-focus (not a list sweep) so
+-- a stall can never accumulate. pcall-wrapped; a field on NV (main chunk is at the
+-- 200-local cap). namedone marks "tried, none" so we don't re-probe blanks.
 NV.resolve_name = function(o)
     if not (o and shim and shim.NpcName) then return nil end
     local addr = nil
@@ -2345,15 +2347,8 @@ NV.resolve_name = function(o)
     local rec = npc_learned[addr]
     if type(rec) == "table" and rec.name then return rec.name end
     if type(rec) == "table" and rec.namedone then return nil end
-    if NV.gttfn == nil then
-        NV.gttfn = false
-        pcall(function() local f = StaticFindObject("/Script/Octopath_Traveler.KSTextStatics:GetTalkText"); if f and f:IsValid() then NV.gttfn = f:GetAddress() end end)
-        pcall(function() local f = StaticFindObject("/Script/Octopath_Traveler.Default__KSTextStatics"); if f and f:IsValid() then NV.gttcdo = f:GetAddress() end end)
-        pcall(function() local f = StaticFindObject("/Script/Engine.Actor:K2_GetActorLocation"); if f and f:IsValid() then NV.locfn = f:GetAddress() end end)
-    end
-    local nm, nd = nil, nil
-    pcall(function() nm, nd = shim.NpcName(addr, NV.gttcdo or 0, NV.gttfn or 0, NV.locfn or 0) end)
-    if nd then log("NPCNAME " .. tostring(nd) .. " -> " .. tostring(nm)) end
+    local nm = nil
+    pcall(function() nm = shim.NpcName(addr) end)
     local r = (type(rec) == "table") and rec or {}
     r.name = nm or r.name
     r.namedone = true
@@ -2419,9 +2414,16 @@ local function nav_announce(prefix)
     local lvl = ""
     if dz > LEVEL_THRESH then lvl = ", above" elseif dz < -LEVEL_THRESH then lvl = ", below" end
     local talks = t.known and ", talks" or ""
-    -- name comes from learning (a real Talk). Static before-contact naming via
-    -- GetTalkText returned empty (engine boundary) -- NV.resolve_name is kept,
-    -- unused, for the planned reverse-engineering attempt.
+    -- Name the focused NPC: first from the learned cache (talked-to NPCs), then
+    -- from STATIC data (NV.resolve_name -> placement label via GetGameTextString)
+    -- so names show up WITHOUT having to talk first. Per-focus only, cached.
+    if t.cat == "npc" and not t.name and t.actor then
+        local a = nil
+        pcall(function() a = t.actor:GetAddress() end)
+        local r = a and npc_learned[a]
+        if type(r) == "table" and r.name then t.name = r.name
+        elseif NV.resolve_name then t.name = NV.resolve_name(t.actor) end
+    end
     local who = t.name and (t.name .. ", ") or ""
     speak(string.format("%s%s %d of %d: %s%s, %d%s%s",
         prefix or "", t.cat, NV.idx, #NV.list, who, nav_dir(dx, dy), d, lvl, talks))
@@ -2629,7 +2631,15 @@ local function nav_route_step()
     local p = get_player_obj()
     if not (ksl and p) then nav_route_finish(nil); return end
     local budget = 110                     -- traces per pump tick (keeps frames smooth)
+    -- HARD per-tick iteration cap. budget counts TRACES, but nav_ground / the edge
+    -- wall-check return used=0 on a cache hit -- so over warm cache budget stops
+    -- decrementing and the loop below would spin (O(open) min-scan each iteration)
+    -- until the 8s route deadline, ALL IN ONE TICK = a multi-second game freeze.
+    -- Cap iterations so a warm-cache tick yields to the next pump instead.
+    local iters = 0
     while budget > 0 do
+        iters = iters + 1
+        if iters > 800 then return end     -- yield; routing resumes next tick
         local bi, best
         for i, n in ipairs(R.open) do
             if not best or n.f < best.f then bi, best = i, n end

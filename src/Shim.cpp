@@ -252,11 +252,12 @@ static int resolve_via(FnGetGameTextStr impl, uint64_t fname, wchar_t* nameBuf, 
     return wlen;
 }
 
-// Resolve Names[0] to the localized display name. On the first real speaker,
-// identify which disassembled candidate is GetGameTextString by trying each (the
-// one returning readable text wins) and cache it. Empty -> no speaker.
-static int read_speaker(void* tt, wchar_t* nameBuf, int cap) {
-    uint64_t fname = read_fname0(tt);
+// Resolve any GameText-label FName to its localized string via GetGameTextString.
+// On first use, identify which disassembled candidate is the impl by trying each
+// (the one returning readable text wins) and cache it. Any valid label is a fine
+// probe -- an NPC's placement label works as well as a dialogue speaker handle,
+// so this self-arms WITHOUT requiring prior dialogue. Empty -> no text.
+static int resolve_name_for_fname(uint64_t fname, wchar_t* nameBuf, int cap) {
     if (fname == 0) { nameBuf[0] = L'\0'; return 0; }
     if (!g_ggts_impl && !g_ggts_searched) {
         g_ggts_searched = true;
@@ -271,6 +272,11 @@ static int read_speaker(void* tt, wchar_t* nameBuf, int cap) {
     if (g_ggts_impl) return resolve_via(g_ggts_impl, fname, nameBuf, cap);
     nameBuf[0] = L'\0';
     return 0;
+}
+
+// Resolve Names[0] (the dialogue speaker handle) to the localized display name.
+static int read_speaker(void* tt, wchar_t* nameBuf, int cap) {
+    return resolve_name_for_fname(read_fname0(tt), nameBuf, cap);
 }
 
 void capture_talk(void* result, void* frame) {
@@ -549,6 +555,7 @@ void hk_gtt(void* ctx, void* frame, void* result) {
     capture_talk(result, frame);
 }
 
+
 std::wstring sibling_path(const wchar_t* name) {
     wchar_t buf[MAX_PATH] = {0};
     DWORD n = GetModuleFileNameW(g_self, buf, MAX_PATH);
@@ -713,41 +720,23 @@ int l_install_talk_hook(lua_State* L) {
 // Reads the NPC's placement row natively (TextLabel/EventLabels/path actions)
 // and, when a TextLabel exists, asks the talk database for its entry to fetch
 // the localized speaker name via the existing resolver. Fully SEH-guarded.
-// NpcName(actorAddr) -> localized speaker name | nil. Reads the actor's cached
-// PlacementData.TextLabel FName (actor + 0xA00 placement + 0x10 TextLabel) and
-// resolves it through the talk database -> speaker handle -> localized name. All
-// native, SEH-guarded, no contact required. The talk-DB and name resolvers
-// self-arm by result on first use (no prior dialogue needed).
+// NpcName(actorAddr) -> localized NPC name | nil, debug. The NPC's name handle IS
+// its placement TextLabel: confirmed by RE -- the dialogue speaker FName (Names[0])
+// equals the actor's PlacementData.TextLabel exactly, e.g. CN_NP_PLL_020100_0000,
+// and GetGameTextString(thatLabel) returns the localized name ("Wache"). So we read
+// the FName at actor+0xA10 and resolve it straight through GetGameTextString -- no
+// GetTalkText, no ProcessEvent, no contact required. The resolver self-arms by
+// result on first use (the placement label is a valid probe). All SEH-guarded.
 int l_npc_name(lua_State* L) {
     void* actor = reinterpret_cast<void*>(static_cast<uintptr_t>(luaL_checkinteger(L, 1)));
-    uint64_t lbl = 0; int tlen = 0, nlen = 0;
+    uint64_t lbl = 0; int nlen = 0;
     wchar_t namew[128]; namew[0] = L'\0';
     if (actor) {
         __try { lbl = *reinterpret_cast<uint64_t*>(reinterpret_cast<uintptr_t>(actor) + 0xA10); }
         __except (EXCEPTION_EXECUTE_HANDLER) { lbl = 0; }
     }
-    // call KSTextStatics:GetTalkText as a real BP function through the VERIFIED
-    // ProcessEvent (pe=63), not the disassembled-impl guess (impl=0 was that
-    // guess failing). Params: Label(FName)@0, OutText(FTalkText)@8.
-    void* cdo   = reinterpret_cast<void*>(static_cast<uintptr_t>(luaL_optinteger(L, 2, 0)));
-    void* gtt   = reinterpret_cast<void*>(static_cast<uintptr_t>(luaL_optinteger(L, 3, 0)));
-    void* locfn = reinterpret_cast<void*>(static_cast<uintptr_t>(luaL_optinteger(L, 4, 0)));
-    if (actor && !g_pe_searched) pe_find(actor);
-    if (actor && !g_pe) pe_validate(actor, locfn);
-    int nnum = -1, tnum = -1;
-    if ((uint32_t)(lbl & 0xFFFFFFFFu) != 0 && g_pe && cdo && gtt) {
-        __try {
-            memset(g_place_buf, 0, 0x400);
-            *reinterpret_cast<uint64_t*>(g_place_buf) = lbl;     // Label @ 0
-            g_pe(cdo, gtt, g_place_buf);                         // fills OutText @ 8
-            void* tt = g_place_buf + 8;
-            wchar_t tmp[256];
-            tlen = read_talktext_raw(tt, tmp, 256);
-            nnum = *reinterpret_cast<int*>(g_place_buf + 8 + 0x48);   // OutText.Names count
-            tnum = *reinterpret_cast<int*>(g_place_buf + 8 + 0x58);   // OutText.Text count
-            nlen = read_speaker(tt, namew, 128);                 // try the speaker even if text is empty
-        } __except (EXCEPTION_EXECUTE_HANDLER) { tlen = 0; nlen = 0; }
-    }
+    if ((uint32_t)(lbl & 0xFFFFFFFFu) != 0)
+        nlen = resolve_name_for_fname(lbl, namew, 128);
     if (nlen > 0) {
         char u8[256];
         int u = WideCharToMultiByte(CP_UTF8, 0, namew, nlen, u8, sizeof(u8) - 1, nullptr, nullptr);
@@ -755,9 +744,9 @@ int l_npc_name(lua_State* L) {
     } else {
         lua_pushnil(L);
     }
-    char dbg[160];
-    std::snprintf(dbg, sizeof(dbg), "lblidx=%u pe=%d tlen=%d nnum=%d tnum=%d nlen=%d",
-                  (unsigned)(lbl & 0xFFFFFFFFu), g_pe ? 1 : 0, tlen, nnum, tnum, nlen);
+    char dbg[96];
+    std::snprintf(dbg, sizeof(dbg), "lblidx=%u impl=%d nlen=%d",
+                  (unsigned)(lbl & 0xFFFFFFFFu), g_ggts_impl ? 1 : 0, nlen);
     lua_pushstring(L, dbg);
     return 2;
 }
