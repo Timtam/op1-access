@@ -132,6 +132,28 @@ local UI_KIND_SUPPRESSED = {
     [27] = true, [103] = true, [104] = true,
 }
 
+-- Auto-radar menu gate. In-game menu / battle / shop / conversation widget CLASSES
+-- whose VISIBLE presence means "not free exploration" (radar must go quiet).
+-- Detected by a visibility scan of scene_widgets in the pump: KSUIManager:Open never
+-- fires for this build, and per-widget UIOpen/UIClose don't reliably balance -- but
+-- UWidget:IsVisible() cleanly distinguishes the active screen from the dozens of
+-- cached widgets (same signal the title poll trusts). Dialogue / cutscene / flashback
+-- / narration are caught separately by IsEventPlaying, so they're not listed here.
+-- NOTE: JobStatusWidget_C and MainMenuEtcWidget_C are deliberately ABSENT -- they
+-- report IsVisible()==true even while cached/closed on the field (a default
+-- visibility quirk; the other sub-panels read hidden correctly). Both are reached
+-- through the main menu, so MainMenuWidget_C (the root, which reads correctly)
+-- covers them when actually open. Add a class here only after confirming via the
+-- MENUVIS log that it reads hidden on the map.
+local BLOCKING_CLASSES = {
+    MainMenuWidget_C = true,  MainMenuItemListWidget_C = true, MainMenuAbilityWidget_C = true,
+    MainMenuJobWidget_C = true, MainMenuTutorialListWidget_C = true, MainMenuMissionRecord_C = true,
+    EquipmentMenuWidget_C = true, StatusMenuWidget_C = true,
+    MenuSaveLoad_C = true,  OptionMenuWBP_C = true,
+    BattleCommandMenu_C = true, BattleResultPanelWidget_C = true,
+    ChatWidget_C = true, PartyChat_C = true,
+}
+
 -- ---------------------------------------------------------------------------
 -- FText helper
 -- ---------------------------------------------------------------------------
@@ -1383,6 +1405,7 @@ local bump_arrow_t   = 0.0   -- last arrow keypress time (bump detection, any sc
 local bump_arrow_key = nil   -- which arrow ("UP_ARROW", ...)
 local wall_blocked   = {}    -- wall radar's latest blocked dirs (up/down/left/right -> true)
 local beacon_rescan_at = nil -- set after a door/transition; beacon_step rescans the new area then
+local beacon_rescan_say = false -- speak the object count after the next rescan? (area change: yes; menu close: no)
 local world_susp  = false    -- radar pump's scene guard (true during events/transitions)
 local function on_arrow_log(kname)
     bump_arrow_t = os.clock(); bump_arrow_key = kname
@@ -2097,7 +2120,10 @@ local function beacon_step()   -- driven by radar_pump while beacon_on
         end
         beacon_rescan_at = nil
         beacon_rescan()
-        speak(string.format("%d objects here", #beacon_objs))
+        if beacon_rescan_say and #beacon_objs > 0 then
+            speak(string.format("%d objects here", #beacon_objs))
+        end
+        beacon_rescan_say = false
     end
     local p = get_player_obj()
     local px, py, pz
@@ -2156,31 +2182,8 @@ local function beacon_deactivate_all()
     end
     beacon_slotof = {}
 end
-local function beacon_toggle()
-    if not (shim and shim.AudioInit) then speak("Audio module not loaded"); return end
-    if beacon_on then
-        beacon_on = false
-        beacon_deactivate_all()
-        speak("Beacon off")
-        return
-    end
-    if world_susp then speak("Scene running"); return end   -- never scan a world mid-event
-    if not audio_inited then
-        local ok = false; pcall(function() ok = shim.AudioInit() end)
-        audio_inited = ok and true or false
-        if not audio_inited then speak("Audio init failed"); return end
-    end
-    load_cues()
-    beacon_rescan()
-    if #beacon_objs == 0 then speak("No objects found to beacon"); return end
-    beacon_on = true
-    speak(string.format("Beacon on, %d objects tracked", #beacon_objs))
-    pcall(beacon_step)   -- immediate first update; the radar pump keeps it fresh
-end
-do
-    local ok = pcall(RegisterKeyBind, Key.F6, { ModifierKey.CONTROL }, beacon_toggle)
-    log("Bound beacon toggle (Ctrl+F6): " .. tostring(ok))
-end
+-- (Ctrl+F6 beacon toggle removed: the radar is now always-on, auto-gated by the
+-- exploration state in the pump -- see the AUTO RADAR block in radar_pump.)
 
 -- ===== Wall-radar probe (phase 4 / A6): validate engine line-tracing =====
 -- Before building the wall radar we must confirm we can cast a collision ray from
@@ -2277,31 +2280,11 @@ local function wall_step()   -- driven by radar_pump while wall_on
         end
     end)
 end
-local function wall_toggle()
-    if not (shim and shim.AudioInit) then speak("Audio module not loaded"); return end
-    if wall_on then
-        wall_on = false
-        wall_blocked = {}
-        for _, slot in ipairs(WALL_SLOT) do pcall(function() shim.AudioSetSource(slot, false, 0, 0, 0, WALL_CUE) end) end
-        speak("Wall radar off")
-        return
-    end
-    if world_susp then speak("Scene running"); return end   -- never trace a world mid-event
-    if not audio_inited then
-        local okk = false; pcall(function() okk = shim.AudioInit() end)
-        audio_inited = okk and true or false
-        if not audio_inited then speak("Audio init failed"); return end
-    end
-    load_cues()
-    wall_on = true
-    speak("Wall radar on")
-    pcall(wall_step)   -- immediate first update; the radar pump keeps it fresh
-end
+-- (Ctrl+F5 wall-radar toggle removed: always-on, auto-gated in the pump.)
 do
     local ok4 = pcall(RegisterKeyBind, Key.F4, { ModifierKey.CONTROL }, wall_probe)
     log("Bound wall scan (Ctrl+F4): " .. tostring(ok4))
-    local ok5 = pcall(RegisterKeyBind, Key.F5, { ModifierKey.CONTROL }, wall_toggle)
-    log("Bound wall radar toggle (Ctrl+F5): " .. tostring(ok5))
+    -- (Ctrl+F5 wall-radar toggle removed: radar is always-on, auto-gated in the pump.)
 end
 
 -- ===== Pillar B v1: target selection + auto-walk =====
@@ -3172,23 +3155,48 @@ radar_pump = function(src)
             end
         end)
         if ev then WS.ev_t = now end
+        local settling = false
         if not ev then
-            -- position reads PAUSE during events: scenes teleport the player step
-            -- by step (tracking them hid the cross-scene jump, so the radar
-            -- resumed into a still-loading map and crashed). Freezing WS.px makes
-            -- the whole scene displacement register as ONE jump at resume.
+            -- position reads PAUSE during events (scenes teleport the player step by
+            -- step; freezing WS.px makes the whole displacement register as ONE jump).
             local p = get_player_obj()
-            local px, py
-            if p then px, py = read_actor_pos(p) end
-            if px then
-                if WS.px then
-                    local dm = math.sqrt((px - WS.px) ^ 2 + (py - WS.py) ^ 2)
-                    if dm > 900 then WS.hold = now + 2.5 end
+            if not p then
+                WS.present_since = nil        -- no field player: title / load in progress
+                settling = true
+            else
+                if not WS.present_since then WS.present_since = now end
+                -- TRANSITION GATE -- the readable "central gate" for load/exit safety.
+                -- KSFade:IsFadeVisible() is true whenever the screen fade is up: the
+                -- initial load AND walking through an exit, exactly when the player
+                -- actor is mid-teardown and read_actor_pos AVs UE4SS (the crash). KSFade
+                -- is a PERSISTENT manager, so reading it is safe mid-transition (unlike
+                -- the streamed player actor). Cached; only re-found if the handle dies.
+                local kf = WS.fade
+                local okf = false; if kf then pcall(function() okf = kf:IsValid() end) end
+                if not okf then
+                    WS.fade = nil
+                    pcall(function() local x = FindFirstOf("KSFade"); if x and x:IsValid() then WS.fade = x end end)
+                    kf = WS.fade
                 end
-                WS.px, WS.py = px, py
+                local faded = nil
+                if kf then pcall(function() faded = kf:IsFadeVisible() end) end
+                if faded ~= false then
+                    settling = true              -- fade up / unreadable / no mgr -> don't poke the world
+                elseif now - WS.present_since < 0.5 then
+                    settling = true              -- tiny buffer right after the player first appears
+                else
+                    local px, py = read_actor_pos(p)
+                    if px then
+                        if WS.px then
+                            local dm = math.sqrt((px - WS.px) ^ 2 + (py - WS.py) ^ 2)
+                            if dm > 900 then WS.hold = now + 1.0 end
+                        end
+                        WS.px, WS.py = px, py
+                    end
+                end
             end
         end
-        local susp = ev or (now - WS.ev_t < 2.5) or (now < WS.hold)
+        local susp = ev or settling or (now - WS.ev_t < 1.5) or (now < WS.hold)
         world_susp = susp   -- update BEFORE the transition handling below: the
                             -- deferred learn there must see the world as RESUMED
                             -- (it used to re-queue itself forever on stale state)
@@ -3230,9 +3238,44 @@ radar_pump = function(src)
             end
         end
     end
-    if not WS.susp then
-        -- lazy audio bring-up on the first field pump: bump + door cues work
-        -- without ever toggling a radar (step toward always-on radars)
+    -- AUTO RADAR (always-on, no manual toggle): the radar is live whenever
+    -- free-roam exploration is possible -- a field player exists (WS.px), no
+    -- event/transition (world_susp, = cutscene/dialogue/load), and no blocking
+    -- menu visible (the scan below). Entering exploration re-enumerates the area;
+    -- leaving it (menu OR scene) mutes the whole soundscape so nothing rings
+    -- underneath. beacon_on/wall_on are kept in sync so the existing
+    -- rescan-on-move / heartbeat references still work.
+    -- menu gate: any known blocking menu widget currently VISIBLE. Scanned only when
+    -- the world isn't suspended (so widgets are stable, never mid-load), breaking on
+    -- the first hit. IsVisible() is false for the many cached-but-hidden menu widgets,
+    -- so this fires only for the screen actually on display.
+    local menu_open = false
+    if not world_susp then
+        for i = 1, #scene_widgets do
+            local e = scene_widgets[i]
+            if BLOCKING_CLASSES[e[2]] and widget_is_visible(e[1]) then menu_open = true; break end
+        end
+    end
+    local explore = (WS.px ~= nil) and (not world_susp) and (not menu_open)
+    beacon_on, wall_on = explore, explore
+    if explore ~= WS.explore then
+        WS.explore = explore
+        log("RADAR " .. (explore and "live (exploring)"
+            or ("idle (" .. (menu_open and "menu" or "scene") .. ")")))
+        if explore then
+            beacon_rescan_at  = now + 0.3                    -- re-enumerate this area
+            beacon_rescan_say = (WS.idle_reason ~= "menu")   -- announce count on area change, not menu close
+        else
+            WS.idle_reason = menu_open and "menu" or "scene"
+            pcall(beacon_deactivate_all)
+            wall_blocked = {}
+            for _, slot in ipairs(WALL_SLOT) do
+                pcall(function() shim.AudioSetSource(slot, false, 0, 0, 0, WALL_CUE) end)
+            end
+        end
+    end
+    if explore then
+        -- lazy audio bring-up on the first field pump
         if WS.px and not audio_inited and not audio_autotry and shim and shim.AudioInit then
             audio_autotry = true
             local okA = false
@@ -3241,9 +3284,11 @@ radar_pump = function(src)
             if audio_inited then pcall(load_cues) end
             log("Audio auto-init: " .. tostring(okA))
         end
-        if audio_inited then pcall(bump_step) end
-        if beacon_on then pcall(beacon_step) end
-        if wall_on then pcall(wall_step) end
+        if audio_inited then
+            pcall(bump_step)
+            pcall(beacon_step)
+            pcall(wall_step)
+        end
         pcall(nav_tick)
     end
     if pump_count % 30 == 1 then pcall(arm_pump_tickhook) end
