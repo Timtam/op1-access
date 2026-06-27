@@ -2418,7 +2418,6 @@ local function nav_announce(prefix)
     local d = math.floor(math.sqrt(dx * dx + dy * dy) + 0.5)
     local lvl = ""
     if dz > LEVEL_THRESH then lvl = ", above" elseif dz < -LEVEL_THRESH then lvl = ", below" end
-    local talks = t.known and ", talks" or ""
     -- Name the focused NPC: first from the learned cache (talked-to NPCs), then
     -- from STATIC data (NV.resolve_name -> placement label via GetGameTextString)
     -- so names show up WITHOUT having to talk first. Per-focus only, cached.
@@ -2430,8 +2429,8 @@ local function nav_announce(prefix)
         elseif NV.resolve_name then t.name = NV.resolve_name(t.actor) end
     end
     local who = t.name and (t.name .. ", ") or ""
-    speak(string.format("%s%s %d of %d: %s%s, %d%s%s",
-        prefix or "", t.cat, NV.idx, #NV.list, who, nav_dir(dx, dy), d, lvl, talks))
+    speak(string.format("%s%s %d of %d: %s%s, %d%s",
+        prefix or "", t.cat, NV.idx, #NV.list, who, nav_dir(dx, dy), d, lvl))
 end
 
 local function nav_cat_cycle(delta)
