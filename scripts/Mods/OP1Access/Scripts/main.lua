@@ -726,8 +726,75 @@ end
 
 -- Fire-and-forget polling loop. Wrap each tick in pcall: a Lua error
 -- inside LoopAsync would otherwise stop subsequent ticks (or worse).
+-- Save/Load menu reader. MenuSaveLoad_C.CursorIndex is the focused slot; SlotItems
+-- is the slot-widget array; each MenuSaveLoadSlot_C exposes its on-screen text
+-- (TextMap/TextArea/TextTopLevel/TextTopLevelName/TextDate/TextTime, already
+-- localized) plus IsEnabled (used vs empty) and the SaveSlotData struct (PlayTime
+-- in seconds). Announce the focused slot on open and on every cursor move.
+-- State lives in a do-block; the fn hangs off M (no new chunk local -- cap is 200).
+do
+    local sl_menu, sl_idx
+    M.poll_saveload = function()
+        local m = sl_menu
+        local alive = false
+        if m then pcall(function() alive = m:IsValid() end) end
+        if not alive then
+            m = nil
+            pcall(function() local f = FindFirstOf("MenuSaveLoad_C"); if f and f:IsValid() then m = f end end)
+            sl_menu = m
+        end
+        if not m or not widget_is_visible(m) then sl_idx = nil; return end
+        -- Gate on the menu actually accepting input: while it opens it sweeps the
+        -- cursor through every slot (which would voice all 24), and AcceptControl is
+        -- false during that. Once ready, announce each focus change immediately.
+        local ready = false
+        pcall(function() ready = m.AcceptControl and true or false end)
+        if not ready then sl_idx = nil; return end
+        local ci = nil
+        pcall(function() ci = m.CursorIndex end)
+        if ci == nil or ci == sl_idx then return end
+        sl_idx = ci
+        local slot = nil
+        pcall(function()
+            local items = m.SlotItems
+            if items then
+                slot = items[ci + 1]                                   -- Lua arrays are 1-based
+                if slot == nil and items.get then slot = items:get(ci) end  -- fallback: 0-based getter
+            end
+        end)
+        local label = (ci == 0) and "Auto save" or ("Slot " .. tostring(ci))
+        if not slot then speak(label); return end
+        local en = false
+        pcall(function() en = slot.IsEnabled and true or false end)
+        if not en then speak(label .. ", empty"); return end
+        local function gt(name)                                       -- localized text of a bound widget
+            local r = nil
+            pcall(function() local w = slot[name]; if w then local t = w:GetText(); if t then r = t:ToString() end end end)
+            if r == "" then r = nil end
+            return r
+        end
+        local secs = nil; pcall(function() secs = slot.SaveSlotData.PlayTime end)
+        local pt = nil
+        if type(secs) == "number" and secs > 0 then
+            local h, mn = math.floor(secs / 3600), math.floor((secs % 3600) / 60)
+            pt = (h > 0 and (h .. " hours ") or "") .. mn .. " minutes"
+        end
+        local map, area = gt("TextMap"), gt("TextArea")
+        local lvl, leader = gt("TextTopLevel"), gt("TextTopLevelName")
+        local date, tm = gt("TextDate"), gt("TextTime")
+        local parts = { label }
+        if map then parts[#parts + 1] = map end
+        if area then parts[#parts + 1] = area end
+        if leader then parts[#parts + 1] = leader .. (lvl and (" level " .. lvl) or "") end
+        if pt then parts[#parts + 1] = pt end
+        if date then parts[#parts + 1] = date .. (tm and (" " .. tm) or "") end
+        speak(table.concat(parts, ", "))
+    end
+end
+
 local ok_loop = pcall(LoopAsync, POLL_INTERVAL_MS, function()
     pcall(poll_active_menu)
+    pcall(M.poll_saveload)
     -- The native GetTalkText hook speaks dialogue directly (independent of this
     -- loop, which can die after a level load). The loop just logs the line.
     -- (dialogue polling moved into the radar pump: this loop dies intermittently
