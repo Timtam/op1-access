@@ -1867,6 +1867,21 @@ do
     log("Bound nav probe (Ctrl+F8): " .. tostring(ok))
 end
 
+-- Screenshot key (Ctrl+F2): user-triggered window capture via the shim's own
+-- PrintWindow grab (NOT the engine's high-res path, which crashes this build).
+-- Writes a BMP next to the log; a helper converts it to PNG for inspection.
+-- Inline in the closure (no chunk local: main chunk is at Lua's 200-local cap).
+do
+    local SHOT_PATH = "C:/Program Files (x86)/Steam/steamapps/common/OCTOPATH TRAVELER/Octopath_Traveler/Binaries/Win64/op1access_shot.bmp"
+    local ok = pcall(RegisterKeyBind, Key.F2, { ModifierKey.CONTROL }, function()
+        local done = false
+        pcall(function() if shim and shim.Screenshot then done = shim.Screenshot(SHOT_PATH) end end)
+        speak(done and "Screenshot saved" or "Screenshot failed")
+        log("SCREENSHOT (shim) -> " .. tostring(done))
+    end)
+    log("Bound screenshot (Ctrl+F2): " .. tostring(ok))
+end
+
 -- ===== Spatial-audio test (phase 4 / Pillar A): isolate HRTF direction =====
 -- Ctrl+F7 cycles a continuous test tone right -> left -> front -> back -> off via
 -- the shim's Steam Audio engine. Confirms audio comes out of the shim in-process
@@ -2202,11 +2217,15 @@ local WALL_DIRS = {
 -- Working LineTraceSingle call form (confirmed): colon syntax, OutHit passed as a
 -- {} placeholder at param 8, returns the hit bool. Trace channel 0 = TraceTypeQuery1.
 local TRACE_COL = { R = 0, G = 0, B = 0, A = 1 }
-local function line_blocked(ksl, p, sx, sy, sz, ex, ey, ez)
+-- ch = ETraceTypeQuery (default 0 = TraceTypeQuery1/Visibility, used by the
+-- pathfinder for ground/clearance). The wall radar passes 1+ because OT's invisible
+-- collision walls (non-enterable archways, map fences) IGNORE channel 0 but BLOCK
+-- channels 1-5 -- channel 0 literally cannot see them (confirmed via CHPROBE).
+local function line_blocked(ksl, p, sx, sy, sz, ex, ey, ez, ch)
     local outHit = {}
     local ok, hit = pcall(function()
         return ksl:LineTraceSingle(p, { X = sx, Y = sy, Z = sz }, { X = ex, Y = ey, Z = ez },
-            0, false, {}, 0, outHit, true, TRACE_COL, TRACE_COL, 0.0)
+            ch or 0, false, {}, 0, outHit, true, TRACE_COL, TRACE_COL, 0.0)
     end)
     return ok, hit, outHit
 end
@@ -2242,6 +2261,12 @@ local WALL_CUE  = 5
 local WALL_LEN  = 175   -- only detect walls within ~a few steps (avoid panorama clutter)
 local function wall_step()   -- driven by radar_pump while wall_on
     wall_ticks = wall_ticks + 1
+    -- function-local (avoids the chunk's 200-local cap). One knee-height ray per
+    -- cardinal, on trace channel CH=1: channel 0 is blind to OT's invisible
+    -- collision walls (confirmed -- the archway/fence barriers BLOCK ch 1-5, IGNORE
+    -- ch 0), while ch 1 catches both those and normal vertical walls. Start close in
+    -- (12u; the trace ignores self) so a wall you're pressed against isn't skipped.
+    local OFF, KNEE, CH = 12, 30, 1
     pcall(function()
         local p = get_player_obj()
         local px, py, pz
@@ -2252,31 +2277,28 @@ local function wall_step()   -- driven by radar_pump while wall_on
             return
         end
         pcall(function() shim.AudioSetListener(px, py, pz) end)
-        local nblk, uphd = 0, "-"
+        local nblk = 0
+        local dbg = {}
         for i, d in ipairs(WALL_DIRS) do
             local ok, hit, oh = line_blocked(ksl, p,
-                px + d.dx * 30,       py + d.dy * 30,       pz + 30,
-                px + d.dx * WALL_LEN, py + d.dy * WALL_LEN, pz + 30)
+                px + d.dx * OFF,      py + d.dy * OFF,      pz + KNEE,
+                px + d.dx * WALL_LEN, py + d.dy * WALL_LEN, pz + KNEE, CH)
             local slot = WALL_SLOT[i]
             if ok and hit then
                 nblk = nblk + 1
                 wall_blocked[d.name] = true        -- shared with bump detection
-                -- place the cue at the REAL wall distance (clamped) so volume + ping
-                -- rate reflect how close the wall is; fall back if OutHit isn't filled
                 local hd = 120
-                if type(oh) == "table" then
-                    pcall(function() if type(oh.Distance) == "number" and oh.Distance >= 1 then hd = oh.Distance end end)
-                end
+                if type(oh) == "table" then pcall(function() if type(oh.Distance) == "number" and oh.Distance >= 1 then hd = oh.Distance end end) end
                 if hd < 30 then hd = 30 elseif hd > WALL_LEN then hd = WALL_LEN end
-                if i == 1 then uphd = string.format("%.0f", hd) end
                 pcall(function() shim.AudioSetSource(slot, true, px + d.dx * hd, py + d.dy * hd, pz, WALL_CUE) end)
+                dbg[#dbg + 1] = string.format("%s%.0f", d.name:sub(1, 1), hd)
             else
                 wall_blocked[d.name] = nil
                 pcall(function() shim.AudioSetSource(slot, false, 0, 0, 0, WALL_CUE) end)
             end
         end
         if wall_ticks % 16 == 0 then
-            log(string.format("WALLTICK #%d pos=(%.0f,%.0f) blocked=%d upHd=%s", wall_ticks, px, py, nblk, uphd))
+            log(string.format("WALLTICK #%d pos=(%.0f,%.0f) blk=%d %s", wall_ticks, px, py, nblk, table.concat(dbg, " ")))
         end
     end)
 end

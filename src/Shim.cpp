@@ -1049,6 +1049,78 @@ int l_guard_poll(lua_State* L) {
     return 1;
 }
 
+// Screenshot(path) -> ok(bool). Captures the game's own top-level window to a
+// 32bpp BMP at `path`, using PrintWindow with PW_RENDERFULLCONTENT (0x2) so it
+// grabs the real DirectX frame in windowed/borderless mode. This is our OWN GDI
+// capture -- it never touches the engine's high-res screenshot path (which crashes
+// this build), so it cannot crash the game. (Fullscreen-EXCLUSIVE may come back
+// black; if so the user should switch the game to borderless/windowed.) The shim
+// runs INSIDE the game process, so we find the window by our own PID -- no
+// dependency on which window is foreground.
+static BOOL CALLBACK ss_enum_proc(HWND h, LPARAM lp) {
+    DWORD wpid = 0; GetWindowThreadProcessId(h, &wpid);
+    if (wpid == GetCurrentProcessId() && IsWindowVisible(h) && GetWindow(h, GW_OWNER) == nullptr) {
+        RECT r; GetClientRect(h, &r);
+        if ((r.right - r.left) > 200 && (r.bottom - r.top) > 200) {
+            *reinterpret_cast<HWND*>(lp) = h;
+            return FALSE;   // first big visible top-level window of our process = the game
+        }
+    }
+    return TRUE;
+}
+int l_screenshot(lua_State* L) {
+    const char* path = luaL_checkstring(L, 1);
+    HWND hwnd = nullptr;
+    EnumWindows(ss_enum_proc, reinterpret_cast<LPARAM>(&hwnd));
+    bool ok = false;
+    if (hwnd) {
+        RECT rc; GetClientRect(hwnd, &rc);
+        int w = rc.right - rc.left, h = rc.bottom - rc.top;
+        if (w > 0 && h > 0) {
+            HDC hdcWin = GetDC(hwnd);
+            HDC hdcMem = CreateCompatibleDC(hdcWin);
+            BITMAPINFO bi; memset(&bi, 0, sizeof(bi));
+            bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+            bi.bmiHeader.biWidth = w;
+            bi.bmiHeader.biHeight = -h;            // negative -> top-down rows
+            bi.bmiHeader.biPlanes = 1;
+            bi.bmiHeader.biBitCount = 32;
+            bi.bmiHeader.biCompression = BI_RGB;
+            void* bits = nullptr;
+            HBITMAP hbm = CreateDIBSection(hdcWin, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+            if (hbm && bits) {
+                HGDIOBJ oldsel = SelectObject(hdcMem, hbm);
+                BOOL pw = PrintWindow(hwnd, hdcMem, 2 /*PW_RENDERFULLCONTENT*/);
+                if (!pw) PrintWindow(hwnd, hdcMem, 0);
+                // force the alpha byte opaque (PrintWindow may leave it 0, which turns
+                // the converted PNG fully transparent / black)
+                unsigned char* px = reinterpret_cast<unsigned char*>(bits);
+                int npix = w * h;
+                for (int i = 0; i < npix; ++i) px[i * 4 + 3] = 0xFF;
+                FILE* f = nullptr; fopen_s(&f, path, "wb");
+                if (f) {
+                    int imgsize = w * h * 4;
+                    BITMAPFILEHEADER fh; memset(&fh, 0, sizeof(fh));
+                    fh.bfType = 0x4D42;            // "BM"
+                    fh.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+                    fh.bfSize = fh.bfOffBits + imgsize;
+                    fwrite(&fh, sizeof(fh), 1, f);
+                    fwrite(&bi.bmiHeader, sizeof(BITMAPINFOHEADER), 1, f);  // biHeight = -h (top-down)
+                    fwrite(bits, imgsize, 1, f);
+                    fclose(f);
+                    ok = true;
+                }
+                SelectObject(hdcMem, oldsel);
+            }
+            if (hbm) DeleteObject(hbm);
+            DeleteDC(hdcMem);
+            ReleaseDC(hwnd, hdcWin);
+        }
+    }
+    lua_pushboolean(L, ok);
+    return 1;
+}
+
 const luaL_Reg op1access_funcs[] = {
     {"Speak",                l_speak},
     {"Silence",              l_silence},
@@ -1069,6 +1141,7 @@ const luaL_Reg op1access_funcs[] = {
     {"HoldKeys",             l_hold_keys},
     {"GuardCombo",           l_guard_combo},
     {"GuardPoll",            l_guard_poll},
+    {"Screenshot",           l_screenshot},
     {"NpcProbe",             l_npc_probe},
     {"NpcName",              l_npc_name},
     {"LastSpeakerName",      l_last_speaker},

@@ -122,7 +122,7 @@ cl /nologo /MD /O2 /EHsc /std:c++20 ^
    /link /DLL ^
    /OUT:"%SHIM_OUT%" ^
    /IMPLIB:"%BUILD%\OP1AccessShim.lib" ^
-   advapi32.lib user32.lib ole32.lib "%STEAMAUDIO%\lib\windows-x64\phonon.lib"
+   advapi32.lib user32.lib gdi32.lib ole32.lib "%STEAMAUDIO%\lib\windows-x64\phonon.lib"
 
 if errorlevel 1 (
     echo [build] Shim build failed.
