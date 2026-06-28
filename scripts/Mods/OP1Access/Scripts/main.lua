@@ -44,6 +44,50 @@ local function silence()
     if shim and shim.Silence then shim.Silence() end
 end
 
+-- Focus gate. When the game window loses focus its main thread stops ticking, so calling
+-- ANY game UFunction (line traces, position reads, nav steering, hook callbacks) from our
+-- pump / loops / RegisterHook callbacks then faults uncatchably and crashes the game
+-- (repro: alt-tab while standing on the map). Every periodic driver AND every registered
+-- hook gates on this; logs the in<->out transition once so the cause is visible.
+-- (hung off M to avoid the main-chunk 200-local limit; last-state is a closure upvalue)
+do
+    local last = true
+    M.fg_ok = function()
+        if not (shim and shim.IsForeground) then return true end
+        local fg = true; pcall(function() fg = shim.IsForeground() end)
+        if fg ~= last then last = fg; log("FOCUS: " .. (fg and "in" or "OUT -- game calls suspended")) end
+        return fg
+    end
+    -- Wrap a RegisterHook / NotifyOnNewObject callback so it no-ops while unfocused.
+    M.fg_guard = function(fn) return function(...) if not M.fg_ok() then return end return fn(...) end end
+end
+
+-- Run fn on the GAME thread. Doing game-object work (FindAllOf, IsValid, ProcessEvent,
+-- position reads) from our async LoopAsync / keybind threads races the game freeing
+-- actors (streaming as you walk, mass-freed on window focus-loss) -> uncatchable
+-- IsA/ProcessEvent crashes. ExecuteInGameThread serializes us with the game's frame so
+-- actors are never half-freed under us. Falls back to direct call if unavailable.
+M.in_gt = function(fn)
+    if ExecuteInGameThread then ExecuteInGameThread(fn) else fn() end
+end
+log("game-thread exec driver: " .. (ExecuteInGameThread and "ExecuteInGameThread" or "DIRECT (fallback -- not available!)"))
+
+-- Hook enablement (globals, not chunk locals, to dodge the main-chunk 200-local limit).
+-- These are the conclusion of isolating the focus-out crash:
+--   OP1_NO_CREATED = true  -- NotifyOnNewObject (every widget construction) is THE focus-
+--     out crash: UE4SS's IsA class-match faults on a half-built widget during the
+--     focus-change HUD rebuild, before our callback, so pcall can't catch it. Removed for
+--     good; menu detection is now event-driven (UIOpen) + KSUIManager:GetActiveStack.
+--   OP1_NO_UICLOSE = true  -- the close hooks are unneeded (poll_active_menu / poll_dialog
+--     handle close + re-announce) and a teardown-dispatch risk, so leave them off.
+-- The rest are safe and ON.
+OP1_NO_UICLOSE = true   -- KSUserWidgetBase:UIClose + KSUIManager:Close (off)
+OP1_NO_UIOPEN  = false  -- KSUserWidgetBase:UIOpen + KSUIManager:Open (on)
+OP1_NO_CREATED = true   -- NotifyOnNewObject widget-created (off -- was the crash)
+OP1_NO_TICK = false     -- EventManagerBP:ReceiveTick (pump driver, on)
+OP1_NO_TALK = false     -- NPC Talk hook (on)
+OP1_NO_CS   = false     -- char-select OnCursor (on)
+
 M.speak = speak; M.silence = silence; M.log = log
 
 -- ---------------------------------------------------------------------------
@@ -78,10 +122,12 @@ local SCENE_LABELS = {
     JobStatusWidget_C        = "Job status",
     -- Save / load
     MenuSaveLoad_C           = "Save and load",
-    -- Options. NB: OptionMenuSteamWBP_C is intentionally NOT here — it
-    -- constructs as a sub-widget of MenuSaveLoad_C (Steam Cloud indicator
-    -- embedded in the save/load screen), not as a separate menu.
+    -- Options. On this (Steam) build the ACTUAL options screen the UI manager focuses is
+    -- OptionMenuSteamWBP_C (confirmed via GetActiveStack); OptionMenuWBP_C is the non-Steam
+    -- variant. Both carry the option-menu fields directly (IsActive/CursorIndex/
+    -- OptItemVerticalBox/TitleText/OptionKindArray) and are read the same way in poll_options.
     OptionMenuWBP_C          = "Options",
+    OptionMenuSteamWBP_C     = "Options",
     -- Battle
     BattleCommandMenu_C      = "Battle command menu",
     BattleResultPanelWidget_C= "Battle results",
@@ -222,7 +268,7 @@ end
 -- Registry of SCENE_LABELS widget instances we've observed. Used by the
 -- polling loop to figure out which menu is currently visible. Bounded by
 -- cleanup of invalid entries each tick.
-local scene_widgets = {}  -- list of {widget_uobject, class_name, label}
+local scene_widgets = {}  -- list of {widget_uobject, class_name, label, addr}
 
 -- Forward declarations so functions defined later in the file can be referenced
 -- from earlier code without being captured as globals at compile time.
@@ -251,6 +297,24 @@ local dlg_last_focus = nil   -- last announced answer index
 -- here (before poll_active_menu) so the screen-name announce can set it.
 local CS_COORD_MUTE  = 30    -- ~1.5s at 50ms/poll
 local cs_coord_mute  = 0     -- polls remaining
+
+-- Add a widget to the scene_widgets registry, deduped by its live MEMORY ADDRESS
+-- against the current registry (NOT a permanent per-class flag). This matters because
+-- some title widgets (TitleMainMenu_*) have transient boot-time instances that get
+-- freed and replaced -- a register-once flag locks in the dead instance and the live
+-- one never gets added (poll_active_menu prunes the dead one, leaving nothing). Address
+-- dedup lets a fresh instance register once the old one has been pruned, while still
+-- ignoring repeat sightings of a still-live one. Shared by the title scan and UIOpen.
+M.reg_add = function(w, cls, label)
+    local addr
+    pcall(function() if w and w:IsValid() then addr = w:GetAddress() end end)
+    if not addr or addr == 0 then return end
+    for i = 1, #scene_widgets do
+        if scene_widgets[i][4] == addr then return end   -- already registered + live
+    end
+    scene_widgets[#scene_widgets + 1] = { w, cls, label, addr }
+    if cls == "TitlePlayerSelect_C" then cs_instance = w end
+end
 
 local function on_widget_created(NewObject)
     -- NotifyOnNewObject passes the UObject directly, NOT a hook-style
@@ -342,7 +406,11 @@ end
 -- Register hooks
 -- ---------------------------------------------------------------------------
 local function safe_register(path, fn, label)
-    local ok, err = pcall(RegisterHook, path, fn)
+    local off
+    if label:find("Close") then off = OP1_NO_UICLOSE
+    elseif label:find("Open") then off = OP1_NO_UIOPEN end
+    if off then log("hook disabled by config: " .. label); return end
+    local ok, err = pcall(RegisterHook, path, M.fg_guard(fn))
     log(string.format("RegisterHook %s: %s%s", label, tostring(ok),
         ok and "" or (" (" .. tostring(err) .. ")")))
 end
@@ -351,7 +419,7 @@ end
 -- StaticConstructObject_Internal so BP-derived widgets are also caught.
 -- This handles FIRST-time-ever construction. For repeat visits to the same
 -- widget (e.g. Title -> Save/Load -> Title), we hook UIOpen below.
-local ok_notify, err_notify = pcall(NotifyOnNewObject, "/Script/UMG.UserWidget", on_widget_created)
+local ok_notify, err_notify = (not OP1_NO_CREATED) and pcall(NotifyOnNewObject, "/Script/UMG.UserWidget", M.fg_guard(on_widget_created)) or false
 log(string.format("NotifyOnNewObject UserWidget: %s%s", tostring(ok_notify),
     ok_notify and "" or (" (" .. tostring(err_notify) .. ")")))
 
@@ -368,6 +436,11 @@ local function on_widget_uiopen(Context)
     local label = SCENE_LABELS[cls]
     if not label then return end
     log("UIOpen: " .. cls)
+    -- Populate the registry event-driven (this replaces on_widget_created's job for
+    -- in-game menus, which DO fire UIOpen). The pump's radar gate + poll_active_menu
+    -- read scene_widgets. Address-deduped, so a reused cached widget isn't re-added.
+    -- Runs on the game thread like the old construction hook (cross-thread shape unchanged).
+    M.reg_add(widget, cls, label)
     schedule_menu_announce(cls, label)
 end
 
@@ -427,12 +500,19 @@ local TITLE_FLOW = {
     TitleMainMenu_00_C  = true,
     TitleMainMenu_01_C  = true,
     TitleOptionScene_C  = true,
+    OptionMenuSteamWBP_C = true,  -- the actual focused options screen on the Steam build
+    OptionMenuWBP_C     = true,   -- non-Steam options variant
     TitleLoadScene_C    = true,
     TitlePlayerSelect_C = true,
     MenuSaveLoad_C      = true,   -- reachable from the title (Continue / Load)
 }
 
 local function widget_is_visible(w)
+    -- During the widget-teardown window (screen fade up / cutscene) a scene widget can
+    -- be alive (IsValid true) yet have a half-freed slot/parent tree, so IsVisible()
+    -- (a ProcessEvent UFunction) AVs walking it -- uncatchable by pcall. M.menu_unsafe
+    -- (set by the pump) marks exactly that window; bail instead of poking the tree.
+    if M.menu_unsafe then return false end
     -- Use UWidget::IsVisible() — a UFunction that returns true iff the
     -- widget's effective visibility is one of {Visible, HitTestInvisible,
     -- SelfHitTestInvisible}, walking parent visibility too. This is the
@@ -562,6 +642,30 @@ local function resolve_menu_item_label(instance, sel, cfg)
     return label
 end
 
+-- The UI manager's active-stack TOP is the single screen the game currently has focused
+-- -- authoritative, unlike a visibility scan over the title's multiple flickering widget
+-- copies (which made detection pick the wrong instance, esp. returning from a dialog).
+-- KSUIManager:GetActiveStack() returns it. Cached manager handle, re-found if it dies.
+-- On M (not a chunk local) to stay under the main-chunk 200-local limit.
+M.get_active_screen = function()
+    local kuim = M.ui_manager
+    local ok = false
+    if kuim then pcall(function() ok = kuim:IsValid() end) end
+    if not ok then
+        M.ui_manager = nil
+        pcall(function() local x = FindFirstOf("KSUIManager"); if x and x:IsValid() then M.ui_manager = x end end)
+        kuim = M.ui_manager
+    end
+    if not kuim then return nil, nil end
+    local w = nil
+    pcall(function() w = kuim:GetActiveStack() end)
+    if not w then return nil, nil end
+    local okw = false
+    pcall(function() okw = w:IsValid() end)
+    if not okw then return nil, nil end
+    return w, class_name_of(w)
+end
+
 local function poll_title_selection(active_cls)
     local cfg = active_cls and SELECT_INDEX_MENUS[active_cls]
     if not cfg then
@@ -605,6 +709,11 @@ local function poll_title_selection(active_cls)
 end
 
 local function poll_active_menu()
+    -- Skip the whole IsValid/IsVisible sweep during a fade/cutscene: the scene widgets
+    -- may be mid-teardown and the UFunction calls AV uncatchably (the ProcessEvent
+    -- crash). This runs on the async loop, which can't see world_susp; M.menu_unsafe is
+    -- the pump's fade/event flag (false on the stable title, so title menus still read).
+    if M.menu_unsafe then return end
     local kept = {}
     local best_idx, best_class, best_label = 0, nil, nil
 
@@ -711,12 +820,13 @@ end
 -- load-timing lesson as the dialogue + cursor hooks.
 local talk_hook_armed = false
 local function arm_talk_hook()
+    if OP1_NO_TALK then return end
     if talk_hook_armed then return end
     for _, path in ipairs({
         "/Game/Character/BP/Type/KSFieldNPCCharacter.KSFieldNPCCharacter_C:Talk",
         "/Game/Character/BP/Type/KSFieldCharacter.KSFieldCharacter_C:Talk",
     }) do
-        local ok, id = pcall(RegisterHook, path, on_talk_hook)
+        local ok, id = pcall(RegisterHook, path, M.fg_guard(on_talk_hook))
         if ok and id ~= nil then
             talk_hook_armed = true
             log("Talk hook ARMED: " .. path)
@@ -828,6 +938,13 @@ do
             if e[2] == "TitleOptionScene_C" then
                 local vis = false; pcall(function() vis = e[1]:IsValid() and e[1]:IsVisible() end)
                 if vis then pcall(function() m2 = e[1].RefOptionMenu end) end
+            elseif e[2] == "OptionMenuWBP_C" or e[2] == "OptionMenuSteamWBP_C" then
+                -- The active-stack instance is the REAL option menu (not the FindFirstOf
+                -- template the note warns about), so it's read directly. OptionMenuSteamWBP_C
+                -- is the screen the UI manager actually focuses on this build; it carries
+                -- the same option-menu fields, so the rest of this reader works unchanged.
+                local vis = false; pcall(function() vis = e[1]:IsValid() and e[1]:IsVisible() end)
+                if vis and not m2 then m2 = e[1] end
             end
         end
         if not m2 then lastCat, lastRow, lastEntered = nil, nil, nil; return end
@@ -902,6 +1019,13 @@ do
 end
 
 local ok_loop = pcall(LoopAsync, POLL_INTERVAL_MS, function()
+    if not M.fg_ok() then return end   -- unfocused: skip menu polls (game calls fault)
+    -- Capture title widgets on THIS fast loop (20Hz) so the title menu reads immediately;
+    -- the game-thread pump only ticks ~5Hz, which made it read seconds late. Pre-game only
+    -- (not M.field_player) -- there are no streamed field actors to fault FindAllOf, same
+    -- as poll_saveload's FindFirstOf which has run here since launch -- and never mid-fade
+    -- (M.menu_unsafe). The find-once guard means it's a cheap registry walk once captured.
+    if M.scan_scene and not M.field_player and not M.menu_unsafe then pcall(M.scan_scene) end
     pcall(poll_active_menu)
     pcall(M.poll_saveload)
     pcall(M.poll_options)
@@ -1201,18 +1325,21 @@ end
 -- underlying screen. Requires real content (caption/answers) so a cached,
 -- hidden dialog widget can't false-trigger and mute everything.
 poll_dialog = function()
-    local inst, kept = nil, {}
-    for i = 1, #dialog_widgets do
-        local w = dialog_widgets[i]
-        local alive = false
-        pcall(function() alive = w and w:IsValid() end)
-        if alive then
-            kept[#kept + 1] = w
-            if widget_is_visible(w) then inst = w end   -- last visible wins
-        end
-    end
-    dialog_widgets = kept
+    -- Detect a dialog by the FOCUSED screen (KSUIManager active stack), NOT by
+    -- widget_is_visible on the cached dialog widget: that widget stays "visible" after
+    -- the dialog closes, so the old check stayed stuck-open and wedged the menu
+    -- underneath silent ("reading stops" after Quit -> No). The active stack is
+    -- authoritative -- it returns the dialog only while it's truly up.
+    local inst, acls = M.get_active_screen()
+    if acls ~= "UICommonDialogBP_C" then inst = nil end
     if not inst then
+        -- Dialog CLOSE edge: the screen underneath is unchanged (same class + cursor as
+        -- before the dialog), so the screen/item pollers would dedup it and stay silent.
+        -- Clear their dedup so it re-announces.
+        if dlg_visible then
+            last_polled_class = nil
+            last_select_owner, last_select_value = nil, nil
+        end
         dlg_visible, dlg_last_focus = false, nil
         return false
     end
@@ -1586,7 +1713,8 @@ local beacon_rescan_say = false -- speak the object count after the next rescan?
 local world_susp  = false    -- radar pump's scene guard (true during events/transitions)
 local function on_arrow_log(kname)
     bump_arrow_t = os.clock(); bump_arrow_key = kname
-    if radar_pump then pcall(radar_pump, "key") end   -- arrow presses drive the field radar pump
+    -- on the game thread: keybind callbacks run on a UE4SS thread, and the pump reads actors
+    if radar_pump then M.in_gt(function() pcall(radar_pump, "key") end) end
     do return end   -- superseded by the OnCursor* hooks (correct instance + event-driven)
     if dlg_visible then return end          -- a confirm dialog owns the keys; stay quiet
     local inst, x, y = cs_live_instance()
@@ -1834,15 +1962,24 @@ local NAV_CLASSES = {
 }
 local function read_actor_pos(obj)
     if not obj then return nil end
+    -- Read the location inside the shim under SEH (shim.ActorLoc): a streamed-out /
+    -- freed actor returns nil instead of crashing. A Lua obj:K2_GetActorLocation() or
+    -- obj.RootComponent read on a dead object faults NATIVELY (ProcessEvent AV), which
+    -- pcall cannot catch -> it took the whole game down (the recurring radar crash).
+    local addr; pcall(function() addr = obj:GetAddress() end)
+    if addr and shim and shim.ActorLoc then
+        local x, y, z = shim.ActorLoc(addr)
+        if type(x) == "number" then return x, y, z, "shim" end
+        return nil
+    end
+    -- fallback only if the shim is somehow unavailable (then the radar can't read
+    -- positions anyway); avoid the K2_GetActorLocation path entirely.
     local x, y, z
     pcall(function()
         local rc = obj.RootComponent
         if rc then local l = rc.RelativeLocation; x, y, z = l.X, l.Y, l.Z end
     end)
     if type(x) == "number" then return x, y, z, "rootcomp" end
-    x = nil
-    pcall(function() local l = obj:K2_GetActorLocation(); x, y, z = l.X, l.Y, l.Z end)
-    if type(x) == "number" then return x, y, z, "k2loc" end
     return nil
 end
 local function get_player_obj()
@@ -2331,15 +2468,15 @@ local function beacon_step()   -- driven by radar_pump while beacon_on
         local r2 = BEACON_RANGE * BEACON_RANGE
         local inrange = {}
         for idx, o in ipairs(beacon_objs) do
-            local okv = false
-            pcall(function() okv = o.actor and o.actor:IsValid() end)
-            if okv then
-                local ox, oy, oz = read_actor_pos(o.actor)
-                if ox then
-                    local dx, dy = ox - px, oy - py
-                    if dx * dx + dy * dy <= r2 and math.abs((oz or pz) - pz) <= LEVEL_THRESH then
-                        inrange[idx] = { x = ox, y = oy, z = oz, cat = o.cat }
-                    end
+            -- NO o.actor:IsValid() here: on a cached actor that the game freed/streamed
+            -- out (e.g. on focus-loss) that call faults at UObjectBase::IsA, which pcall
+            -- CANNOT catch -> it crashes the game. read_actor_pos goes through the shim's
+            -- SEH-guarded ActorLoc, so a dead actor just yields nil and we skip it.
+            local ox, oy, oz = read_actor_pos(o.actor)
+            if ox then
+                local dx, dy = ox - px, oy - py
+                if dx * dx + dy * dy <= r2 and math.abs((oz or pz) - pz) <= LEVEL_THRESH then
+                    inrange[idx] = { x = ox, y = oy, z = oz, cat = o.cat }
                 end
             end
         end
@@ -3291,17 +3428,23 @@ local pump_heals  = 0
 -- LoopAsync dies (post-prologue: routing froze, the walker stood still, bump
 -- could not get its second sample). Teardown safety now comes from the scene
 -- guard, not from avoiding these hooks.
+-- ONLY persistent actors here. Hooking ReceiveTick on DESTROYABLE/streamed actors
+-- (chests, house/level triggers) crashes the game: when the game ticks such an actor
+-- while tearing it down (streaming out, or mass-freed on window focus-loss), UE4SS's
+-- hook DISPATCH does an IsA on the half-freed context BEFORE our Lua callback runs ->
+-- uncatchable AV at UObjectBase::IsA. EventManagerBP is a persistent per-map manager
+-- (not streamed), so its tick dispatch is safe. The pump's other drivers (the
+-- boot-created LoopAsync + arrow keys) cover the gaps when EventManagerBP isn't ticking.
 local PUMP_TICK_HOOKS = {
     "/Game/Event/BP/EventManagerBP.EventManagerBP_C:ReceiveTick",
-    "/Game/Level/LevelTrigger.LevelTrigger_C:ReceiveTick",
-    "/Game/Map/BP/Blueprint/HouseEnterTriggerBP.HouseEnterTriggerBP_C:ReceiveTick",
-    "/Game/Object/BP/TreasureBoxBP.TreasureBoxBP_C:ReceiveTick",
 }
 local pump_hooked = {}
 local function arm_pump_tickhook()
+    if OP1_NO_TICK then return end
     for _, path in ipairs(PUMP_TICK_HOOKS) do
         if not pump_hooked[path] then
             local ok = pcall(RegisterHook, path, function()
+                if not M.fg_ok() then return end   -- unfocused: game thread idle, skip ALL game calls
                 pcall(nav_drive)   -- per-frame walk driver (cheap no-op when not walking)
                 if radar_pump then pcall(radar_pump, "hook") end
             end)
@@ -3312,8 +3455,10 @@ end
 local function start_pump_loop()
     return pcall(LoopAsync, 100, function()
         pump_loop_t = os.clock()
-        pcall(nav_drive)            -- 10 Hz steering fallback if no tick hook fires
-        pcall(radar_pump, "loop")
+        if not M.fg_ok() then return false end   -- unfocused: skip nav_drive + pump (game calls fault)
+        -- run on the game thread (this LoopAsync is a background thread; reading actors
+        -- here races the game's actor frees -> uncatchable crash)
+        M.in_gt(function() pcall(nav_drive); pcall(radar_pump, "loop") end)
         return false
     end)
 end
@@ -3325,11 +3470,49 @@ end
 -- grace so the teardown/loading moments pass before world-poking resumes.
 local WS = { px = nil, py = nil, ev_t = 0.0, hold = 0.0, susp = false }
 local audio_autotry = false   -- one-shot lazy audio init (bump works without radar toggles)
+
+-- ---------------------------------------------------------------------------
+-- Scene-widget registry rebuild (replaces on_widget_created / NotifyOnNewObject, which
+-- was the focus-out crash: UE4SS's IsA class-match faults on a half-built widget during
+-- the focus-change HUD rebuild, before our callback, so pcall can't catch it).
+-- scene_widgets feeds menu announce (poll_active_menu), options (poll_options),
+-- char-select (cs_instance) AND the radar's menu gate (BLOCKING_CLASSES scan).
+--
+-- TWO sources, both cheap (the old broad NotifyOnNewObject is gone for good):
+--   * in-game menus -> on_widget_uiopen adds them on open (event-driven).
+--   * the focused screen (title menus + whatever is on top) -> this scan, via
+--     KSUIManager:GetActiveStack -- the SINGLE authoritative screen the game has focused.
+--     This replaced FindAllOf, which returned the title's multiple flickering widget
+--     copies and made detection pick the wrong instance (wrong cursor / wrong screen
+--     after a dialog). One cheap UFunction call; M.reg_add is address-deduped.
+local function scan_scene_registry()
+    local w, cls = M.get_active_screen()
+    if w and cls and SCENE_LABELS[cls] then
+        M.reg_add(w, cls, SCENE_LABELS[cls])
+    end
+end
+-- Exposed so the fast async ok_loop (20Hz) can drive title capture for an immediate read,
+-- instead of the ~5Hz game-thread pump (which made the title menu read seconds late).
+M.scan_scene = scan_scene_registry
+
 radar_pump = function(src)
     local now = os.clock()
     if now - pump_lastt < PUMP_MIN_DT then return end
     pump_lastt = now
+    if not M.fg_ok() then return end   -- unfocused: game thread idle, skip all radar work
     pump_count = pump_count + 1
+    -- Publish "is there a field player" for the async ok_loop (which can't see WS.px):
+    -- false on the title/boot, true in-game. The ok_loop uses it to scan title widgets
+    -- only pre-game (where async FindAllOf is safe -- no streamed field actors to free).
+    M.field_player = (WS.px ~= nil)
+    -- In-game registry upkeep: confirm-dialog capture + a slow fallback title scan. The
+    -- find-once guard in scan_scene_registry makes this cheap (no FindAllOf once held).
+    -- Fade-gated so FindAllOf never iterates GUObjectArray during a streamed-actor teardown.
+    if pump_count % 10 == 3 then
+        local fading = false
+        if WS.fade then pcall(function() fading = WS.fade:IsFadeVisible() end) end
+        if not fading then scan_scene_registry() end
+    end
     local s = src or "key"
     pump_n[s] = (pump_n[s] or 0) + 1
     if not talk_hook_armed and pump_count % 20 == 7 then pcall(arm_talk_hook) end
@@ -3395,6 +3578,18 @@ radar_pump = function(src)
             end
         end
         local susp = ev or settling or (now - WS.ev_t < 1.5) or (now < WS.hold)
+        -- menu-read danger flag for the async menu pollers (poll_active_menu /
+        -- widget_is_visible). Fade up OR event = scene widgets mid-teardown -> their
+        -- IsVisible() ProcessEvent AVs. Deliberately NOT "no field player": the title
+        -- screen is stable and its menus must read, so this is fade/event-specific
+        -- (narrower than world_susp). WS.fade is nil on the title -> false there.
+        local fade_now = false
+        if WS.fade then pcall(function() fade_now = (WS.fade:IsFadeVisible() == true) end) end
+        -- A screen fade is always a teardown window. An EVENT is only one IN-GAME
+        -- (cutscene) -- on the TITLE screen IsEventPlaying is true (boot/title sequence)
+        -- but the menus are stable and must read, so qualify ev with "a field player
+        -- exists" (WS.px). Without this the title menu never announces.
+        M.menu_unsafe = fade_now or (ev and WS.px ~= nil)
         world_susp = susp   -- update BEFORE the transition handling below: the
                             -- deferred learn there must see the world as RESUMED
                             -- (it used to re-queue itself forever on stale state)
@@ -3566,11 +3761,12 @@ local function on_cursor_hook(dir)
     end
 end
 local function try_hook_cursor()
+    if OP1_NO_CS then return end
     if cs_cursor_hooked then return end
     if not cs_instance then ExecuteWithDelay(1000, try_hook_cursor); return end  -- wait for the BP to load
     cs_cursor_hooked = true
     for _, dir in ipairs({ "Up", "Down", "Left", "Right" }) do
-        pcall(RegisterHook, "/Game/UI/Title/BP/Scene/TitlePlayerSelect.TitlePlayerSelect_C:OnCursor" .. dir, on_cursor_hook(dir))
+        pcall(RegisterHook, "/Game/UI/Title/BP/Scene/TitlePlayerSelect.TitlePlayerSelect_C:OnCursor" .. dir, M.fg_guard(on_cursor_hook(dir)))
     end
     log("char-select cursor hooks registered")
 end

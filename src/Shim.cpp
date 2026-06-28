@@ -1173,6 +1173,50 @@ int l_option_label_for_kind(lua_State* L) {
     return 2;
 }
 
+// ActorLoc(actorAddr) -> (x, y, z) | nil. SEH-guarded read of the actor's world-ish
+// position: AActor.RootComponent @0x160 -> USceneComponent.RelativeLocation (FVector
+// @0x15C). Returns nil for a freed/streamed-out actor instead of faulting. This is the
+// safe replacement for a Lua obj:K2_GetActorLocation() / obj.RootComponent read, which
+// AVs natively on a dead object during streaming -- and pcall CANNOT catch that, so it
+// crashes the whole game (the recurring radar crash). Garbage coords from reused memory
+// (NaN / absurd range) are rejected too.
+int l_actor_loc(lua_State* L) {
+    uintptr_t actor = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
+    float x = 0, y = 0, z = 0; bool ok = false;
+    __try {
+        uintptr_t rc = *reinterpret_cast<uintptr_t*>(actor + 0x160);
+        if (rc > 0x10000 && rc < 0x7FF000000000ULL) {
+            x = *reinterpret_cast<float*>(rc + 0x15C);
+            y = *reinterpret_cast<float*>(rc + 0x160);
+            z = *reinterpret_cast<float*>(rc + 0x164);
+            ok = true;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) { ok = false; }
+    if (ok && (x != x || y != y || z != z ||
+               x < -1.0e7f || x > 1.0e7f || y < -1.0e7f || y > 1.0e7f ||
+               z < -1.0e7f || z > 1.0e7f)) ok = false;
+    if (ok) { lua_pushnumber(L, x); lua_pushnumber(L, y); lua_pushnumber(L, z); return 3; }
+    lua_pushnil(L);
+    return 1;
+}
+
+// IsForeground() -> bool. True iff the foreground window belongs to our (the game's)
+// process. When the game loses focus its main thread stops ticking, so calling game
+// UFunctions (line traces, position reads, IsVisible...) from our async poll/pump
+// threads then faults the process (the alt-tab-on-the-map crash). The pump + poll loop
+// gate on this to suspend ALL game calls while unfocused.
+int l_is_foreground(lua_State* L) {
+    bool fg = false;
+    HWND h = GetForegroundWindow();
+    if (h) {
+        DWORD pid = 0;
+        GetWindowThreadProcessId(h, &pid);
+        fg = (pid == GetCurrentProcessId());
+    }
+    lua_pushboolean(L, fg ? 1 : 0);
+    return 1;
+}
+
 const luaL_Reg op1access_funcs[] = {
     {"Speak",                l_speak},
     {"Silence",              l_silence},
@@ -1198,6 +1242,8 @@ const luaL_Reg op1access_funcs[] = {
     {"NpcName",              l_npc_name},
     {"LastSpeakerName",      l_last_speaker},
     {"OptionLabelForKind",   l_option_label_for_kind},
+    {"ActorLoc",             l_actor_loc},
+    {"IsForeground",         l_is_foreground},
     {nullptr, nullptr},
 };
 
