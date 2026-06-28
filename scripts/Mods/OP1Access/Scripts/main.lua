@@ -44,6 +44,22 @@ local function silence()
     if shim and shim.Silence then shim.Silence() end
 end
 
+-- Speak a focused MENU ITEM with the right interrupt behaviour. When a menu opens,
+-- poll_active_menu speaks the screen NAME and sets M.await_first_item; the first item then
+-- QUEUES after the name (interrupt=false) so you hear "Menu name, first option" in order.
+-- Every later item (cursor move) INTERRUPTS so fast navigation doesn't pile up. The item
+-- readers also HOLD their first announce until await_first_item is set (see their hold
+-- checks), so the name always comes out first.
+M.say_item = function(text)
+    if not text or text == "" then return end
+    if M.await_first_item then
+        M.await_first_item = false
+        speak(text, false)   -- queue after the screen name
+    else
+        speak(text, true)    -- interrupt (navigation)
+    end
+end
+
 -- Focus gate. When the game window loses focus its main thread stops ticking, so calling
 -- ANY game UFunction (line traces, position reads, nav steering, hook callbacks) from our
 -- pump / loops / RegisterHook callbacks then faults uncatchably and crashes the game
@@ -373,7 +389,12 @@ local function on_ui_manager_open(Context, Kind)
     if UI_KIND_SUPPRESSED[k] then return end
     if k == last_kind_spoken then return end
     last_kind_spoken = k
-    speak(UI_KIND_NAMES[k] or ("Menu " .. tostring(k)))
+    -- Only announce KNOWN kinds. The old "Menu <n>" fallback for unmapped kinds was just
+    -- a meaningless number and fired spuriously (e.g. kind 1 on the save/load -> title
+    -- escape -> "Menu 1"). Real menus are read by poll_active_menu + the item readers;
+    -- if a useful menu turns out to be unmapped, add its kind to UI_KIND_NAMES instead.
+    local nm = UI_KIND_NAMES[k]
+    if nm then speak(nm) end
 end
 
 local function on_ui_manager_close(Context, Kind)
@@ -700,12 +721,16 @@ local function poll_title_selection(active_cls)
     local value_changed = (sel ~= last_select_value)
     if not owner_changed and not value_changed then return end
 
+    -- On OPEN (owner_changed), hold until poll_active_menu has spoken the screen name
+    -- (M.await_first_item), so the option comes out AFTER the name, not before it.
+    if owner_changed and not M.await_first_item then return end
+
     last_select_owner = active_cls
     last_select_value = sel
 
     local label = resolve_menu_item_label(instance, sel, cfg)
     log(string.format("Item selection: %s idx=%d label=%s", active_cls, sel, tostring(label)))
-    speak(label or ("Item " .. tostring(sel)))
+    M.say_item(label or ("Item " .. tostring(sel)))
 end
 
 local function poll_active_menu()
@@ -747,8 +772,13 @@ local function poll_active_menu()
         pending_polled_class, pending_polled_n = nil, 0        -- already announced; stable
     elseif not best_class then
         last_polled_class = nil                                -- nothing visible; allow re-announce
+        M.await_first_item = false                             -- void any stale "first item" flag
         pending_polled_class, pending_polled_n = nil, 0
     else
+        -- A NEW screen is pending. Void the PREVIOUS screen's "first item" flag now (it may
+        -- have set it without an item reader consuming it, e.g. "Press any button" before the
+        -- title menu) so the item readers HOLD until THIS screen's name is spoken below.
+        M.await_first_item = false
         if best_class == pending_polled_class then
             pending_polled_n = pending_polled_n + 1
         else
@@ -757,7 +787,8 @@ local function poll_active_menu()
         if pending_polled_n >= POLL_ANNOUNCE_SETTLE then
             last_polled_class = best_class
             last_spoken_class = best_class
-            speak(best_label)
+            speak(best_label)              -- screen name (interrupts)
+            M.await_first_item = true      -- the next item queues after this name (open)
             cs_coord_mute = CS_COORD_MUTE   -- don't let coords step on the new screen name
             pending_polled_class, pending_polled_n = nil, 0
         end
@@ -863,6 +894,9 @@ do
         local ci = nil
         pcall(function() ci = m.CursorIndex end)
         if ci == nil or ci == sl_idx then return end
+        -- On OPEN (first focused slot, sl_idx still nil), hold until poll_active_menu has
+        -- spoken "Save and load" (M.await_first_item) so the slot comes AFTER the name.
+        if sl_idx == nil and not M.await_first_item then return end
         sl_idx = ci
         local slot = nil
         pcall(function()
@@ -873,10 +907,10 @@ do
             end
         end)
         local label = (ci == 0) and "Auto save" or ("Slot " .. tostring(ci))
-        if not slot then speak(label); return end
+        if not slot then M.say_item(label); return end
         local en = false
         pcall(function() en = slot.IsEnabled and true or false end)
-        if not en then speak(label .. ", empty"); return end
+        if not en then M.say_item(label .. ", empty"); return end
         local function gt(name)                                       -- localized text of a bound widget
             local r = nil
             pcall(function() local w = slot[name]; if w then local t = w:GetText(); if t then r = t:ToString() end end end)
@@ -898,7 +932,7 @@ do
         if leader then parts[#parts + 1] = leader .. (lvl and (" level " .. lvl) or "") end
         if pt then parts[#parts + 1] = pt end
         if date then parts[#parts + 1] = date .. (tm and (" " .. tm) or "") end
-        speak(table.concat(parts, ", "))
+        M.say_item(table.concat(parts, ", "))
     end
 end
 
@@ -950,6 +984,9 @@ do
         if not m2 then lastCat, lastRow, lastEntered = nil, nil, nil; return end
         local active = false; pcall(function() active = m2.IsActive and true or false end)
         if not active then lastCat, lastRow, lastEntered = nil, nil, nil; return end
+        -- On OPEN (nothing announced yet), hold until poll_active_menu has spoken the
+        -- screen name (M.await_first_item), so "Options" comes out before the category.
+        if lastCat == nil and lastRow == nil and not M.await_first_item then return end
         -- category name = the menu's TitleText header (e.g. "Spieloptionen")
         local cat; pcall(function() local t = m2.TitleText; if t then local g = t:GetText(); if g then cat = g:ToString() end end end)
         -- focused row: entered-flag (its CursorIcon is visible only INSIDE the rows,
@@ -1003,14 +1040,14 @@ do
         --  * moving rows while entered -> read each row (incl. live value edits)
         --  * Escape (entered true->false) -> re-announce the category for orientation
         if not entered then
-            if cat and cat ~= lastCat then lastCat = cat; speak(cat)
-            elseif lastEntered then if cat then speak(cat) end end
+            if cat and cat ~= lastCat then lastCat = cat; M.say_item(cat)
+            elseif lastEntered then if cat then M.say_item(cat) end end
             lastRow = nil
         else
             if not lastEntered then
-                if say and say ~= "" then lastRow = say; speak(say) end
+                if say and say ~= "" then lastRow = say; M.say_item(say) end
             elseif say and say ~= lastRow then
-                lastRow = say; speak(say)
+                lastRow = say; M.say_item(say)
             end
             if cat then lastCat = cat end
         end
