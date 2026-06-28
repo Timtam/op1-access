@@ -792,9 +792,119 @@ do
     end
 end
 
+-- Options menu reader (title-screen flow). The live content is reached via the
+-- VISIBLE TitleOptionScene_C.RefOptionMenu (NOT FindFirstOf -- that returns a
+-- template that freezes on traversal). Focused row = OptItemVerticalBox child at
+-- CursorIndex (a ListItemWidget_Opt*_C); label = its TitleWidget > child0
+-- (ListColumnWidget_Col1_2_C) > Column1_Title; value = ExWidget read by control
+-- class. Announce when the label+value string changes (covers row moves, category
+-- switches, and live value edits). Gated on IsActive to skip the open/transition.
+do
+    local lastCat, lastRow, lastEntered, optDT
+    -- The OptionItemData DataTable is the master, kind-keyed label store (groups -> items
+    -- with OptionKind + ItemText1). The runtime TextLabel maps are incomplete (e.g. the
+    -- audio gauges' captions are custom-drawn and absent), so caption-less rows resolve
+    -- their label here via shim.OptionLabelForKind. Cache the table's address per session.
+    local function optdt_get()
+        if optDT then return optDT end
+        local dt
+        pcall(function() dt = StaticFindObject("/Game/UI/Option/Database/OptionItemData.OptionItemData") end)
+        if not dt then
+            pcall(function()
+                local all = FindAllOf("DataTable")
+                if all then for _, o in ipairs(all) do
+                    local nm = ""; pcall(function() nm = o:GetFullName() end)
+                    if nm:find("OptionItemData") and not nm:find("Steam") then dt = o; break end
+                end end
+            end)
+        end
+        if dt then pcall(function() optDT = dt:GetAddress() end) end
+        return optDT
+    end
+    M.poll_options = function()
+        local m2
+        for i = 1, #scene_widgets do
+            local e = scene_widgets[i]
+            if e[2] == "TitleOptionScene_C" then
+                local vis = false; pcall(function() vis = e[1]:IsValid() and e[1]:IsVisible() end)
+                if vis then pcall(function() m2 = e[1].RefOptionMenu end) end
+            end
+        end
+        if not m2 then lastCat, lastRow, lastEntered = nil, nil, nil; return end
+        local active = false; pcall(function() active = m2.IsActive and true or false end)
+        if not active then lastCat, lastRow, lastEntered = nil, nil, nil; return end
+        -- category name = the menu's TitleText header (e.g. "Spieloptionen")
+        local cat; pcall(function() local t = m2.TitleText; if t then local g = t:GetText(); if g then cat = g:ToString() end end end)
+        -- focused row: entered-flag (its CursorIcon is visible only INSIDE the rows,
+        -- not while on the category list) + label (caption) + value (read by class)
+        local entered, label, val = false, nil, nil
+        local ci; pcall(function() ci = m2.CursorIndex end)
+        if type(ci) == "number" then
+            local row; pcall(function() row = m2.OptItemVerticalBox:GetChildAt(ci) end)
+            if row then
+                pcall(function() local c = row.CursorIcon; if c then entered = (c:IsVisible() == true) end end)
+                pcall(function() local col = row.TitleWidget:GetChildAt(0); local ct = col and col.Column1_Title
+                    if ct then local g = ct:GetText(); if g then label = g:ToString() end end end)
+                local ex, isGauge = nil, false
+                pcall(function() ex = row.ExWidget end)
+                if ex then
+                    local exc; pcall(function() exc = ex:GetClass():GetFName():ToString() end)
+                    if exc == "ToggleButtonWBP_C" then
+                        local on; pcall(function() on = ex.ToggleSwitch end)
+                        pcall(function() local tw = on and ex.Text_True or ex.Text_False; if tw then local g = tw:GetText(); if g then val = g:ToString() end end end)
+                    elseif exc == "IntGaugeWBP_C" then
+                        isGauge = true
+                        pcall(function() val = tostring(ex.CurrentValue) end)
+                    else
+                        -- generic: Arrow / DescAndSelect / TempButton / KeyConfig all expose a .Text
+                        pcall(function() local t = ex.Text; if t then local g = t:GetText(); if g then val = g:ToString() end end end)
+                    end
+                    if (not label or label == "") then   -- some controls carry their own caption
+                        pcall(function() local d = ex.DescriptionText; if d then local g = d:GetText(); if g then label = g:ToString() end end end)
+                    end
+                end
+                -- gauges' caption is custom-drawn AND the first gauge in a group instead
+                -- carries the group header ("Lautstärke") in Column1_Title -- so for gauges
+                -- ALWAYS take the per-item label from the master OptionItemData DataTable
+                -- (keyed by OptionKind). Other caption-less rows use it as a fallback too.
+                if (isGauge or not label or label == "") and shim and shim.OptionLabelForKind then
+                    local k; pcall(function() local ka = m2.OptionKindArray; if ka then k = ka[ci + 1] end end)
+                    local dt = optdt_get()
+                    if type(k) == "number" and dt then
+                        pcall(function() local s = shim.OptionLabelForKind(dt, k); if s and s ~= "" then label = s end end)
+                    end
+                end
+            end
+        end
+        local say
+        if label and label ~= "" then say = label .. (val and val ~= "" and (", " .. val) or "")
+        elseif val and val ~= "" then say = val end
+        -- The focused row's CursorIcon is the only readable "inside the rows vs on the
+        -- category list" signal, so drive everything off it:
+        --  * category list (not entered) -> speak ONLY the category name on change
+        --  * Enter (entered flips false->true) -> read the first option
+        --  * moving rows while entered -> read each row (incl. live value edits)
+        --  * Escape (entered true->false) -> re-announce the category for orientation
+        if not entered then
+            if cat and cat ~= lastCat then lastCat = cat; speak(cat)
+            elseif lastEntered then if cat then speak(cat) end end
+            lastRow = nil
+        else
+            if not lastEntered then
+                if say and say ~= "" then lastRow = say; speak(say) end
+            elseif say and say ~= lastRow then
+                lastRow = say; speak(say)
+            end
+            if cat then lastCat = cat end
+        end
+        lastEntered = entered
+    end
+end
+
 local ok_loop = pcall(LoopAsync, POLL_INTERVAL_MS, function()
     pcall(poll_active_menu)
     pcall(M.poll_saveload)
+    pcall(M.poll_options)
     -- The native GetTalkText hook speaks dialogue directly (independent of this
     -- loop, which can die after a level load). The loop just logs the line.
     -- (dialogue polling moved into the radar pump: this loop dies intermittently

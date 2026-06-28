@@ -259,7 +259,10 @@ static int resolve_via(FnGetGameTextStr impl, uint64_t fname, wchar_t* nameBuf, 
 // so this self-arms WITHOUT requiring prior dialogue. Empty -> no text.
 static int resolve_name_for_fname(uint64_t fname, wchar_t* nameBuf, int cap) {
     if (fname == 0) { nameBuf[0] = L'\0'; return 0; }
-    if (!g_ggts_impl && !g_ggts_searched) {
+    // Retry arming on EVERY call until it sticks (don't one-shot): the first FName we
+    // see may not be a valid GameText key (e.g. a map's identifier key), which would
+    // otherwise permanently fail arming and blank all later, valid lookups.
+    if (!g_ggts_impl) {
         g_ggts_searched = true;
         wchar_t tmp[128]; int got = 0;
         for (int i = 0; i < g_ggts_cand_n; i++) {
@@ -1121,6 +1124,55 @@ int l_screenshot(lua_State* L) {
     return 1;
 }
 
+// SEH-guarded 8-byte read (0 on fault).
+static uintptr_t shim_read(uintptr_t a) {
+    uintptr_t r = 0;
+    if (a) { __try { r = *reinterpret_cast<uintptr_t*>(a); } __except (EXCEPTION_EXECUTE_HANDLER) { r = 0; } }
+    return r;
+}
+
+// OptionLabelForKind(dtAddr, kind) -> (localizedLabel | nil, dbg). Finds the OptionItemData
+// row with OptionKind == kind in the DataTable and resolves its ItemText1. The complete,
+// kind-keyed master store -> works for every option (incl. gauges not in the runtime maps).
+int l_option_label_for_kind(lua_State* L) {
+    uintptr_t dt   = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
+    int wantKind   = static_cast<int>(luaL_checkinteger(L, 2));
+    wchar_t w[128]; w[0] = L'\0'; int found = 0;
+    __try {
+        uintptr_t rm = dt + 0x30;
+        uintptr_t data = shim_read(rm + 0);
+        int num = static_cast<int>(shim_read(rm + 8) & 0xFFFFFFFFu);
+        if (data && num > 0 && num < 64) {
+            for (int i = 0; i < num && !found; i++) {
+                uintptr_t row = shim_read(data + static_cast<uintptr_t>(i) * 24u + 8);
+                if (!row) continue;
+                uintptr_t idata = shim_read(row + 8);
+                int inum = static_cast<int>(shim_read(row + 0x10) & 0xFFFFFFFFu);
+                if (idata && inum > 0 && inum < 64) {
+                    for (int j = 0; j < inum; j++) {
+                        uintptr_t it = idata + static_cast<uintptr_t>(j) * 0x38u;
+                        if (static_cast<int>(shim_read(it + 0) & 0xFFu) == wantKind) {
+                            uint64_t t1 = static_cast<uint64_t>(shim_read(it + 8));
+                            if (resolve_name_for_fname(t1, w, 128) > 0) found = 1;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) { w[0] = L'\0'; found = 0; }
+    if (found && w[0]) {
+        char u8[256];
+        int u = WideCharToMultiByte(CP_UTF8, 0, w, -1, u8, sizeof(u8) - 1, nullptr, nullptr);
+        if (u > 1) lua_pushlstring(L, u8, static_cast<size_t>(u - 1)); else lua_pushnil(L);
+    } else {
+        lua_pushnil(L);
+    }
+    char dbg[48]; std::snprintf(dbg, sizeof(dbg), "kind=%d found=%d", wantKind, found);
+    lua_pushstring(L, dbg);
+    return 2;
+}
+
 const luaL_Reg op1access_funcs[] = {
     {"Speak",                l_speak},
     {"Silence",              l_silence},
@@ -1145,6 +1197,7 @@ const luaL_Reg op1access_funcs[] = {
     {"NpcProbe",             l_npc_probe},
     {"NpcName",              l_npc_name},
     {"LastSpeakerName",      l_last_speaker},
+    {"OptionLabelForKind",   l_option_label_for_kind},
     {nullptr, nullptr},
 };
 
