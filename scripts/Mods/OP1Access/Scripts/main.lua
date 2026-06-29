@@ -1011,6 +1011,32 @@ do
     end
 end
 
+-- Tutorial pop-up reader. The pop-up's active widget is UITutorial_C; its current page
+-- is UITutorial_C.NowPageTemplate (a UITutorialTemplateNN_C), whose PageText array holds
+-- the page's text-block widgets (title, body, captions -- order varies per template, so
+-- we read every non-empty entry). Announced when the text changes, which covers both the
+-- pop-up appearing and paging forward/back through a multi-page tutorial.
+do
+    local last_tut
+    M.poll_tutorial = function()
+        local w, cls = M.get_active_screen()
+        if cls ~= "UITutorial_C" then last_tut = nil; return end
+        local tmpl; pcall(function() tmpl = w.NowPageTemplate end)
+        if not tmpl then return end
+        local arr; pcall(function() arr = tmpl.PageText end)
+        if not arr or not arr.ForEach then return end
+        local parts = {}
+        pcall(function() arr:ForEach(function(_, v)
+            local o = v; pcall(function() if v.get then o = v:get() end end)
+            local s; pcall(function() local g = o:GetText(); if g then s = g:ToString() end end)
+            if s and s ~= "" then parts[#parts + 1] = s end
+        end) end)
+        if #parts == 0 then return end
+        local say = table.concat(parts, ". ")
+        if say ~= last_tut then last_tut = say; speak(say) end
+    end
+end
+
 -- Options menu reader (title-screen flow). The live content is reached via the
 -- VISIBLE TitleOptionScene_C.RefOptionMenu (NOT FindFirstOf -- that returns a
 -- template that freezes on traversal). Focused row = OptItemVerticalBox child at
@@ -1142,6 +1168,7 @@ local ok_loop = pcall(LoopAsync, POLL_INTERVAL_MS, function()
     pcall(M.poll_saveload)
     pcall(M.poll_options)
     pcall(M.poll_mainmenu)
+    pcall(M.poll_tutorial)
     -- The native GetTalkText hook speaks dialogue directly (independent of this
     -- loop, which can die after a level load). The loop just logs the line.
     -- (dialogue polling moved into the radar pump: this loop dies intermittently
