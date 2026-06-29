@@ -319,6 +319,21 @@ void capture_talk(void* result, void* frame) {
     for (int j = 0; j < wlen && olen < 2303; j++) out[olen++] = wbuf[j];
     out[olen] = L'\0';
 
+    // Strip HTML-like emphasis markup the game embeds in dialogue, e.g.
+    // <span style="italic">word</> -- a screen reader would otherwise read the tags
+    // ("span style italic ... ") literally. Drop everything between '<' and '>'.
+    {
+        int w = 0; bool in_tag = false;
+        for (int r = 0; r < olen; r++) {
+            wchar_t c = out[r];
+            if (c == L'<')      in_tag = true;
+            else if (c == L'>') in_tag = false;
+            else if (!in_tag)   out[w++] = c;
+        }
+        out[w] = L'\0';
+        olen = w;
+    }
+
     // Speak DIRECTLY from the native hook (game thread) -- independent of the Lua
     // poll loop, which intermittently dies after a chapter load (PollTalk would
     // then never run). The hook always fires.
