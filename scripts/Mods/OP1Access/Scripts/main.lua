@@ -936,6 +936,81 @@ do
     end
 end
 
+-- Current objective reader. The menu's "current story" panel lives at
+-- PartyCharacterList_C.NowPlayingStoryPanel.characterName (a KSTextBlock holding the
+-- objective text, e.g. "Zur Bibliothek gehen."). queue=true appends after the category
+-- on menu open; queue=false (the Q keybind) interrupts and reads on demand.
+M.read_objective = function(queue)
+    local txt
+    local lst; pcall(function() lst = FindAllOf("PartyCharacterList_C") end)
+    if lst then for _, w in ipairs(lst) do
+        local ok = false; pcall(function() ok = w:IsValid() end)
+        if ok then
+            pcall(function()
+                local p = w.NowPlayingStoryPanel
+                if p then local t = p.characterName
+                    if t then local g = t:GetText(); if g then
+                        local s = g:ToString()
+                        if s and s ~= "" and s ~= "1234" then txt = s end
+                    end end
+                end
+            end)
+            if txt then break end
+        end
+    end end
+    if txt then speak("Objective: " .. txt, not queue)
+    elseif not queue then speak("No objective") end
+end
+pcall(RegisterKeyBind, Key.Q, function() M.read_objective(false) end)
+
+-- Main (pause) menu category-list reader. The Escape menu's left list (Weltkarte /
+-- Journal / Inventar / Ausruestung / ... / Status / Verschiedenes) lives in
+-- MainMenuWidget_C.MainMenuList (a MainMenuList_C): CursorPosition is the selected
+-- category; MainMenuPanel is a UMG VerticalBox of MainMenuItemPanel_C buttons, each with
+-- a MenuText text block carrying the localized label. So: GetChildAt(cursor).MenuText.
+-- Announce the selected category on open + each move (interrupt behaviour via say_item).
+do
+    local mm_idx
+    M.poll_mainmenu = function()
+        local mw
+        for i = 1, #scene_widgets do
+            local e = scene_widgets[i]
+            if e[2] == "MainMenuWidget_C" then
+                local vis = false; pcall(function() vis = e[1]:IsValid() and e[1]:IsVisible() end)
+                if vis then mw = e[1] end
+            end
+        end
+        if not mw then mm_idx = nil; return end
+        local list; pcall(function() list = mw.MainMenuList end)
+        if not list then mm_idx = nil; return end
+        local ci; pcall(function() ci = list.CursorPosition end)
+        if type(ci) ~= "number" or ci == mm_idx then return end
+        local opening = (mm_idx == nil)   -- first announce since the menu opened
+        mm_idx = ci
+        -- MainMenuPanel child[0] is a non-category header (no MenuText), so the categories
+        -- are children [1..N] and cursor ci maps to child[ci+1]. Disabled categories carry
+        -- IsUnEnable (some, like locked features, have a "???" placeholder label).
+        local label, un = nil, false
+        pcall(function()
+            local btn = list.MainMenuPanel and list.MainMenuPanel:GetChildAt(ci + 1)
+            if btn then
+                pcall(function() un = btn.IsUnEnable and true or false end)
+                local t = btn.MenuText; if t then local g = t:GetText(); if g then label = g:ToString() end end
+            end
+        end)
+        local say
+        if not label or label == "" or label == "???" then
+            say = un and "Unavailable" or ("Category " .. tostring(ci))
+        else
+            say = un and (label .. ", disabled") or label
+        end
+        M.say_item(say)
+        -- On open, also read the current objective (queued after the category). Q re-reads
+        -- it on demand. (Both requested.)
+        if opening and M.read_objective then M.read_objective(true) end
+    end
+end
+
 -- Options menu reader (title-screen flow). The live content is reached via the
 -- VISIBLE TitleOptionScene_C.RefOptionMenu (NOT FindFirstOf -- that returns a
 -- template that freezes on traversal). Focused row = OptItemVerticalBox child at
@@ -1066,6 +1141,7 @@ local ok_loop = pcall(LoopAsync, POLL_INTERVAL_MS, function()
     pcall(poll_active_menu)
     pcall(M.poll_saveload)
     pcall(M.poll_options)
+    pcall(M.poll_mainmenu)
     -- The native GetTalkText hook speaks dialogue directly (independent of this
     -- loop, which can die after a level load). The loop just logs the line.
     -- (dialogue polling moved into the radar pump: this loop dies intermittently

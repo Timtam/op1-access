@@ -60,6 +60,21 @@ Everything else is automatic: screens and menus are announced as they open, the
 highlighted entry is read as you move through title menus, and system dialogs
 are read out (caption, body, and button labels).
 
+## Main menu (pause menu)
+
+Open it with the game's menu button (Escape). The left-hand **category list**
+(Map, Journal, Inventory, Equipment, Status, Other, …) is read as you move
+through it; categories you can't open are announced as **“disabled”** (or
+**“Unavailable”** for ones still locked/unrevealed).
+
+The current **objective** — the “Aufgabe” panel shown on the menu — is read
+automatically when the menu opens (right after the first category), and you can
+re-read it at any time with the hotkey below.
+
+| Key | Action |
+|-----|--------|
+| **Q** | Read the current objective |
+
 ## Character-select screen ("Choose your character")
 
 This is the opening screen where you pick your starting traveler. It is a
