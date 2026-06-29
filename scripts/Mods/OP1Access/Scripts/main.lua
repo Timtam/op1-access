@@ -3080,7 +3080,13 @@ local function nav_route_step()
         if not R.closed[best.k] then
             R.closed[best.k] = true
             R.pops = R.pops + 1
-            if best.x == R.gx and best.y == R.gy and math.abs(best.z - R.oz) <= 300 then
+            -- Reached when WITHIN ONE CELL of the goal, not on the exact goal cell:
+            -- solid targets (chests, NPCs) occupy their own cell and block the knee-height
+            -- clearance trace into it, so the A* can never enter it (-> "No route found")
+            -- even though you can stand adjacent and interact. The built path still appends
+            -- the real goal position, so the walker finishes the last ~1 cell and arrives.
+            if math.abs(best.x - R.gx) <= 1 and math.abs(best.y - R.gy) <= 1
+                and math.abs(best.z - R.oz) <= 300 then
                 nav_route_finish(best); return
             end
             for _, d in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
