@@ -8,6 +8,11 @@
 
 local M = {}
 
+-- The eight travelers' display names (identical in the English and German text). A
+-- dialogue line spoken by one of them is the PLAYER's party talking, never an NPC.
+M.TRAVELER = { Ophilia = true, Cyrus = true, Tressa = true, Olberic = true, Primrose = true,
+               Alfyn = true, Therion = true, ["H'aanit"] = true, ["H\u{2019}aanit"] = true }
+
 -- ---------------------------------------------------------------------------
 -- Shim load
 -- ---------------------------------------------------------------------------
@@ -787,7 +792,13 @@ local function poll_active_menu()
         -- have set it without an item reader consuming it, e.g. "Press any button" before the
         -- title menu) so the item readers HOLD until THIS screen's name is spoken below.
         M.await_first_item = false
-        if best_class == pending_polled_class then
+        if M.dlg_closed_t and os.clock() - M.dlg_closed_t < 1.5 then
+            -- a confirm dialog just closed: wait before re-reading the screen under it.
+            -- "Ja" on a load / quit prompt starts a fade within that time (this poller
+            -- then pauses on M.menu_unsafe), so the old screen isn't announced again
+            -- just before it goes away ("Save and load" twice after loading)
+            pending_polled_class, pending_polled_n = nil, 0
+        elseif best_class == pending_polled_class then
             pending_polled_n = pending_polled_n + 1
         else
             pending_polled_class, pending_polled_n = best_class, 1
@@ -1511,6 +1522,7 @@ poll_dialog = function()
         if dlg_visible then
             last_polled_class = nil
             last_select_owner, last_select_value = nil, nil
+            M.dlg_closed_t = os.clock()
         end
         dlg_visible, dlg_last_focus = false, nil
         return false
@@ -2368,11 +2380,16 @@ end
 -- Inline in the closure (no chunk local: main chunk is at Lua's 200-local cap).
 do
     local SHOT_PATH = "C:/Program Files (x86)/Steam/steamapps/common/OCTOPATH TRAVELER/Octopath_Traveler/Binaries/Win64/op1access_shot.bmp"
+    -- ON THE GAME THREAD: PrintWindow sends WM_PRINT to the window's thread (the game
+    -- thread). Called from the keybind thread it waited for the game thread while
+    -- holding the Lua lock the game thread needed -> the game froze (2026-11-11).
     local ok = pcall(RegisterKeyBind, Key.F2, { ModifierKey.CONTROL }, function()
-        local done = false
-        pcall(function() if shim and shim.Screenshot then done = shim.Screenshot(SHOT_PATH) end end)
-        speak(done and "Screenshot saved" or "Screenshot failed")
-        log("SCREENSHOT (shim) -> " .. tostring(done))
+        ExecuteInGameThread(function()
+            local done = false
+            pcall(function() if shim and shim.Screenshot then done = shim.Screenshot(SHOT_PATH) end end)
+            speak(done and "Screenshot saved" or "Screenshot failed")
+            log("SCREENSHOT (shim) -> " .. tostring(done))
+        end)
     end)
     log("Bound screenshot (Ctrl+F2): " .. tostring(ok))
 end
@@ -2545,6 +2562,7 @@ learn_talk_npc = function(ox, oy)
     if npc_talking and (now - npc_talking.t) < 30 then
         local nm = nil
         pcall(function() if shim and shim.LastSpeakerName then nm = shim.LastSpeakerName() end end)
+        if nm and M.TRAVELER[nm] then nm = nil end   -- our own traveler spoke, not the NPC
         local rec = npc_learned[npc_talking.addr]
         if type(rec) ~= "table" then rec = {}; npc_learned[npc_talking.addr] = rec end
         rec.learned = true; rec.keep = true; rec.name = nm or rec.name
@@ -2581,6 +2599,9 @@ learn_talk_npc = function(ox, oy)
         pcall(function() addr = best:GetAddress() end)
         local nm = nil
         pcall(function() if shim and shim.LastSpeakerName then nm = shim.LastSpeakerName() end end)
+        -- a line spoken by one of OUR travelers (Cyrus' path-action bubbles) must not
+        -- name the nearest NPC "Cyrus" -- learn the NPC, leave its name to the static data
+        if nm and M.TRAVELER[nm] then nm = nil end
         local cur = npc_learned[addr]
         if addr and not (type(cur) == "table" and cur.learned and cur.name) then
             -- real dialogue OVERRIDES any cached probe verdict, and carries the
