@@ -2158,6 +2158,10 @@ local NAV_CLASSES = {
     { cls = "HouseEnterTriggerBP_C", name = "building" },  -- enter a house
     { cls = "ShopTriggerBP_C",       name = "shop" },
     { cls = "KSFieldNPCCharacter_C", name = "npc" },       -- townsfolk (moves -> read live)
+    -- minimap markers (M.minimap_markers): the story NPCs the objective points at, other
+    -- marked NPCs, and the exit glowing green toward the objective. No class to scan
+    -- (cls = nil): the beacon / probe loops skip it.
+    { markers = true,                name = "marker" },
 }
 local function read_actor_pos(obj)
     if not obj then return nil end
@@ -2352,7 +2356,7 @@ local function nav_probe()
     local bestd, bestcat, bdx, bdy, bdz
     for _, c in ipairs(NAV_CLASSES) do
         local list = nil
-        pcall(function() list = FindAllOf(c.cls) end)
+        pcall(function() list = c.cls and FindAllOf(c.cls) end)
         local n, near = 0, nil
         if list then
             for _, o in pairs(list) do
@@ -2627,7 +2631,7 @@ local function beacon_rescan()
     beacon_slotof = {}
     for _, c in ipairs(NAV_CLASSES) do
         local list = nil
-        pcall(function() list = FindAllOf(c.cls) end)
+        pcall(function() list = c.cls and FindAllOf(c.cls) end)
         if list then
             for _, o in pairs(list) do
                 local okv = false
@@ -2900,12 +2904,26 @@ NV.resolve_name = function(o)
     return r.name
 end
 
+-- A target is an actor (read live: NPCs wander) or, for minimap markers without a
+-- matching actor, a fixed position. Returns x, y, z (z may be nil).
+NV.tpos = function(t)
+    if t.actor then
+        local x, y, z = read_actor_pos(t.actor)
+        if x then return x, y, z end
+    end
+    if t.pos then return t.pos.x, t.pos.y, t.pos.z end
+    return nil
+end
+
 local function nav_target()
     local t = NV.list[NV.idx]
     if not t then return nil end
     local okv = false
     pcall(function() okv = t.actor and t.actor:IsValid() end)
-    if not okv then return nil end
+    if not okv then
+        if not t.pos then return nil end
+        t.actor = nil          -- marker whose actor streamed out: keep its position
+    end
     return t
 end
 
@@ -2914,8 +2932,22 @@ local function nav_build_list()
     local c = NAV_CLASSES[NV.cat]
     if not c then return end
     local p = get_player_obj()
-    local px, py = 0, 0
-    if p then local x, y = read_actor_pos(p); px, py = x or 0, y or 0 end
+    local px, py, pz = 0, 0, 0
+    if p then local x, y, z = read_actor_pos(p); px, py, pz = x or 0, y or 0, z or 0 end
+    if c.markers then
+        local ok, ms = pcall(M.minimap_markers, pz)
+        if ok and ms then
+            for _, m in ipairs(ms) do
+                if #NV.list < 60 then
+                    NV.list[#NV.list + 1] = { actor = m.actor, pos = { x = m.x, y = m.y, z = m.z },
+                        cat = c.name, name = m.label, walkcat = m.walkcat, known = true,
+                        d = math.sqrt((m.x - px) ^ 2 + (m.y - py) ^ 2) }
+                end
+            end
+        end
+        table.sort(NV.list, function(a, b) return a.d < b.d end)
+        return
+    end
     local list = nil
     pcall(function() list = FindAllOf(c.cls) end)
     if not list then return end
@@ -2951,7 +2983,7 @@ local function nav_announce(prefix)
     if not t then speak("No target"); return end
     local p = get_player_obj(); if not p then speak("No player"); return end
     local px, py, pz = read_actor_pos(p); if not px then speak("No position"); return end
-    local ox, oy, oz = read_actor_pos(t.actor)
+    local ox, oy, oz = NV.tpos(t)
     if not ox then speak("Target lost"); return end
     local dx, dy, dz = ox - px, oy - py, (oz or pz) - pz
     local d = math.floor(math.sqrt(dx * dx + dy * dy) + 0.5)
@@ -3311,8 +3343,9 @@ local function nav_info()
     if not t then speak("No target selected. Home and end pick a category, page up and down a target."); return end
     local p = get_player_obj(); if not p then speak("No player"); return end
     local px, py, pz = read_actor_pos(p)
-    local ox, oy, oz = read_actor_pos(t.actor)
+    local ox, oy, oz = NV.tpos(t)
     if not (px and ox) then speak("Target lost"); return end
+    oz = oz or pz
     local dx, dy, dz = ox - px, oy - py, (oz or pz) - pz
     local d = math.floor(math.sqrt(dx * dx + dy * dy) + 0.5)
     local lvl = "same level"
@@ -3336,8 +3369,11 @@ local function nav_walk_stop(msg)
     if msg then speak(msg) end
 end
 
-local function nav_walk_start()
+local function nav_walk_start(quiet)
     NV.ctrlkey_t = os.clock()
+    -- plain Backspace is also the GAME's cancel key ("Rück Zurück"): pressed in a menu,
+    -- a dialog or a scene it must do nothing here -- no walk, no "Scene running"
+    if quiet and (world_susp or M.explore_now == false) then return end
     if nav_walking then nav_walk_stop("Walk stopped"); return end
     if NV.route then NV.route = nil; speak("Routing cancelled"); return end
     if world_susp then speak("Scene running, try again after"); return end
@@ -3345,9 +3381,11 @@ local function nav_walk_start()
     if not t then speak("No target selected"); return end
     local p = get_player_obj(); if not p then speak("No player"); return end
     local px, py, pz = read_actor_pos(p)
-    local ox, oy, oz = read_actor_pos(t.actor)
+    local ox, oy, oz = NV.tpos(t)
     if not (px and ox) then speak("Target lost"); return end
-    NV.goal = { x = ox, y = oy, z = oz, cat = t.cat }
+    oz = oz or pz
+    NV.goal = { x = ox, y = oy, z = oz, cat = t.walkcat or t.cat }
+    NV.push = nil
     NV.retries = 0
     NV.bestgoal = nil
     NV.noimprove = 0
@@ -3363,7 +3401,9 @@ local function nav_walk_start()
 end
 
 nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arrow keys
-    if world_susp then
+    -- a menu / dialog / speech bubble came up (M.menu_now, from the pump): held arrow
+    -- keys would now move a menu cursor -- stop like for a scene
+    if world_susp or M.menu_now then
         -- scene/transition: end any walk or routing NOW and release the keys.
         -- (The driver runs outside the pump's gate, so it must check itself --
         -- it once kept keys held through a whole cutscene and the character
@@ -3376,7 +3416,11 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
             NV.unwedge = nil
             NV.held = nil
             pcall(function() shim.HoldKeys(false, false, false, false) end)
-            if waswalking then speak("Walk stopped") end
+            -- walking INTO an exit ends in its transition fade: that is the arrival,
+            -- and the new area announces itself -- say nothing then
+            local into_exit = NV.goal and NV.goal.cat == "exit" and (NV.push or (NV.lastgd or 1e9) < 450)
+            if waswalking and not into_exit then speak("Walk stopped") end
+            if into_exit then log("NAVWALK through exit") end
         end
         return
     end
@@ -3427,11 +3471,40 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
         NV.wp = NV.wp + 1
         wp = NV.path[NV.wp]
     end
+    local dx, dy
     if not wp then
-        nav_walk_stop("Arrived")
-        return
+        if not (NV.goal and NV.goal.cat == "exit") then
+            nav_walk_stop("Arrived")
+            return
+        end
+        -- EXIT: its trigger volume can sit past the last waypoint (the palace hall
+        -- door: "Arrived" 150 short of it, nothing happened). Keep walking on along
+        -- the approach direction for up to 2 s; the transition fade then ends the
+        -- walk silently (see the scene check above). No transition -> stop.
+        if not NV.push then
+            local n = #NV.path
+            local ax = NV.path[n].x - (NV.path[n - 1] or NV.path[n]).x
+            local ay = NV.path[n].y - (NV.path[n - 1] or NV.path[n]).y
+            if math.sqrt(ax * ax + ay * ay) < 1 then ax, ay = NV.goal.x - px, NV.goal.y - py end
+            NV.push = { till = now + 2.0, x = ax, y = ay }
+            log("NAVWALK push through exit")
+        end
+        if M.popup_said then
+            -- a door-type exit: the game shows its prompt ("Öffnen, E", spoken by
+            -- poll_action_popup) and waits for the key -- stop at the door
+            NV.push = nil
+            nav_walk_stop()   -- silent: the prompt speech says what to do
+            return
+        end
+        if now > NV.push.till then
+            NV.push = nil
+            nav_walk_stop("At the exit, no way through")
+            return
+        end
+        dx, dy = NV.push.x, NV.push.y
+    else
+        dx, dy = wp.x - px, wp.y - py
     end
-    local dx, dy = wp.x - px, wp.y - py
     local d = math.sqrt(dx * dx + dy * dy)
     if d < 1 then return end
     dx, dy = dx / d, dy / d
@@ -3476,7 +3549,25 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
     -- chasing the unreachable final meters caused endless circling
     if NV.goal then
         local gd = math.sqrt((px - NV.goal.x) ^ 2 + (py - NV.goal.y) ^ 2)
-        if gd < 170 then nav_walk_stop("Arrived"); return end
+        NV.lastgd = gd
+        if NV.goal.cat == "exit" then
+            -- exits are walked THROUGH (nav_drive pushes on past the last waypoint).
+            -- A seamless exit (same map, no fade) shows the new area banner instead:
+            -- that is the arrival -- stop quietly, the banner speaks for itself.
+            if (M.area_t or 0) > NV.started + 0.3 then
+                log("NAVWALK through exit (new area)")
+                nav_walk_stop()
+                return
+            end
+            -- a DOOR exit: near it the game shows its prompt ("Öffnen, E", already
+            -- spoken) and only the key opens it -- pushing on just wedges into the
+            -- door and re-routes (seen 2026-11-11 at the academy door). Stop there.
+            if M.popup_said and gd < 450 then
+                log("NAVWALK at door exit (prompt)")
+                nav_walk_stop()   -- silent: "Arrived" would cut off the prompt speech
+                return
+            end
+        elseif gd < 170 then nav_walk_stop("Arrived"); return end
     end
     local jump = math.sqrt((px - NV.prog.x) ^ 2 + (py - NV.prog.y) ^ 2)
     if jump > 900 then nav_walk_stop("Walk ended, went through a door"); return end
@@ -3595,16 +3686,16 @@ do
     end
     bindany({ "HOME" }, nil, function() pcall(nav_cat_cycle, -1) end, "nav category prev")
     bindany({ "END" },  nil, function() pcall(nav_cat_cycle, 1) end,  "nav category next")
-    -- BACKSPACE is the walk key (pairs with Ctrl+Backspace = info). Safe by
-    -- evidence: the game reads keys modifier-blind, and Ctrl+Backspace never
-    -- triggered anything in-game -- so plain Backspace is equally inert.
+    -- BACKSPACE is the walk key (pairs with Ctrl+Backspace = info). In the field the
+    -- game ignores it, but it is the game's CANCEL key in menus and dialogs ("Rück
+    -- Zurück"), so the plain binding only acts while exploring (nav_walk_start quiet).
     -- (Enter was unusable: Ctrl+Enter in front of an NPC opened their dialogue.)
     bindany({ "BACKSPACE", "BACK" }, nil, function()
         -- if UE4SS also fires plain binds while Ctrl is down, a Ctrl+Backspace
         -- (info) press must not ALSO start a walk: skip when a Ctrl-nav action
         -- just ran
         if os.clock() - NV.ctrlkey_t < 0.35 then return end
-        pcall(nav_walk_start)
+        pcall(nav_walk_start, true)   -- quiet outside exploration (Backspace = game cancel)
     end, "nav walk")
     bindany({ "BACKSPACE", "BACK" }, { ModifierKey.CONTROL }, function() pcall(nav_info) end,       "nav info")
     bindany({ "RETURN", "ENTER" },   { ModifierKey.CONTROL }, function() pcall(nav_walk_start) end, "nav walk alt")
@@ -3831,6 +3922,7 @@ M.poll_area_name = function()
     local key = area .. "|" .. (region or "")
     if key == M.area_said then return end
     M.area_said = key
+    M.area_t = os.clock()   -- a walk into an exit ends here (nav_walk_watch)
     log("AREA: " .. key)
     speak((region and region ~= "") and (area .. ", " .. region) or area, false)
 end
@@ -4306,6 +4398,8 @@ radar_pump = function(src)
     end
     local explore = (WS.px ~= nil) and (not world_susp) and (not menu_open) and (not talk_open)
     beacon_on, wall_on = explore, explore
+    M.explore_now = explore                  -- the Backspace walk key acts only while exploring
+    M.menu_now = menu_open or talk_open      -- nav_drive: a menu/bubble stops a running walk
     if explore ~= WS.explore then
         WS.explore = explore
         log("RADAR " .. (explore and "live (exploring)"
