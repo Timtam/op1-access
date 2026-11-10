@@ -3335,6 +3335,8 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
     if NV.unwedge then
         if now < NV.unwedge.till then
             NV.held = NV.unwedge.held
+            NV.held_t = NV.held_t or {}
+            for k in pairs(NV.held or {}) do NV.held_t[k] = now end
             pcall(function() shim.HoldKeys(NV.unwedge.u, NV.unwedge.d, NV.unwedge.l, NV.unwedge.r) end)
             return
         end
@@ -3387,6 +3389,11 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
     local r  = dy > 0.38
     local l  = dy < -0.38
     NV.held = { UP_ARROW = u or nil, DOWN_ARROW = dn or nil, LEFT_ARROW = l or nil, RIGHT_ARROW = r or nil }
+    -- remember WHEN each key was last ours: the keybind echo of a synthetic press can
+    -- arrive after we already let go again (a waypoint turn, or a diagonal flickering
+    -- around the 0.38 threshold) -- nav_walk_watch must not take that for the player
+    NV.held_t = NV.held_t or {}
+    for k in pairs(NV.held) do NV.held_t[k] = now end
     pcall(function() shim.HoldKeys(u, dn, l, r) end)
 end
 
@@ -3395,10 +3402,16 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
     local now = os.clock()
     -- manual override: an arrow press for a key WE are not synthetically holding
     -- means the player intervened (our own HoldKeys transitions echo into the
-    -- keybinds too, so held keys must not cancel)
+    -- keybinds too, so held keys must not cancel). The echo can lag behind our
+    -- release, so a key we held within the last 0.75 s also counts as ours --
+    -- otherwise routed walks cancelled themselves about a second in.
     if bump_arrow_t > NV.started + 0.5 and math.abs(bump_arrow_t - NV.ctrlkey_t) > 0.25 then
         local held = NV.held or {}
-        if not (bump_arrow_key and held[bump_arrow_key]) then
+        local last = bump_arrow_key and NV.held_t and NV.held_t[bump_arrow_key]
+        local ours = bump_arrow_key and (held[bump_arrow_key] or (last and bump_arrow_t - last < 0.75))
+        if not ours then
+            log(string.format("NAVWALK cancel: key=%s held=%s last_ours=%s", tostring(bump_arrow_key),
+                tostring(held[bump_arrow_key or ""]), last and string.format("%.2fs ago", bump_arrow_t - last) or "never"))
             nav_walk_stop("Walk cancelled")
             return
         end
