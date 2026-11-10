@@ -3,8 +3,9 @@
 A [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS)-based mod that adds
 screen-reader output to **Octopath Traveler** (PC / Steam, 2019, Unreal Engine
 4.18). Menus, system dialogs and the **character-select screen** are spoken
-through [Tolk](https://github.com/dkager/tolk), so it works with NVDA, JAWS,
-System Access, and the SAPI fallback.
+through [Prism](https://github.com/ethindp/prism), so it works with NVDA, JAWS,
+ZoomText and other screen readers, and falls back to Windows' own voices
+(OneCore / SAPI) when none is running.
 
 > **Status:** early but functional. The title-screen flow, menu/screen
 > announcements, system dialogs, and the character-select screen are spoken.
@@ -16,11 +17,13 @@ System Access, and the SAPI fallback.
 - All policy — *what* to speak and *when* — lives in Lua at
   `scripts/Mods/OP1Access/Scripts/main.lua`. It hooks the game's UI lifecycle
   (`KSUIManager`, `KSUserWidgetBase`) and polls widget state on a 50 ms loop.
-- Speech is emitted by **`OP1AccessShim.dll`**, a small Lua C extension that
-  loads **Tolk.dll** at runtime and forwards text to whichever screen reader is
-  running. (Tolk is LGPLv3 and loaded dynamically — never statically linked.)
+- Speech is emitted by **`OP1AccessShim.dll`**, a small Lua C extension with
+  **Prism** (MPL-2.0) linked in. It sends text (speech + braille) to whichever
+  screen reader is running, uses OneCore/SAPI speech when there is none, and
+  switches over if you start or restart your screen reader while the game runs.
+  Speech runs on its own thread, so a busy screen reader never stalls the game.
 
-Without the shim/Tolk the mod still runs and writes everything it *would* speak
+Without the shim the mod still runs and writes everything it *would* speak
 to `UE4SS.log` (lines prefixed `[OP1Access]`) — useful for development.
 
 ## Install
@@ -33,8 +36,13 @@ to `UE4SS.log` (lines prefixed `[OP1Access]`) — useful for development.
    ```
    scripts\build-shim.cmd
    ```
-   This compiles `Tolk.dll` + `OP1AccessShim.dll` and copies them, plus the
-   NVDA / System-Access bridge DLLs, into `Win64/Mods/OP1Access/Scripts/`.
+   This builds Prism as a static library (CMake + Ninja, both ship with Visual
+   Studio; Prism needs a C++23 compiler) and `OP1AccessShim.dll`, then copies
+   the shim into `Win64/Mods/OP1Access/Scripts/` and Prism's license notices
+   into `Win64/Mods/OP1Access/licenses/prism/`. No other speech DLLs are
+   needed. The script tells you how to fetch any missing dependency into
+   `tools\` (Prism goes to `tools\prism-src`, pinned to a commit). Players
+   need the current Microsoft Visual C++ Redistributable (x64).
 4. Copy the Lua mod into place — it is **not** auto-deployed by the build
    script:
    ```
@@ -138,14 +146,13 @@ use this.
 
 ```
 docs/         design docs, investigation reports, install state
-src/          C++ shim source (Tolk bridge, statically links Lua 5.4)
+src/          C++ shim source (statically links Lua 5.4 and Prism; Speech.cpp)
 scripts/      the Lua mod (Mods/OP1Access/) + build-shim.cmd
-third_party/  Tolk DLLs (vendored — LGPLv3, see THIRD_PARTY_LICENSES.md)
-tools/        UE4SS distribution and build inputs (gitignored)
+tools/        UE4SS distribution and build inputs, incl. prism-src (gitignored)
 ```
 
 ## License
 
 Mod code: **MIT** (see `LICENSE`).
-Tolk: **LGPLv3**, vendored unmodified — see `third_party/tolk/` and
+Prism: **MPL-2.0**, built unmodified from upstream and statically linked — see
 `THIRD_PARTY_LICENSES.md`.

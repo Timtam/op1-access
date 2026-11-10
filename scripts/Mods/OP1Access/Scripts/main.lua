@@ -3,7 +3,8 @@
 -- Architecture:
 --   Lua here drives policy (what to speak, when, in response to which game
 --   events). The C++ shim (OP1AccessShim.dll) statically links Lua 5.4 and
---   exposes Speak / Silence / IsSpeakingSupported, NVDA-backed.
+--   exposes Speak / Silence / IsSpeakingSupported, backed by Prism (NVDA,
+--   JAWS, ... or OneCore/SAPI when no screen reader runs).
 
 local M = {}
 
@@ -1188,7 +1189,8 @@ safe_register("/Script/Octopath_Traveler.KSUIManager:Close",      on_ui_manager_
 -- Phase 0 boot announce
 log("script loaded; shim=" .. tostring(shim ~= nil))
 if shim and shim.IsSpeakingSupported then
-    log("IsSpeakingSupported (NVDA running): " .. tostring(shim.IsSpeakingSupported()))
+    local backend = shim.DetectScreenReader and shim.DetectScreenReader()
+    log("speech backend: " .. tostring(backend) .. ", can speak: " .. tostring(shim.IsSpeakingSupported()))
 end
 speak("OP1 Access loaded")
 
