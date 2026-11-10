@@ -84,7 +84,7 @@ Source     g_src[MAX_SOURCES];
 float      g_lx = 0, g_ly = 0, g_lz = 0;   // listener world position
 std::mutex g_mtx;
 
-constexpr int NUM_CUES = 9;                 // cue types 0..8 (chest/exit/npc/building/shop/wall/bump/door/pathaction)
+constexpr int NUM_CUES = 10;                // cue types 0..9 (chest/exit/npc/building/shop/wall/bump/door/pathaction/talk)
 float* g_cueBuf[NUM_CUES] = { nullptr };    // decoded mono @ SR samples per category (null = generated tone)
 int    g_cueLen[NUM_CUES] = { 0 };
 
@@ -92,6 +92,7 @@ int    g_cueLen[NUM_CUES] = { 0 };
 constexpr int THUD_LEN  = (int)(0.15 * SR);  // generated fallback thud length (bump)
 constexpr int SWEEP_LEN = (int)(0.28 * SR);  // generated fallback chirp length (door)
 constexpr int CHIME_LEN = (int)(0.26 * SR);  // generated fallback chime length (path action available)
+constexpr int TALK_LEN  = (int)(0.12 * SR);  // generated fallback pop length (someone to talk to)
 int g_osCue = -1;
 int g_osPos = 0;
 
@@ -334,10 +335,22 @@ void render_block() {
             if (g_osCue >= 0 && g_osCue < NUM_CUES) {
                 const float* buf = g_cueBuf[g_osCue];
                 int len = buf ? g_cueLen[g_osCue]
-                              : (g_osCue == 7 ? SWEEP_LEN : (g_osCue == 8 ? CHIME_LEN : THUD_LEN));
+                              : (g_osCue == 7 ? SWEEP_LEN : (g_osCue == 8 ? CHIME_LEN
+                                 : (g_osCue == 9 ? TALK_LEN : THUD_LEN)));
                 for (int n = 0; n < FS && g_osPos < len; ++n, ++g_osPos) {
                     float s;
                     if (buf) s = buf[g_osPos] * 0.85f;
+                    else if (g_osCue == 9) {
+                        // talk fallback: a soft "pop" -- one short note gliding 700 -> 500 Hz
+                        // with a touch of 2nd harmonic, quick decay. Lighter and lower than
+                        // the two-note path-action chime, so the two never sound alike.
+                        const double t = (double)g_osPos / (double)SR;
+                        const double T = (double)TALK_LEN / (double)SR;
+                        const double phs = TWO_PI * (700.0 * t - 0.5 * (200.0 / T) * t * t);
+                        float e = (float)std::exp(-t * 30.0);
+                        if (g_osPos < (int)(0.003 * SR)) e *= (float)g_osPos / (float)(0.003 * SR);
+                        s = (float)(std::sin(phs) + 0.25 * std::sin(2.0 * phs)) * 0.30f * e;
+                    }
                     else if (g_osCue == 8) {
                         // path-action fallback: two-note chime G5 -> D6, each note with
                         // a fast attack and exponential decay (a "something to do here" ding)

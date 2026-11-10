@@ -227,6 +227,11 @@ local BLOCKING_CLASSES = {
     -- Provoke/Monster) -- dialog-like, read fine, but the radar must stay silent during them
     FieldCommandSearch_C = true, FieldCommandPurchase_C = true, FieldCommandLure_C = true,
     FieldCommandJudge_C = true, FieldCommandMonster_C = true,
+    -- focused while a path action plays out (user log 2026-11-10): the bubble manager
+    -- during the speech bubbles, the common dialog for the result boxes ("Ihr habt
+    -- neue Informationen gewonnen!") -- the radar came back between the boxes.
+    -- Active-stack only (not in SCENE_LABELS), so a cached copy can't block.
+    BalloonManagerBP_C = true, UICommonDialogBP_C = true,
 }
 
 -- ---------------------------------------------------------------------------
@@ -1579,6 +1584,12 @@ poll_dialog = function()
             pcall(function() panel = cinst.PlayerPanel_147 end)
             if panel then desc = read_text_block(panel, "PlayerDetail") end
         end
+        -- a path-action result panel under the dialog (Scrutinize: the NPC's age,
+        -- statement and the information gained) -- the dialog itself only says "OK"
+        if not desc and M.fc_result_text then
+            local okr, r = pcall(M.fc_result_text, inst)
+            if okr then desc = r end
+        end
         log(string.format("DLG open: caption=%s detail=%s buttons=[%s] focus=%s default=%s ef=%s desc=%s",
             tostring(caption), tostring(detail), table.concat(buttons, "|"),
             tostring(focus), tostring(default), tostring(ef), tostring(desc)))
@@ -1587,7 +1598,7 @@ poll_dialog = function()
         if caption ~= "" then parts[#parts + 1] = caption end
         if detail  ~= "" then parts[#parts + 1] = detail end
         if focused and focused ~= "" then parts[#parts + 1] = focused end  -- only the selected answer
-        if #parts > 0 then speak(table.concat(parts, ". ")) end
+        if #parts > 0 then speak(M.join_sentences(parts)) end
     elseif focus and focus >= 0 and focus ~= dlg_last_focus then
         dlg_last_focus = focus
         log(string.format("DLG focus -> %s = %s", tostring(focus), tostring(focused)))
@@ -2474,14 +2485,14 @@ local CAT_CUE = { chest = 0, exit = 1, npc = 2, building = 3, shop = 4 }  -- cat
 -- distance-driven ping rate). Missing files fall back to tones. Loaded once, lazily.
 local ASSET_DIR = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\OCTOPATH TRAVELER\\Octopath_Traveler\\Binaries\\Win64\\Mods\\OP1Access\\Assets\\"
 local CUE_FILE  = { [0] = "chest", [1] = "exit", [2] = "npc", [3] = "building", [4] = "shop", [5] = "wall", [6] = "bump", [7] = "door",
-                    [8] = "pathaction" }
+                    [8] = "pathaction", [9] = "talk" }
 local CUE_EXTS  = { "flac", "mp3", "wav" }   -- preference order; FLAC/MP3 keep files small
 local cues_loaded = false
 local function load_cues()
     if cues_loaded then return end
     if not (shim and shim.AudioLoadCue) then return end
     cues_loaded = true   -- once per session; changed files need a game restart
-    for ct = 0, 8 do
+    for ct = 0, 9 do
         for _, ext in ipairs(CUE_EXTS) do
             local ok = false
             pcall(function() ok = shim.AudioLoadCue(ct, ASSET_DIR .. CUE_FILE[ct] .. "." .. ext) end)
@@ -3762,6 +3773,24 @@ M.balloon_active = function()
     return n > 0
 end
 
+-- Nearest kept (talkable) NPC to the player within maxd units, same level. Exploring
+-- only (reads actor positions).
+M.nearest_npc = function(maxd)
+    local p = get_player_obj(); if not p then return nil end
+    local px, py, pz = read_actor_pos(p); if not px then return nil end
+    local best, bd = nil, maxd or 250
+    for _, b in ipairs(beacon_objs) do
+        if b.cat == "npc" then
+            local ox, oy, oz = read_actor_pos(b.actor)
+            if ox and math.abs((oz or pz) - pz) <= LEVEL_THRESH then
+                local d = math.sqrt((ox - px) ^ 2 + (oy - py) ^ 2)
+                if d < bd then best, bd = b.actor, d end
+            end
+        end
+    end
+    return best, bd
+end
+
 -- AREA NAME: entering an area shows a banner (MapNameNotificationWidget_C with
 -- TextRegionName "Flachland" + TextAreaName "Königliche Akademie von Atlasdamm").
 -- Speak "<area>, <region>" whenever that text changes -- also right after loading.
@@ -3856,42 +3885,227 @@ M.poll_action_popup = function()
     speak(key and (action .. ", " .. key) or action, false)
 end
 
--- PATH-ACTION AVAILABILITY (the on-screen hint sighted players get): the field-command
--- manager lists one FieldCommandEvent per action you could start right now, each with
--- its TargetCharacter. When a path action (any type but 0 = generic talk) appears, or
--- moves to another NPC: chime (cue 8: Assets/pathaction.flac|mp3|wav, else a generated
--- ding) + "Path action, <NPC name>", queued behind current speech. Called from the pump
--- only while exploring; a target already announced is not repeated after a menu/scene
--- (it is again once you walk away and come back, like the on-screen hint).
-M.PATH_CUE = 8   -- on M: the main chunk is near Lua's 200-local limit
-M.fcmd_poll = function()
+-- INTERACTION HINT (talk + path action). The game picks ONE character you would talk
+-- to: player.refTalkChara, set while you stand close to an NPC and FACE them (nil when
+-- you turn away). For that same pick the field-command manager fills ActiveCommandList
+-- with the path actions on offer (type 0 = plain talk; verified 2026-11-11: it fills
+-- the moment you face the NPC, ~2 s before J is pressed). Both settle in the same
+-- frame, so they are announced TOGETHER, once per NPC, after the pick held 0.25 s:
+--   talk only         -> cue 9 (Assets/talk.*, else a soft pop)   + "Talk, <name>"
+--   path action too   -> cue 8 (Assets/pathaction.*, else a chime) + "Path action, <name>"
+-- (every NPC with a path action can also be talked to, so the chime covers both).
+-- Not repeated while the pick stays, nor for an NPC announced < 4 s ago (turning back
+-- and forth); a path action that shows up later for the same NPC upgrades the hint
+-- once. A pick that was gone for > 2 s is announced again. Exploring only.
+M.PATH_CUE, M.TALK_CUE = 8, 9   -- on M: the main chunk is near Lua's 200-local limit
+M.interact_poll = function()
+    local now = os.clock()
+    local taddr = 0
+    local p = get_player_obj()
+    if p then pcall(function()
+        local o = p.refTalkChara
+        if o and o:IsValid() then taddr = o:GetAddress() end
+    end) end
+    local raw = {}
     local mgr = get_fcmd_mgr()
-    if not mgr then return end
-    local _, raw = read_active_commands(mgr)
+    if mgr then local _; _, raw = read_active_commands(mgr) end
     local has_path = false
     for _, b in ipairs(raw) do if b ~= 0 then has_path = true; break end end
-    local taddr = 0
-    if has_path then
-        pcall(function()
-            mgr.ActiveCommandList:ForEach(function(_, v)
-                if taddr ~= 0 then return end
-                local ev = v:get()
-                local t = ev and ev:IsValid() and ev.TargetCharacter
-                if t and t:IsValid() then taddr = t:GetAddress() end
-            end)
-        end)
+    -- the path target is the talk pick; without one (rare), the nearest NPC
+    local addr = taddr
+    if addr == 0 and has_path then
+        local npc = M.nearest_npc and M.nearest_npc(250)
+        if npc then pcall(function() addr = npc:GetAddress() end) end
     end
-    local sig = has_path and (string.format("%X", taddr) .. ":" .. table.concat(raw, ",")) or nil
-    if sig == M.fcmd_sig then return end
-    M.fcmd_sig = sig
-    log("PATHACTION " .. (sig and ("available " .. sig) or "none"))
-    if not sig then M.fcmd_said = nil; return end
-    if taddr ~= 0 and taddr == M.fcmd_said then return end
-    M.fcmd_said = taddr
-    if audio_inited then pcall(function() shim.AudioPlayCue(M.PATH_CUE) end) end
+    local sig = string.format("%X:%s", addr, has_path and table.concat(raw, ",") or "-")
+    if sig ~= M.ia_sig then
+        M.ia_sig, M.ia_t = sig, now
+        log(addr ~= 0 and string.format("INTERACT %X talk=%s path=%s", addr, tostring(taddr ~= 0),
+            has_path and table.concat(raw, ",") or "none") or "INTERACT none")
+    end
+    if addr == 0 then
+        if M.ia_said and now - M.ia_t > 2.0 then M.ia_said = nil end
+        return
+    end
+    if now - M.ia_t < 0.25 then return end
+    local s = M.ia_said
+    if s and s.addr == addr and (s.path or not has_path) then return end
+    local upgrade = s and s.addr == addr
+    M.ia_at = M.ia_at or {}
+    local recent = (not upgrade) and M.ia_at[addr] and (now - M.ia_at[addr] < 4.0)
+    M.ia_said = { addr = addr, path = has_path }
+    M.ia_at[addr] = now
+    if recent then return end
+    if audio_inited then
+        pcall(function() shim.AudioPlayCue(has_path and M.PATH_CUE or M.TALK_CUE) end)
+    end
     local nm
-    if taddr ~= 0 then pcall(function() nm = shim.NpcName(taddr) end) end
-    speak((nm and nm ~= "") and ("Path action, " .. nm) or "Path action", false)
+    pcall(function() nm = shim.NpcName(addr) end)
+    local what = has_path and "Path action" or "Talk"
+    speak((nm and nm ~= "") and (what .. ", " .. nm) or what, false)
+end
+
+-- PATH ACTION IN PROGRESS: the field-command manager's own state, polled by the radar
+-- gate so the radar stays silent for the WHOLE action (bubbles, result boxes and the
+-- gaps between them), not just while one of its screens has focus. Traced through a
+-- full Scrutinize on 2026-11-11 (FCSTATE log):
+--   menu choice       event=T start=T (play=T for a moment)   type=8
+--   result panel      event=F start=T                         type=8
+--   FinishFieldCommand event=T start=F, then bubbles + "new information" box
+--   last box closed   event=F start=F                         type=0
+-- so "IsFieldCommandEvent OR StartEventMode" spans exactly the action. PlayingCommand
+-- stays set afterwards (unusable). The FCSTATE line logs every change of these flags.
+M.fc_busy = function()
+    local mgr = get_fcmd_mgr()
+    if not mgr then return false end
+    local busy, st = false, ""
+    pcall(function()
+        local a, c = mgr.IsFieldCommandEvent, mgr.StartEventMode
+        st = string.format("event=%s start=%s type=%s", tostring(a), tostring(c),
+            tostring(mgr.ExecFieldCommandType))
+        busy = (a == true) or (c == true)
+    end)
+    if st ~= M.fc_state then M.fc_state = st; log("FCSTATE " .. st) end
+    return busy
+end
+
+-- Join spoken parts into sentences without doubling punctuation ("gewonnen!." /
+-- "Akademie.."): a part that already ends in . ! ? : is followed by a space only.
+M.join_sentences = function(parts)
+    local out = ""
+    for i, p in ipairs(parts) do
+        if i > 1 then out = out .. (out:match("[%.!?:]%s*$") and " " or ". ") end
+        out = out .. p
+    end
+    return out
+end
+
+-- PATH-ACTION RESULT PANEL. Scrutinize / Inquire show FieldCommandSearch_C under the
+-- shared confirm dialog: the NPC's age, their statement and the information gained.
+-- The dialog's NowParam only carries the "In Ordnung" button, so poll_dialog asks
+-- this for the panel text: "<name>. Alter: 41. Aussage: ... Information erhalten: ..."
+-- (SearchDetailPartsWidget_C via FieldCommandSearch_C.SearchDetail). Read once when
+-- the dialog opens -- never polled.
+M.fc_result_text = function(dlg)
+    local pick
+    local daddr = 0
+    pcall(function() daddr = dlg:GetAddress() end)
+    pcall(function()
+        local all = FindAllOf("FieldCommandSearch_C")
+        if not all then return end
+        for _, w in pairs(all) do
+            local ok = false
+            pcall(function() ok = w:IsValid() end)
+            if ok then
+                local ta = 0
+                pcall(function() local td = w.TmpDialog; if td and td:IsValid() then ta = td:GetAddress() end end)
+                if ta ~= 0 and ta == daddr then pick = w; return end
+                if not pick and widget_is_visible(w) then pick = w end
+            end
+        end
+    end)
+    if not pick then return nil end
+    local sd
+    pcall(function() sd = pick.SearchDetail end)
+    if not sd then return nil end
+    local parts = {}
+    local mgr = get_fcmd_mgr()
+    if mgr then pcall(function()
+        local t = mgr.TargetCharacter
+        if t and t:IsValid() then
+            local nm = shim.NpcName(t:GetAddress())
+            if nm and nm ~= "" then parts[#parts + 1] = nm end
+        end
+    end) end
+    local function shown(field)        -- root widget not Collapsed(1) / Hidden(2)
+        local v = 0
+        pcall(function() v = sd[field].Visibility end)
+        return v ~= 1 and v ~= 2
+    end
+    local agecap, age = read_text_block(sd, "NPCAgeText"), read_text_block(sd, "NPCAge")
+    if age and shown("AgeRoot") then parts[#parts + 1] = (agecap and (agecap .. " ") or "") .. age end
+    local hist = read_text_block(sd, "HistoryText")
+    if hist then parts[#parts + 1] = hist end
+    local infos = {}
+    for i, f in ipairs({ "InformationText01", "InformationText02" }) do
+        local t = read_text_block(sd, f)
+        if t and shown("Information0" .. i) then infos[#infos + 1] = t end
+    end
+    if #infos > 0 then
+        local cap = read_text_block(sd, "InformationCaptionText")
+        parts[#parts + 1] = (cap and (cap .. ": ") or "") .. table.concat(infos, ", ")
+    end
+    local out = M.join_sentences(parts)
+    return out ~= "" and out or nil
+end
+
+-- MINIMAP MARKERS: what sighted players read off the radar map (bottom right) --
+-- green markers on the NPCs the current objective points at, other marked NPCs, and
+-- the exit drawn green toward the objective. RadarMap_C.RadarIconList holds one
+-- RadarMapIconWidgets_C per icon; IconParam gives the type (ERADARMAP_ICON_TYPE), the
+-- WORLD position (X,Y), the actor it is pinned to (RegistObjectName = the actor's
+-- object name) and, for exits, the next field. Seen 2026-11-11 (Atlasdam): 6 =
+-- objective NPC, 16 = other marked NPC, 14 = exit toward the objective (IsGreen), 15 =
+-- plain exit (skipped: the "exit" category has those), 0 = unused slot. Called on
+-- demand (category cycling), exploring only.
+M.MARKER_KIND = { [6] = "objective", [16] = "marked", [14] = "exit toward objective" }
+M.minimap_markers = function(pz)
+    local rm = M.radarmap
+    local ok = false
+    if rm then pcall(function() ok = rm:IsValid() end) end
+    if not ok then
+        rm = nil
+        pcall(function() local x = FindFirstOf("RadarMap_C"); if x and x:IsValid() then rm = x end end)
+        M.radarmap = rm
+    end
+    if not rm then return {} end
+    local icons = {}
+    pcall(function()
+        rm.RadarIconList:ForEach(function(_, v)
+            local w = v:get()
+            if not (w and w:IsValid()) then return end
+            local t, vis, green, reg, x, y = 0, false, false, "", nil, nil
+            pcall(function() t = w.IconParam.IconType end)
+            pcall(function() vis = w.IconParam.IsVisibility end)
+            pcall(function() green = w.IsGreen end)
+            pcall(function() reg = w.IconParam.RegistObjectName:ToString() end)
+            pcall(function() x = w.IconParam.Position.X; y = w.IconParam.Position.Y end)
+            if type(t) ~= "number" or t == 0 or not vis or not x then return end
+            if t == 15 and not green then return end
+            icons[#icons + 1] = { type = t, green = green, reg = reg, x = x, y = y }
+        end)
+    end)
+    if #icons == 0 then return {} end
+    -- pin NPC icons to their actor (NPCs wander; the icon follows the actor)
+    local byname = {}
+    pcall(function()
+        local list = FindAllOf("KSFieldNPCCharacter_C")
+        if list then for _, o in pairs(list) do
+            local okv = false
+            pcall(function() okv = o:IsValid() end)
+            if okv then pcall(function() byname[o:GetFName():ToString()] = o end) end
+        end end
+    end)
+    local out = {}
+    for _, ic in ipairs(icons) do
+        local actor = (ic.reg ~= "" and ic.reg ~= "None") and byname[ic.reg] or nil
+        local x, y, z = ic.x, ic.y, pz
+        if actor then
+            local ax, ay, az = read_actor_pos(actor)
+            if ax then x, y, z = ax, ay, az else actor = nil end
+        end
+        local kind = M.MARKER_KIND[ic.type] or ((ic.type == 14 or ic.type == 15) and "exit toward objective")
+            or ("marker type " .. ic.type)
+        local label = kind
+        if actor then
+            local nm
+            pcall(function() nm = shim.NpcName(actor:GetAddress()) end)
+            if nm and nm ~= "" then label = nm .. ", " .. kind end
+        end
+        out[#out + 1] = { actor = actor, x = x, y = y, z = z, label = label,
+            walkcat = (ic.type == 14 or ic.type == 15) and "exit" or nil }
+    end
+    return out
 end
 
 radar_pump = function(src)
@@ -4055,6 +4269,22 @@ radar_pump = function(src)
             log("ACTIVE screen: " .. tostring(acls) .. (acls and BLOCKING_CLASSES[acls] and " (blocking)" or ""))
         end
         if acls and BLOCKING_CLASSES[acls] then menu_open = true end
+        -- choosing an action in the J menu leaves ~1 s with no focused screen before
+        -- the first bubble: keep the radar down across that gap
+        if acls == "FieldCommandMenu_C" then M.fc_menu_t = now end
+        if not menu_open and now - (M.fc_menu_t or -10) < 1.5 then menu_open = true end
+        -- the field-command manager's own "a path action is playing" flag covers the
+        -- whole action, gaps between its boxes included (M.fc_busy). Failsafe: a flag
+        -- that never clears must not mute the radar for good -- after 30 s it is ignored.
+        do
+            local okf, busy = pcall(M.fc_busy)
+            if okf and busy then
+                M.fc_busy_since = M.fc_busy_since or now
+                if not menu_open and now - M.fc_busy_since < 30 then menu_open = true end
+            else
+                M.fc_busy_since = nil
+            end
+        end
         if not menu_open then
             for i = 1, #scene_widgets do
                 local e = scene_widgets[i]
@@ -4112,7 +4342,7 @@ radar_pump = function(src)
             pcall(wall_step)
         end
         pcall(nav_tick)
-        pcall(M.fcmd_poll)   -- path-action availability hint
+        pcall(M.interact_poll)   -- talk / path-action hint
     end
     if pump_count % 30 == 1 then pcall(arm_pump_tickhook) end
     -- self-heal: LoopAsyncs can die on level load; if ours has gone quiet, start a
