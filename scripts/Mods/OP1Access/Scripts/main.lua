@@ -3762,9 +3762,10 @@ M.poll_area_name = function()
         w = M.area_widget
         if not w then return end
     end
-    -- plain property reads (TextBlock.Text) -- no UFunction call on the banner. The
-    -- first version used GetText(); in that run the game stopped taking input after
-    -- the load (banner stuck, Escape dead) and was fine with the poll off.
+    -- plain property reads (TextBlock.Text): lighter than calling GetText() on the
+    -- banner every few pumps. (A test run where the game seemed to stop taking input
+    -- after GetText() polling turned out to be the keyboard focus sitting in another
+    -- window, not this code.)
     local area, region
     pcall(function() area = w.TextAreaName.Text:ToString() end)
     pcall(function() region = w.TextRegionName.Text:ToString() end)
