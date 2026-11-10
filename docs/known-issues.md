@@ -39,8 +39,6 @@ later save, these are untested:
 
 ## Missing read-outs (sighted players get these on screen)
 
-- **Area names.** Entering an area shows a banner, e.g. "Flachland – Königliche Akademie
-  von Atlasdamm". The mod only says "N objects here".
 - **Interaction prompts.** Standing right at a door shows "E Öffnen". Nothing tells a
   blind player that the door can be opened, or that E (not Enter) does it.
 

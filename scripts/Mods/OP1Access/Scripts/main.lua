@@ -3741,6 +3741,49 @@ M.balloon_active = function()
     return n > 0
 end
 
+-- AREA NAME: entering an area shows a banner (MapNameNotificationWidget_C with
+-- TextRegionName "Flachland" + TextAreaName "Königliche Akademie von Atlasdamm").
+-- Speak "<area>, <region>" whenever that text changes -- also right after loading.
+-- Read from the pump only while the world isn't suspended (never mid-fade); the
+-- widget is cached and re-found at most every 2 s.
+M.poll_area_name = function()
+    local w = M.area_widget
+    local ok = false
+    if w then pcall(function() ok = w:IsValid() end) end
+    if not ok then
+        M.area_widget = nil
+        local now = os.clock()
+        if now - (M.area_find_t or -10) < 2.0 then return end
+        M.area_find_t = now
+        pcall(function()
+            local x = FindFirstOf("MapNameNotificationWidget_C")
+            if x and x:IsValid() then M.area_widget = x end
+        end)
+        w = M.area_widget
+        if not w then return end
+    end
+    -- plain property reads (TextBlock.Text) -- no UFunction call on the banner. The
+    -- first version used GetText(); in that run the game stopped taking input after
+    -- the load (banner stuck, Escape dead) and was fine with the poll off.
+    local area, region
+    pcall(function() area = w.TextAreaName.Text:ToString() end)
+    pcall(function() region = w.TextRegionName.Text:ToString() end)
+    if not area or area == "" then return end
+    -- the banner's separator is part of the region text ("Flachland –"); strip a
+    -- trailing dash as a whole UTF-8 sequence (byte classes would eat umlauts)
+    if region then
+        region = region:gsub("%s+$", "")
+        for _, sep in ipairs({ "\u{2013}", "\u{2014}", "-" }) do
+            if region:sub(-#sep) == sep then region = region:sub(1, -#sep - 1):gsub("%s+$", ""); break end
+        end
+    end
+    local key = area .. "|" .. (region or "")
+    if key == M.area_said then return end
+    M.area_said = key
+    log("AREA: " .. key)
+    speak((region and region ~= "") and (area .. ", " .. region) or area, false)
+end
+
 -- PATH-ACTION AVAILABILITY (the on-screen hint sighted players get): the field-command
 -- manager lists one FieldCommandEvent per action you could start right now, each with
 -- its TargetCharacter. When a path action (any type but 0 = generic talk) appears, or
@@ -3928,6 +3971,7 @@ radar_pump = function(src)
     -- so this fires only for the screen actually on display.
     local menu_open, talk_open = false, false
     if not world_susp then
+        if pump_count % 3 == 0 then pcall(M.poll_area_name) end
         -- Immediate check: the focused screen (active stack) being a blocking menu mutes
         -- the radar at once -- the scene_widgets scan below only sees it after the ~5Hz
         -- registry scan runs, which left a lag (e.g. the J path-action menu kept the radar
