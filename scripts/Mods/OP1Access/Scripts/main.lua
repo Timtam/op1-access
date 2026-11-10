@@ -3992,11 +3992,11 @@ end
 M.PATH_CUE, M.TALK_CUE = 8, 9   -- on M: the main chunk is near Lua's 200-local limit
 M.interact_poll = function()
     local now = os.clock()
-    local taddr = 0
+    local taddr, tobj = 0, nil
     local p = get_player_obj()
     if p then pcall(function()
         local o = p.refTalkChara
-        if o and o:IsValid() then taddr = o:GetAddress() end
+        if o and o:IsValid() then taddr = o:GetAddress(); tobj = o end
     end) end
     local raw = {}
     local mgr = get_fcmd_mgr()
@@ -4028,11 +4028,21 @@ M.interact_poll = function()
     M.ia_said = { addr = addr, path = has_path }
     M.ia_at[addr] = now
     if recent then return end
+    local nm
+    pcall(function() nm = shim.NpcName(addr) end)
+    if (not nm or nm == "") and tobj and M.marker_kind_of then
+        -- no NPC name: maybe a minimap-marked object -- the save point's book is
+        -- the talk pick at a save point (Enter opens "Speichern")
+        local okk, kind = pcall(M.marker_kind_of, tobj)
+        if okk and kind == "save point" then
+            if audio_inited then pcall(function() shim.AudioPlayCue(M.TALK_CUE) end) end
+            speak("Save point", false)
+            return
+        end
+    end
     if audio_inited then
         pcall(function() shim.AudioPlayCue(has_path and M.PATH_CUE or M.TALK_CUE) end)
     end
-    local nm
-    pcall(function() nm = shim.NpcName(addr) end)
     local what = has_path and "Path action" or "Talk"
     speak((nm and nm ~= "") and (what .. ", " .. nm) or what, false)
 end
@@ -4131,16 +4141,52 @@ M.fc_result_text = function(dlg)
     return out ~= "" and out or nil
 end
 
--- MINIMAP MARKERS: what sighted players read off the radar map (bottom right) --
--- green markers on the NPCs the current objective points at, other marked NPCs, and
--- the exit drawn green toward the objective. RadarMap_C.RadarIconList holds one
--- RadarMapIconWidgets_C per icon; IconParam gives the type (ERADARMAP_ICON_TYPE), the
--- WORLD position (X,Y), the actor it is pinned to (RegistObjectName = the actor's
--- object name) and, for exits, the next field. Seen 2026-11-11 (Atlasdam): 6 =
--- objective NPC, 16 = other marked NPC, 14 = exit toward the objective (IsGreen), 15 =
--- plain exit (skipped: the "exit" category has those), 0 = unused slot. Called on
--- demand (category cycling), exploring only.
-M.MARKER_KIND = { [6] = "objective", [16] = "marked", [14] = "exit toward objective" }
+-- MINIMAP MARKERS: what sighted players read off the radar map (bottom right).
+-- RadarMap_C.RadarIconList holds one RadarMapIconWidgets_C per icon; IconParam gives
+-- the type (ERADARMAP_ICON_TYPE), the WORLD position (X,Y), the actor it is pinned to
+-- (RegistObjectName = the actor's object name) and, for exits, the next field.
+-- Identified 2026-11-11 in Atlasdam from full-resolution screenshots of the minimap:
+--   5  = white "!"  -- a hidden item revealed by a path action (the old woman's
+--        Scrutinize gave "Ein verborgenes Objekt"; the "!" appeared at that spot)
+--   6  = green star with a ripple -- an NPC the current objective points at (the
+--        same NPCs wear the green speech bubble, PlayEmotionType 15)
+--   14 = the exit drawn green (toward the objective)
+--   15 = plain exits (white house / mountain) -- skipped, the "exit" category has them
+--   16 = quill -- a save point (book on a lectern; Enter opens "Speichern")
+--   0  = unused slot
+-- Called on demand (category cycling), exploring only.
+M.MARKER_KIND = { [5] = "hidden item", [6] = "objective", [14] = "exit toward objective",
+                  [16] = "save point" }
+
+-- The marker kind pinned to an actor (by its object name), or nil. Used to name the
+-- talk pick when it has no NPC name (a save point's book). Scans the ~16 icons.
+M.marker_kind_of = function(actor)
+    local rm = M.radarmap
+    local ok = false
+    if rm then pcall(function() ok = rm:IsValid() end) end
+    if not ok then
+        rm = nil
+        pcall(function() local x = FindFirstOf("RadarMap_C"); if x and x:IsValid() then rm = x end end)
+        M.radarmap = rm
+    end
+    if not (rm and actor) then return nil end
+    local fname
+    pcall(function() fname = actor:GetFName():ToString() end)
+    if not fname then return nil end
+    local kind
+    pcall(function()
+        rm.RadarIconList:ForEach(function(_, v)
+            if kind then return end
+            local w = v:get()
+            if not (w and w:IsValid()) then return end
+            local reg, t
+            pcall(function() reg = w.IconParam.RegistObjectName:ToString() end)
+            pcall(function() t = w.IconParam.IconType end)
+            if reg == fname then kind = M.MARKER_KIND[t] end
+        end)
+    end)
+    return kind
+end
 M.minimap_markers = function(pz)
     local rm = M.radarmap
     local ok = false
