@@ -3,26 +3,32 @@
 Problems noticed in existing features that are not fixed yet. Newest first. When one
 gets fixed, delete its entry (the commit message keeps the history).
 
-## Needs a save with path actions unlocked
+## Path actions
 
-The only test save is the Cyrus autosave at ~27 min, before path actions unlock (the
-objective is still "Zur Bibliothek gehen"; J does nothing there). Until there is a
-later save, these are untested:
+Tested 2026-11-11 with Cyrus' Scrutinize ("Studieren") only. The hint, the radar gate
+and the result reading are verified for that one action.
 
-- **Path-action hint** (chime + "Path action, <name>"). It relies on the field-command
-  manager's `ActiveCommandList` filling when you get close to an NPC. With path actions
-  locked the list stays empty everywhere. Check: `PATHACTION available …` lines in
-  `UE4SS.log` next to NPCs. If none appear, the list is not proximity-based and the hint
-  needs another signal.
-- **Radar during path-action bubbles.** The speech-bubble gate is verified with normal
-  NPC dialogue; that path-action conversations use the same `BalloonManager` balloons
-  is likely but unconfirmed. Check: `RADAR idle (talk)` while a path-action bubble is up.
-- **Path-action result screens** (`FieldCommandSearch_C`, …) only mute the radar while
-  they are the focused screen. They are deliberately not registered via `UIOpen`: if
-  they still read as visible after closing (some widgets do), the radar would stay
-  muted for good.
-- **Ctrl+F9 action names** for enum values 5–8 (Guide/Allure/Inquire/Scrutinize) are
-  inferred from the event class names, not observed.
+- **Other path actions' result screens are not read.** Only Scrutinize's panel
+  (`FieldCommandSearch_C` → `SearchDetailPartsWidget_C`) is read when its dialog opens.
+  Purchase/Steal (`FieldCommandPurchase_C`, item lists), Guide/Allure
+  (`FieldCommandLure_C`), Inquire (`FieldCommandJudge_C`?) and Provoke
+  (`FieldCommandMonster_C`) need their own readers once a save with those travelers
+  exists. The radar gate already covers them (it uses the manager's flags).
+- **"Talk, <name>" hint and its sound were never heard by a person.** With Cyrus nearly
+  every NPC offers Scrutinize, so in testing the path-action chime played every time; the
+  talk-only branch only ran for the save point ("Save point" + the generated pop,
+  cue 9). Check the pop's loudness and character against the chime.
+- **Ctrl+F9 action names** for enum values 5–7 (Guide/Allure/Inquire) are inferred from
+  the event class names, not observed. 8 = Scrutinize is confirmed ("Studieren").
+
+## Menus
+
+- **The save screen at a save point is not read.** Pressing Enter at a save point (the
+  book on a lectern, "save point" in the marker category) opens "Speichern", but the
+  game runs it inside an event, and the menu poller pauses during events
+  (`M.menu_unsafe`, a crash guard). The slots and the cursor stay silent. Escape or
+  Backspace leaves it. A fix needs a reader that only uses the active stack and plain
+  property reads while an event is up.
 
 ## Navigation
 
@@ -32,13 +38,13 @@ later save, these are untested:
   13-waypoint "traced route, upstairs", so the search budget looks too small for long
   multi-level routes. From a wedged corner it fails at once (`pops=1`: the start cell
   itself counts as blocked).
-- **Premature "Arrived".** Seen once in the academy hall: "Routing to building, 790" was
-  followed by "Arrived" one second later without getting there. The target was on the
-  upper floor. Suspect: the 170-unit arrival radius in `nav_walk_watch` compares 2D
-  distance to a goal on another level, or the route ends at the closest reachable cell.
-
-## Menus
-
-- **"Save and load" is spoken again after confirming a load.** Picking "Ja" in "Die
-  ausgewählten Spieldaten laden?" re-announces the load list just before the game
-  starts loading.
+- **Premature "Arrived" with a target on another floor.** Seen once in the academy hall:
+  "Routing to building, 790" was followed by "Arrived" one second later without getting
+  there; the target was on the upper floor. Suspect: the 170-unit arrival radius in
+  `nav_walk_watch` compares 2D distance only. (The exit case — "Arrived" 150 short of a
+  trigger behind the last waypoint — is fixed: exits are walked through.)
+- **Entering a door after "Öffnen, E" can need a sideways step.** At the academy door, E
+  opened it but walking up hit the door frame until the character stepped left onto the
+  door's center line. The walker stops where the prompt appears, which can be off-center.
+- **A menu opening mid-walk should stop the walk** (`M.menu_now` in `nav_drive`) —
+  written, not yet seen in-game.
