@@ -37,11 +37,6 @@ later save, these are untested:
   upper floor. Suspect: the 170-unit arrival radius in `nav_walk_watch` compares 2D
   distance to a goal on another level, or the route ends at the closest reachable cell.
 
-## Missing read-outs (sighted players get these on screen)
-
-- **Interaction prompts.** Standing right at a door shows "E Öffnen". Nothing tells a
-  blind player that the door can be opened, or that E (not Enter) does it.
-
 ## Menus
 
 - **"Save and load" is spoken again after confirming a load.** Picking "Ja" in "Die

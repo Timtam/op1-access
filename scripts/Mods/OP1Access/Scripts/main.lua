@@ -3784,6 +3784,56 @@ M.poll_area_name = function()
     speak((region and region ~= "") and (area .. ", " .. region) or area, false)
 end
 
+-- ACTION PROMPT: standing right at a door (and similar) shows a prompt such as
+-- "[E] Öffnen" (ActionPopupWidget_C, one shared instance). Visible = isEnable and
+-- Visibility 0; ShowHorizontalBox holds the key glyph (Image_Text, a circled letter
+-- like "Ⓔ") and the action text ("Öffnen"). Speak "Öffnen, E" when it appears or
+-- changes; nothing when it goes away. Property reads only, cached widget.
+M.poll_action_popup = function()
+    local w = M.popup_widget
+    local ok = false
+    if w then pcall(function() ok = w:IsValid() end) end
+    if not ok then
+        M.popup_widget = nil
+        local now = os.clock()
+        if now - (M.popup_find_t or -10) < 2.0 then return end
+        M.popup_find_t = now
+        pcall(function()
+            local x = FindFirstOf("ActionPopupWidget_C")
+            if x and x:IsValid() then M.popup_widget = x end
+        end)
+        w = M.popup_widget
+        if not w then return end
+    end
+    local shown = false
+    pcall(function() shown = (w.isEnable == true) and (w.Visibility == 0) end)
+    if not shown then M.popup_said = nil; return end
+    local keyglyph, action = nil, nil
+    pcall(function() keyglyph = w.Image_Text.Text:ToString() end)
+    pcall(function()
+        w.ShowHorizontalBox.Slots:ForEach(function(_, s)
+            if action then return end
+            local t
+            pcall(function() t = s:get().Content.Text:ToString() end)
+            if t and t ~= "" and t ~= keyglyph then action = t end
+        end)
+    end)
+    if not action then return end
+    -- circled letters/digits are the key captions (Ⓔ = E); other glyphs (gamepad
+    -- buttons) are skipped rather than read as symbols
+    local key
+    pcall(function()
+        local cp = utf8.codepoint(keyglyph or "", 1)
+        if cp >= 0x24B6 and cp <= 0x24CF then key = string.char(cp - 0x24B6 + 65)
+        elseif cp >= 0x2460 and cp <= 0x2468 then key = tostring(cp - 0x2460 + 1) end
+    end)
+    local sig = action .. "|" .. (key or "")
+    if sig == M.popup_said then return end
+    M.popup_said = sig
+    log("PROMPT: " .. sig)
+    speak(key and (action .. ", " .. key) or action, false)
+end
+
 -- PATH-ACTION AVAILABILITY (the on-screen hint sighted players get): the field-command
 -- manager lists one FieldCommandEvent per action you could start right now, each with
 -- its TargetCharacter. When a path action (any type but 0 = generic talk) appears, or
@@ -3972,6 +4022,7 @@ radar_pump = function(src)
     local menu_open, talk_open = false, false
     if not world_susp then
         if pump_count % 3 == 0 then pcall(M.poll_area_name) end
+        if pump_count % 2 == 1 then pcall(M.poll_action_popup) end
         -- Immediate check: the focused screen (active stack) being a blocking menu mutes
         -- the radar at once -- the scene_widgets scan below only sees it after the ~5Hz
         -- registry scan runs, which left a lag (e.g. the J path-action menu kept the radar
