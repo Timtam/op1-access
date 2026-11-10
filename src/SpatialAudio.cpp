@@ -84,13 +84,14 @@ Source     g_src[MAX_SOURCES];
 float      g_lx = 0, g_ly = 0, g_lz = 0;   // listener world position
 std::mutex g_mtx;
 
-constexpr int NUM_CUES = 8;                 // cue types 0..7 (chest/exit/npc/building/shop/wall/bump/door)
+constexpr int NUM_CUES = 9;                 // cue types 0..8 (chest/exit/npc/building/shop/wall/bump/door/pathaction)
 float* g_cueBuf[NUM_CUES] = { nullptr };    // decoded mono @ SR samples per category (null = generated tone)
 int    g_cueLen[NUM_CUES] = { 0 };
 
 // one-shot (non-looping, 2D) cue, e.g. the wall-bump. -1 = nothing playing.
 constexpr int THUD_LEN  = (int)(0.15 * SR);  // generated fallback thud length (bump)
 constexpr int SWEEP_LEN = (int)(0.28 * SR);  // generated fallback chirp length (door)
+constexpr int CHIME_LEN = (int)(0.26 * SR);  // generated fallback chime length (path action available)
 int g_osCue = -1;
 int g_osPos = 0;
 
@@ -332,10 +333,23 @@ void render_block() {
             std::lock_guard<std::mutex> lk(g_mtx);
             if (g_osCue >= 0 && g_osCue < NUM_CUES) {
                 const float* buf = g_cueBuf[g_osCue];
-                int len = buf ? g_cueLen[g_osCue] : (g_osCue == 7 ? SWEEP_LEN : THUD_LEN);
+                int len = buf ? g_cueLen[g_osCue]
+                              : (g_osCue == 7 ? SWEEP_LEN : (g_osCue == 8 ? CHIME_LEN : THUD_LEN));
                 for (int n = 0; n < FS && g_osPos < len; ++n, ++g_osPos) {
                     float s;
                     if (buf) s = buf[g_osPos] * 0.85f;
+                    else if (g_osCue == 8) {
+                        // path-action fallback: two-note chime G5 -> D6, each note with
+                        // a fast attack and exponential decay (a "something to do here" ding)
+                        const int half = CHIME_LEN * 2 / 5;
+                        const bool second = g_osPos >= half;
+                        const int  pos = second ? g_osPos - half : g_osPos;
+                        const double f = second ? 1174.7 : 784.0;
+                        const double t = (double)pos / (double)SR;
+                        float e = (float)std::exp(-t * (second ? 14.0 : 22.0));
+                        if (pos < (int)(0.004 * SR)) e *= (float)pos / (float)(0.004 * SR);   // de-click attack
+                        s = (float)std::sin(TWO_PI * f * t) * 0.35f * e;
+                    }
                     else if (g_osCue == 7) {
                         // door/transition fallback: rising chirp 280->720 Hz, half-sine envelope
                         double t = (double)g_osPos / (double)SR;

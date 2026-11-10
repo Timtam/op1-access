@@ -2065,9 +2065,13 @@ end)
 -- confirm the data path before wiring an automatic "you can interact" announce.
 -- Ctrl+F9 chosen for zero game-control conflict; we'll pick an ergonomic key once
 -- it's proven.
+-- KSFIeldCommandType (UE4SS_ObjectDump): eGeneric=0, ePurchase=1, eSteal=2, eBattle=3,
+-- eMonster=4, eBlessing=5, eLure=6, eExamination=7, eSearch=8. The traveler names are
+-- inferred from the FieldCommandEvent* classes (Lead/Lure/Hear/Search/...); the J menu
+-- reads the game's own localized labels, these English names only serve this probe.
 local FIELD_CMD_NAME = {
     [0] = "Talk", [1] = "Purchase", [2] = "Steal", [3] = "Challenge",
-    [4] = "Provoke", [5] = "Blessing", [6] = "Guide", [7] = "Examine", [8] = "Inquire",
+    [4] = "Provoke", [5] = "Guide", [6] = "Allure", [7] = "Inquire", [8] = "Scrutinize",
 }
 local fcmd_mgr = nil
 local function get_fcmd_mgr()
@@ -2447,14 +2451,15 @@ local CAT_CUE = { chest = 0, exit = 1, npc = 2, building = 3, shop = 4 }  -- cat
 -- mod's Assets/ folder and they replace the generated tones (played at the same
 -- distance-driven ping rate). Missing files fall back to tones. Loaded once, lazily.
 local ASSET_DIR = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\OCTOPATH TRAVELER\\Octopath_Traveler\\Binaries\\Win64\\Mods\\OP1Access\\Assets\\"
-local CUE_FILE  = { [0] = "chest", [1] = "exit", [2] = "npc", [3] = "building", [4] = "shop", [5] = "wall", [6] = "bump", [7] = "door" }
+local CUE_FILE  = { [0] = "chest", [1] = "exit", [2] = "npc", [3] = "building", [4] = "shop", [5] = "wall", [6] = "bump", [7] = "door",
+                    [8] = "pathaction" }
 local CUE_EXTS  = { "flac", "mp3", "wav" }   -- preference order; FLAC/MP3 keep files small
 local cues_loaded = false
 local function load_cues()
     if cues_loaded then return end
     if not (shim and shim.AudioLoadCue) then return end
     cues_loaded = true   -- once per session; changed files need a game restart
-    for ct = 0, 7 do
+    for ct = 0, 8 do
         for _, ext in ipairs(CUE_EXTS) do
             local ok = false
             pcall(function() ok = shim.AudioLoadCue(ct, ASSET_DIR .. CUE_FILE[ct] .. "." .. ext) end)
@@ -3686,6 +3691,78 @@ end
 -- instead of the ~5Hz game-thread pump (which made the title menu read seconds late).
 M.scan_scene = scan_scene_registry
 
+-- SPEECH BUBBLES: path-action dialogue plays in balloons (BalloonManager) WITHOUT the
+-- event system, so IsEventPlaying stays false and the radar kept ringing under the
+-- conversation. A balloon in use (UseBalloons, not ended) = a conversation is on
+-- screen. EBalloonType is NORMAL/ANGER/THINKING/DEEP_THINKING only -- the "..." talk
+-- hint over NPCs is an emotion icon, not a balloon, so walking past NPCs stays live.
+-- The manager is a persistent UI widget; cached, re-found at most every 2 s. Only
+-- called from the pump's gate when the world isn't suspended (never mid-fade).
+M.balloon_active = function()
+    local bm = M.balloon_mgr
+    local okb = false
+    if bm then pcall(function() okb = bm:IsValid() end) end
+    if not okb then
+        M.balloon_mgr = nil
+        local now = os.clock()
+        if now - (M.balloon_find_t or -10) < 2.0 then return false end
+        M.balloon_find_t = now
+        pcall(function()
+            local x = FindFirstOf("BalloonManagerBP_C")
+            if not (x and x:IsValid()) then x = FindFirstOf("BalloonManager") end
+            if x and x:IsValid() then M.balloon_mgr = x end
+        end)
+        bm = M.balloon_mgr
+        if not bm then return false end
+    end
+    local n = 0
+    pcall(function()
+        bm.UseBalloons:ForEach(function(_, v)
+            local b = v:get()
+            if b and b:IsValid() and not b.EndFlag then n = n + 1 end
+        end)
+    end)
+    return n > 0
+end
+
+-- PATH-ACTION AVAILABILITY (the on-screen hint sighted players get): the field-command
+-- manager lists one FieldCommandEvent per action you could start right now, each with
+-- its TargetCharacter. When a path action (any type but 0 = generic talk) appears, or
+-- moves to another NPC: chime (cue 8: Assets/pathaction.flac|mp3|wav, else a generated
+-- ding) + "Path action, <NPC name>", queued behind current speech. Called from the pump
+-- only while exploring; a target already announced is not repeated after a menu/scene
+-- (it is again once you walk away and come back, like the on-screen hint).
+M.PATH_CUE = 8   -- on M: the main chunk is near Lua's 200-local limit
+M.fcmd_poll = function()
+    local mgr = get_fcmd_mgr()
+    if not mgr then return end
+    local _, raw = read_active_commands(mgr)
+    local has_path = false
+    for _, b in ipairs(raw) do if b ~= 0 then has_path = true; break end end
+    local taddr = 0
+    if has_path then
+        pcall(function()
+            mgr.ActiveCommandList:ForEach(function(_, v)
+                if taddr ~= 0 then return end
+                local ev = v:get()
+                local t = ev and ev:IsValid() and ev.TargetCharacter
+                if t and t:IsValid() then taddr = t:GetAddress() end
+            end)
+        end)
+    end
+    local sig = has_path and (string.format("%X", taddr) .. ":" .. table.concat(raw, ",")) or nil
+    if sig == M.fcmd_sig then return end
+    M.fcmd_sig = sig
+    log("PATHACTION " .. (sig and ("available " .. sig) or "none"))
+    if not sig then M.fcmd_said = nil; return end
+    if taddr ~= 0 and taddr == M.fcmd_said then return end
+    M.fcmd_said = taddr
+    if audio_inited then pcall(function() shim.AudioPlayCue(M.PATH_CUE) end) end
+    local nm
+    if taddr ~= 0 then pcall(function() nm = shim.NpcName(taddr) end) end
+    speak((nm and nm ~= "") and ("Path action, " .. nm) or "Path action", false)
+end
+
 radar_pump = function(src)
     local now = os.clock()
     if now - pump_lastt < PUMP_MIN_DT then return end
@@ -3833,13 +3910,17 @@ radar_pump = function(src)
     -- the world isn't suspended (so widgets are stable, never mid-load), breaking on
     -- the first hit. IsVisible() is false for the many cached-but-hidden menu widgets,
     -- so this fires only for the screen actually on display.
-    local menu_open = false
+    local menu_open, talk_open = false, false
     if not world_susp then
         -- Immediate check: the focused screen (active stack) being a blocking menu mutes
         -- the radar at once -- the scene_widgets scan below only sees it after the ~5Hz
         -- registry scan runs, which left a lag (e.g. the J path-action menu kept the radar
         -- running + arrow keys wall-bumping for a beat after opening).
         local _, acls = M.get_active_screen()
+        if acls ~= M.last_acls then   -- one log line per focused-screen change
+            M.last_acls = acls
+            log("ACTIVE screen: " .. tostring(acls) .. (acls and BLOCKING_CLASSES[acls] and " (blocking)" or ""))
+        end
         if acls and BLOCKING_CLASSES[acls] then menu_open = true end
         if not menu_open then
             for i = 1, #scene_widgets do
@@ -3847,18 +3928,31 @@ radar_pump = function(src)
                 if BLOCKING_CLASSES[e[2]] and widget_is_visible(e[1]) then menu_open = true; break end
             end
         end
+        -- speech-bubble conversation (path actions run without IsEventPlaying). Between
+        -- two lines the balloon is briefly gone (<1 s, seen with NPC dialogue): hold the
+        -- gate 1 s past the last bubble so the radar doesn't blip between lines.
+        if not menu_open then
+            local okb, act = pcall(M.balloon_active)
+            if okb and act then M.balloon_t = now end
+            talk_open = (now - (M.balloon_t or -10)) < 1.0
+        end
+        if talk_open ~= (M.last_talk or false) then
+            M.last_talk = talk_open
+            log("BALLOON " .. (talk_open and "active" or "none"))
+        end
     end
-    local explore = (WS.px ~= nil) and (not world_susp) and (not menu_open)
+    local explore = (WS.px ~= nil) and (not world_susp) and (not menu_open) and (not talk_open)
     beacon_on, wall_on = explore, explore
     if explore ~= WS.explore then
         WS.explore = explore
         log("RADAR " .. (explore and "live (exploring)"
-            or ("idle (" .. (menu_open and "menu" or "scene") .. ")")))
+            or ("idle (" .. (menu_open and "menu" or (talk_open and "talk" or "scene")) .. ")")))
         if explore then
             beacon_rescan_at  = now + 0.3                    -- re-enumerate this area
             beacon_rescan_say = (WS.idle_reason ~= "menu")   -- announce count on area change, not menu close
         else
-            WS.idle_reason = menu_open and "menu" or "scene"
+            -- a bubble conversation ends like a menu: no object count afterwards
+            WS.idle_reason = (menu_open or talk_open) and "menu" or "scene"
             pcall(beacon_deactivate_all)
             wall_blocked = {}
             for _, slot in ipairs(WALL_SLOT) do
@@ -3882,6 +3976,7 @@ radar_pump = function(src)
             pcall(wall_step)
         end
         pcall(nav_tick)
+        pcall(M.fcmd_poll)   -- path-action availability hint
     end
     if pump_count % 30 == 1 then pcall(arm_pump_tickhook) end
     -- self-heal: LoopAsyncs can die on level load; if ours has gone quiet, start a

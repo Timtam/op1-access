@@ -23,14 +23,15 @@ void SA_SetListener(float x, float y, float z);
 // cueType selects the per-category ping frequency (0=chest, 1=exit, 2=npc).
 void SA_SetSource(int id, int active, float x, float y, float z, int cueType);
 
-// Load a custom cue sound for a category (cueType 0..5) from a file. Format is
+// Load a custom cue sound for a category (cueType 0..8) from a file. Format is
 // auto-detected: WAV, FLAC, or MP3 (FLAC/MP3 keep files small). Decoded to mono at
 // the engine rate and played per ping in place of the generated tone. Returns 1 on
 // success, 0 if the file is missing or cannot be decoded.
 int  SA_LoadCue(int cueType, const char* path);
 
 // Play a cue once (non-looping, 2D / centred), e.g. a wall-bump. If that cueType has
-// no loaded buffer, a short generated thud is played instead.
+// no loaded buffer, a generated fallback is played instead (6 bump: thud, 7 door:
+// rising chirp, 8 path action available: two-note chime).
 void SA_PlayCue(int cueType);
 
 // Quick isolation test independent of game data: play one continuous tone at a
