@@ -145,6 +145,8 @@ local SCENE_LABELS = {
     -- OptItemVerticalBox/TitleText/OptionKindArray) and are read the same way in poll_options.
     OptionMenuWBP_C          = "Options",
     OptionMenuSteamWBP_C     = "Options",
+    -- Field command (the path-action menu opened with J near an NPC/object)
+    FieldCommandMenu_C       = "Path action",
     -- Battle
     BattleCommandMenu_C      = "Battle command menu",
     BattleResultPanelWidget_C= "Battle results",
@@ -212,9 +214,14 @@ local BLOCKING_CLASSES = {
     MainMenuWidget_C = true,  MainMenuItemListWidget_C = true, MainMenuAbilityWidget_C = true,
     MainMenuJobWidget_C = true, MainMenuTutorialListWidget_C = true, MainMenuMissionRecord_C = true,
     EquipmentMenuWidget_C = true, StatusMenuWidget_C = true,
-    MenuSaveLoad_C = true,  OptionMenuWBP_C = true,
+    MenuSaveLoad_C = true,  OptionMenuWBP_C = true, OptionMenuSteamWBP_C = true,
     BattleCommandMenu_C = true, BattleResultPanelWidget_C = true,
     ChatWidget_C = true, PartyChat_C = true,
+    FieldCommandMenu_C = true,   -- path-action menu (J): mute radar / no wall-bump while open
+    -- path-action RESULT scenes (Study/Search, Purchase/Steal, Allure/Lure, Inquire/Judge,
+    -- Provoke/Monster) -- dialog-like, read fine, but the radar must stay silent during them
+    FieldCommandSearch_C = true, FieldCommandPurchase_C = true, FieldCommandLure_C = true,
+    FieldCommandJudge_C = true, FieldCommandMonster_C = true,
 }
 
 -- ---------------------------------------------------------------------------
@@ -1038,6 +1045,28 @@ do
     end
 end
 
+-- Field-command (path-action) menu reader. Opened with J near an NPC/object; the focused
+-- screen is FieldCommandMenu_C, CurrentCursor is the selected action, ShowVerticalBox is
+-- the action buttons (FieldCommandMenuItemPanel_C) -- GetChildAt(cursor).Text is the label
+-- ("Studieren"/Study, etc.). No header offset. Announce the action on open + each move.
+do
+    local fc_idx
+    M.poll_fieldcommand = function()
+        local w, cls = M.get_active_screen()
+        if cls ~= "FieldCommandMenu_C" then fc_idx = nil; return end
+        local ci; pcall(function() ci = w.CurrentCursor end)
+        if type(ci) ~= "number" or ci == fc_idx then return end
+        fc_idx = ci
+        local label
+        pcall(function()
+            local box = w.ShowVerticalBox
+            local btn = box and box:GetChildAt(ci)
+            if btn then local t = btn.Text; if t then local g = t:GetText(); if g then label = g:ToString() end end end
+        end)
+        speak(label or ("Action " .. tostring(ci)))
+    end
+end
+
 -- Options menu reader (title-screen flow). The live content is reached via the
 -- VISIBLE TitleOptionScene_C.RefOptionMenu (NOT FindFirstOf -- that returns a
 -- template that freezes on traversal). Focused row = OptItemVerticalBox child at
@@ -1170,6 +1199,7 @@ local ok_loop = pcall(LoopAsync, POLL_INTERVAL_MS, function()
     pcall(M.poll_options)
     pcall(M.poll_mainmenu)
     pcall(M.poll_tutorial)
+    pcall(M.poll_fieldcommand)
     -- The native GetTalkText hook speaks dialogue directly (independent of this
     -- loop, which can die after a level load). The loop just logs the line.
     -- (dialogue polling moved into the radar pump: this loop dies intermittently
@@ -3792,9 +3822,17 @@ radar_pump = function(src)
     -- so this fires only for the screen actually on display.
     local menu_open = false
     if not world_susp then
-        for i = 1, #scene_widgets do
-            local e = scene_widgets[i]
-            if BLOCKING_CLASSES[e[2]] and widget_is_visible(e[1]) then menu_open = true; break end
+        -- Immediate check: the focused screen (active stack) being a blocking menu mutes
+        -- the radar at once -- the scene_widgets scan below only sees it after the ~5Hz
+        -- registry scan runs, which left a lag (e.g. the J path-action menu kept the radar
+        -- running + arrow keys wall-bumping for a beat after opening).
+        local _, acls = M.get_active_screen()
+        if acls and BLOCKING_CLASSES[acls] then menu_open = true end
+        if not menu_open then
+            for i = 1, #scene_widgets do
+                local e = scene_widgets[i]
+                if BLOCKING_CLASSES[e[2]] and widget_is_visible(e[1]) then menu_open = true; break end
+            end
         end
     end
     local explore = (WS.px ~= nil) and (not world_susp) and (not menu_open)
