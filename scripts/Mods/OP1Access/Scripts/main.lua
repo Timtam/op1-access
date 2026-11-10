@@ -2634,16 +2634,16 @@ local function beacon_step()   -- driven by radar_pump while beacon_on
         if beacon_rescan_say and #beacon_objs > 0 then
             -- only when the AREA changed: an NPC dialogue is a "scene" too, and
             -- "23 objects here" after every conversation was noise. Changed = the
-            -- player is far from the last announcement spot, or the count differs.
+            -- player is far from where exploring stopped (M.idle_from, set by the
+            -- radar pump), or the object count differs from back then.
             local x, y
             local pl = get_player_obj()
             if pl then x, y = read_actor_pos(pl) end
-            local o = M.objsay
+            local o = M.idle_from
             local far = not (o and x) or math.sqrt((x - o.x) ^ 2 + (y - o.y) ^ 2) > 600
             if far or #beacon_objs ~= o.n then
                 speak(string.format("%d objects here", #beacon_objs))
             end
-            if x then M.objsay = { x = x, y = y, n = #beacon_objs } end
         end
         beacon_rescan_say = false
     end
@@ -3969,6 +3969,9 @@ radar_pump = function(src)
         else
             -- a bubble conversation ends like a menu: no object count afterwards
             WS.idle_reason = (menu_open or talk_open) and "menu" or "scene"
+            -- where + with how many objects exploring stopped: the post-scene rescan
+            -- only announces the count if the area changed in between
+            M.idle_from = WS.px and { x = WS.px, y = WS.py, n = #beacon_objs } or nil
             pcall(beacon_deactivate_all)
             wall_blocked = {}
             for _, slot in ipairs(WALL_SLOT) do
