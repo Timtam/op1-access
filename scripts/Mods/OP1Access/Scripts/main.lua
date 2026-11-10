@@ -2219,7 +2219,12 @@ local function bump_step()
     -- not depend on the input vector, whose mid-frame reads miss most taps.
     if bump_arrow_t > bump_seen_press then
         bump_seen_press = bump_arrow_t
-        bump_snap = { t = now, x = px, y = py, key = bump_arrow_key }
+        -- only FRESH presses: a field press pumps at once (on_arrow_log), so it is seen
+        -- within ~0.1 s. An older one was made in a menu/dialog (e.g. Up to "Ja" in the
+        -- load dialog) and must not thud when the field comes back.
+        if now - bump_arrow_t < 0.35 then
+            bump_snap = { t = now, x = px, y = py, key = bump_arrow_key }
+        end
     elseif bump_snap then
         local age = now - bump_snap.t
         if age > 0.8 then
@@ -2627,7 +2632,18 @@ local function beacon_step()   -- driven by radar_pump while beacon_on
         beacon_rescan_at = nil
         beacon_rescan()
         if beacon_rescan_say and #beacon_objs > 0 then
-            speak(string.format("%d objects here", #beacon_objs))
+            -- only when the AREA changed: an NPC dialogue is a "scene" too, and
+            -- "23 objects here" after every conversation was noise. Changed = the
+            -- player is far from the last announcement spot, or the count differs.
+            local x, y
+            local pl = get_player_obj()
+            if pl then x, y = read_actor_pos(pl) end
+            local o = M.objsay
+            local far = not (o and x) or math.sqrt((x - o.x) ^ 2 + (y - o.y) ^ 2) > 600
+            if far or #beacon_objs ~= o.n then
+                speak(string.format("%d objects here", #beacon_objs))
+            end
+            if x then M.objsay = { x = x, y = y, n = #beacon_objs } end
         end
         beacon_rescan_say = false
     end
