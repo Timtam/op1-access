@@ -36,26 +36,20 @@ and the result reading are verified for that one action.
 
 ## Navigation
 
-- **Most markers could not be walked to** (user log 2026-11-13: "No route found" for
-  Russell, Mercedes, the "!" hidden item and the objective exit from one floor down).
-  Three causes:
-  1. *Wrong floor for markers without an actor* — FIXED, not yet tested in-game:
-     icons carry X/Y only, so the target got the player's own height and the router
-     (goal accepted only within ±300 in z) searched the wrong floor. The chest category
-     reached the same "!" spot fine. Markers are now pinned to the chest / exit trigger
-     actor next to the icon, which gives the real height.
-  2. *Targets behind a door.* Russell and Mercedes are inside the library, the
-     headmaster probably behind the office door upstairs. The router walks the open map
-     only and cannot pass a door that needs E. Idea: `HouseEnterTriggerBP_C.BorderBox`
-     likely bounds the room; a target inside it → walk to that building's door and say
-     so ("inside a building"). Needs an in-game check of BorderBox.
-  3. *Search box.* The router only searches the rectangle spanned by start and goal
-     plus 9 cells (~1200 units); detours around a block or to far stairs fail even when
-     a path exists.
-- **The navigator lists targets it cannot reach** (user request 2026-11-13: markers,
-  buildings etc. should only be offered if reachable). After fixing 1–2 above: run the
-  router as a quiet background check over the category's list and skip or mark the
-  targets it cannot reach.
+- **The router's search box.** It only searches the rectangle spanned by start and goal
+  plus 9 cells (~1200 units); detours around a block or to far stairs fail even when a
+  path exists. Such targets now say "not reachable" after one failed try (see below),
+  which can be wrong for them.
+- **The navigator still lists targets it cannot reach** (user request 2026-11-13:
+  markers, buildings etc. should only be offered if reachable). Now: a target inside a
+  building says "inside a building" and the walk leads to its door; a target the router
+  failed on says "not reachable" from then on (from about the same spot). Not done: a
+  quiet background check of the whole list before you ever try a target.
+- **Room detection only works for some buildings.** "Inside a building" comes from the
+  box around a door's `Actor_Room` actors (good for the Atlasdam library). The academy
+  rooms list only wall pieces on one line, so for them the doorway-plane fallback is
+  used, and only after a route failed ("Probably inside a building"). Checked in-game:
+  Russell, Mercedes (library) and the headmaster (office upstairs) all reached.
 - **Exits don't say where they lead** (user request 2026-11-13). Data found in the
   object dump: each exit `LevelTrigger_C` has `MyTriggerID`/`NextTriggerID`; the
   minimap icon for it carries `LevelTriggerID` + `NextFieldName` (e.g. `T_Plain_L_A`);

@@ -2978,6 +2978,130 @@ local function nav_build_list()
     table.sort(NV.list, function(a, b) return a.d < b.d end)
 end
 
+-- ===== Reachability: targets inside buildings, and targets the router failed on =====
+-- OT1 houses are built IN PLACE: the door trigger (HouseEnterTriggerBP_C, the "building"
+-- category) swaps the facade (Actor_Def) for the room (Actor_Room) when you walk in. A
+-- target inside a house the player is not in can't be routed to -- the closed door
+-- blocks every trace: Russell and Mercedes in the Atlasdam library gave "No route
+-- found" every time (user, 2026-11-13). Such a walk goes to the house's door first;
+-- after E opens it, Backspace again walks inside.
+-- Which house: the padded box around the door's Actor_Room actors ("room"). BorderBox
+-- is NOT the house -- it is a thin plane in the doorway (+-3 deep, seen 2026-11-13)
+-- whose offset from the door actor points INTO the house; with allow_plane (only after
+-- the router failed) a target behind that plane, within 1500, also counts ("plane").
+-- Returns door, how -- or nil. Room boxes are cached per door until the area changes.
+M.house_cache, M.house_cache_area = {}, nil
+M.house_door_for = function(tx, ty, tz, px, py, pz, dolog, allow_plane)
+    if M.house_cache_area ~= M.area_said then M.house_cache, M.house_cache_area = {}, M.area_said end
+    local list
+    pcall(function() list = FindAllOf("HouseEnterTriggerBP_C") end)
+    if not list then return nil end
+    local best, bestd, besthow = nil, 1e9, nil
+    local pbest, pbestd = nil, 1e9
+    for _, door in pairs(list) do
+        local okv = false
+        pcall(function() okv = door:IsValid() end)
+        local daddr = 0
+        if okv then pcall(function() daddr = door:GetAddress() end) end
+        if daddr ~= 0 then
+            local dx, dy, dz = read_actor_pos(door)
+            -- the room box: Actor_Room actor positions, padded (cached)
+            local box = M.house_cache[daddr]
+            if box == nil and dx then
+                box = false
+                local n = 0
+                local b = { minx = 1e9, maxx = -1e9, miny = 1e9, maxy = -1e9, minz = 1e9, maxz = -1e9 }
+                pcall(function()
+                    door.Actor_Room:ForEach(function(_, v)
+                        local a = v:get()
+                        if a then
+                            local ax, ay, az = read_actor_pos(a)
+                            -- only room parts near the door: some rooms also list actors
+                            -- 16000 away (academy "IvonRoom"), which made a box that
+                            -- swallowed the whole hall
+                            if ax and math.sqrt((ax - dx) ^ 2 + (ay - dy) ^ 2) < 2000 then
+                                n = n + 1
+                                b.minx, b.maxx = math.min(b.minx, ax), math.max(b.maxx, ax)
+                                b.miny, b.maxy = math.min(b.miny, ay), math.max(b.maxy, ay)
+                                b.minz, b.maxz = math.min(b.minz, az), math.max(b.maxz, az)
+                            end
+                        end
+                    end)
+                end)
+                -- a box that is flat in X or Y is a wall/facade plane (the academy rooms'
+                -- parts all sit on one line), not the room: don't use it
+                if n > 0 and b.maxx - b.minx >= 200 and b.maxy - b.miny >= 200 then b.n = n; box = b end
+                M.house_cache[daddr] = box
+            end
+            local function inroom(x, y, z)
+                return box and x >= box.minx - 250 and x <= box.maxx + 250 and y >= box.miny - 250
+                    and y <= box.maxy + 250 and (z or box.minz) >= box.minz - 300 and (z or box.minz) <= box.maxz + 300
+            end
+            local it, ip, how = inroom(tx, ty, tz), inroom(px, py, pz), "room"
+            -- fallback: the doorway plane (BorderBox), only after a failed route
+            if not it and allow_plane and dx then
+                pcall(function()
+                    local bb = door.BorderBox
+                    local c = bb:K2_GetComponentLocation()
+                    local e = bb:GetScaledBoxExtent()
+                    local nx, ny = 0, 0
+                    if e.X < e.Y then nx = (c.X - dx >= 0) and 1 or -1 else ny = (c.Y - dy >= 0) and 1 or -1 end
+                    local along = (tx - c.X) * nx + (ty - c.Y) * ny
+                    local side = math.abs((tx - c.X) * ny - (ty - c.Y) * nx)
+                    local palong = (px - c.X) * nx + (py - c.Y) * ny
+                    if along > 60 and along < 2500 and side < 1500 and math.abs((tz or c.Z) - c.Z) < 800
+                        and palong < 0 then
+                        it, how = true, "plane"
+                    end
+                end)
+            end
+            if dolog and dx and math.sqrt((dx - tx) ^ 2 + (dy - ty) ^ 2) < 3000 then
+                local nm = "?"
+                pcall(function() nm = door:GetFName():ToString() end)
+                log(string.format("HOUSE %s door=(%.0f,%.0f,%.0f) room=%s target_in=%s(%s) player_in=%s", nm, dx, dy, dz or 0,
+                    box and string.format("%d actors x%.0f..%.0f y%.0f..%.0f z%.0f..%.0f", box.n, box.minx, box.maxx,
+                        box.miny, box.maxy, box.minz, box.maxz) or "none",
+                    tostring(it), how, tostring(ip)))
+            end
+            -- a house's door is near its room: ignore doors far from the target (a door
+            -- 17000 away whose room actors spread over half the map matched Russell)
+            local dt = dx and math.sqrt((dx - tx) ^ 2 + (dy - ty) ^ 2) or 1e9
+            local dp = dx and math.sqrt((dx - px) ^ 2 + (dy - py) ^ 2) or 1e9
+            if it and ip and dt < 2500 then
+                return nil, "same"   -- the player is in (or at the door of) the target's house
+            end
+            if it and not ip and dt < 2500 and dt < bestd then
+                best, bestd, besthow = door, dt, how                -- the door nearest the TARGET
+            end
+            if ip and not it and dp < 2500 and dp < pbestd then
+                pbest, pbestd = door, dp                            -- the house the PLAYER is in
+            end
+        end
+    end
+    -- third result: the door of the house the player is in (and the target is not):
+    -- house doors close behind you, so leaving needs E at that door first (library)
+    return best, besthow, pbest
+end
+
+-- A target's identity for the "router failed" memory: actor address, else position.
+NV.tkey = function(t)
+    local a = 0
+    if t.actor then pcall(function() a = t.actor:GetAddress() end) end
+    if a ~= 0 then return a end
+    if t.pos then return string.format("%d:%d", math.floor(t.pos.x / 50), math.floor(t.pos.y / 50)) end
+    return nil
+end
+-- Failed routes, remembered per target with where you stood and the area: the list then
+-- says "not reachable", and walking there again from about the same spot doesn't make
+-- you wait for the same 3-second failure. Moving 600+ away (or another area) forgets it.
+NV.noroute = {}
+NV.is_noroute = function(key, px, py)
+    local r = key and NV.noroute[key]
+    if not r then return false end
+    if r.area ~= M.area_said then return false end
+    return math.sqrt((px - r.x) ^ 2 + (py - r.y) ^ 2) < 600
+end
+
 local function nav_announce(prefix)
     local t = nav_target()
     if not t then speak("No target"); return end
@@ -2989,6 +3113,15 @@ local function nav_announce(prefix)
     local d = math.floor(math.sqrt(dx * dx + dy * dy) + 0.5)
     local lvl = ""
     if dz > LEVEL_THRESH then lvl = ", above" elseif dz < -LEVEL_THRESH then lvl = ", below" end
+    -- reachability note: inside a building you're not in, or the router failed here
+    if t.cat ~= "building" then
+        local okd, door = pcall(M.house_door_for, ox, oy, oz or pz, px, py, pz)
+        local key = NV.tkey(t)
+        if okd and door then lvl = lvl .. ", inside a building"
+        elseif NV.is_noroute(key, px, py) then
+            lvl = lvl .. (NV.noroute[key].door and ", inside a building" or ", not reachable")
+        end
+    end
     -- Name the focused NPC: first from the learned cache (talked-to NPCs), then
     -- from STATIC data (NV.resolve_name -> placement label via GetGameTextString)
     -- so names show up WITHOUT having to talk first. Per-focus only, cached.
@@ -3158,7 +3291,36 @@ local function nav_route_finish(goalnode)
             if clear then
                 nav_walk_begin_path({ { x = R.px, y = R.py }, { x = R.ox, y = R.oy } }, "direct")
             else
-                speak("No route found, not walking")
+                -- no route: maybe behind a house door (doorway-plane test, see
+                -- M.house_door_for) -- then walk to that door instead; else remember
+                -- the failure so the list says "not reachable" from here on
+                local g = NV.goal
+                if g and g.samehouse then
+                    -- at (or in) the target's house: the shut door blocked the search
+                    speak("The door is shut. Open it with E, then backspace again")
+                    return
+                end
+                if (NV.retries or 0) > 0 then
+                    -- a RE-route after getting stuck: the target was reachable a moment
+                    -- ago, this spot is just wedged -- not a "not reachable" target
+                    speak("Stuck, no way on from here. Step aside, then backspace again")
+                    return
+                end
+                if g and g.key and g.cat ~= "door" then
+                    local okd, door, dx, dy, dz = false, nil, nil, nil, nil
+                    if g.cat ~= "exit" then   -- an exit is its own way out, never "in a house"
+                        okd, door = pcall(M.house_door_for, g.x, g.y, g.z, R.px, R.py, R.pz, true, true)
+                    end
+                    if okd and door then dx, dy, dz = read_actor_pos(door) end
+                    NV.noroute[g.key] = { x = R.px, y = R.py, area = M.area_said, door = dx and door or nil }
+                    if dx and math.sqrt((dx - R.px) ^ 2 + (dy - R.py) ^ 2) > 250 and NV.route_begin then
+                        NV.goal = { x = dx, y = dy, z = dz or R.pz, cat = "door", key = g.key }
+                        speak("Probably inside a building. Routing to its door")
+                        NV.route_begin("walk", dx, dy, dz or R.pz)
+                        return
+                    end
+                end
+                speak("Not reachable, no route found")
             end
         else
             speak("No route found")
@@ -3336,6 +3498,7 @@ local function nav_route_begin(mode, ox, oy, oz)
         miny = math.min(0, gy) - 9, maxy = math.max(0, gy) + 9,
     }
 end
+NV.route_begin = nav_route_begin   -- for nav_route_finish (defined above it)
 
 local function nav_info()
     NV.ctrlkey_t = os.clock()
@@ -3384,11 +3547,62 @@ local function nav_walk_start(quiet)
     local ox, oy, oz = NV.tpos(t)
     if not (px and ox) then speak("Target lost"); return end
     oz = oz or pz
-    NV.goal = { x = ox, y = oy, z = oz, cat = t.walkcat or t.cat }
+    local key = NV.tkey(t)
+    NV.goal = { x = ox, y = oy, z = oz, cat = t.walkcat or t.cat, key = key }
     NV.push = nil
     NV.retries = 0
     NV.bestgoal = nil
     NV.noimprove = 0
+    -- INSIDE A BUILDING you're not in: walk to its door first (the closed door blocks
+    -- every route). At the door the game says "Öffnen, E"; after E, Backspace again
+    -- walks inside (then you stand at the door, so this leg is skipped).
+    local samehouse = false
+    if t.cat ~= "building" then
+        local okd, door, how, pdoor = pcall(M.house_door_for, ox, oy, oz, px, py, pz, true)
+        -- you are in (or at the door of) the target's house: route straight in. If the
+        -- door is still shut that fails -- then say "open the door", not "not reachable"
+        samehouse = okd and how == "same"
+        NV.goal.samehouse = samehouse
+        -- LEAVING a house first: its door closes behind you and opens only with E, from
+        -- inside too (the walk out of the library wedged at the shut door, 2026-11-13)
+        if okd and pdoor and not samehouse then
+            local dx, dy, dz = read_actor_pos(pdoor)
+            if dx and math.sqrt((dx - px) ^ 2 + (dy - py) ^ 2) > 250 then
+                NV.goal = { x = dx, y = dy, z = dz or pz, cat = "door", key = key }
+                speak(string.format("Leaving the building first. Routing to its door, %d",
+                    math.floor(math.sqrt((dx - px) ^ 2 + (dy - py) ^ 2) + 0.5)))
+                nav_route_begin("walk", dx, dy, dz or pz)
+                return
+            end
+            NV.goal.samehouse = true   -- at the door: a failed route means "open it first"
+            samehouse = true
+        end
+        -- or a door found earlier after the router failed (doorway-plane test)
+        if not samehouse and not (okd and door) and NV.is_noroute(key, px, py) and NV.noroute[key].door then
+            local okv = false
+            pcall(function() okv = NV.noroute[key].door:IsValid() end)
+            if okv then okd, door = true, NV.noroute[key].door end
+        end
+        if okd and door then
+            local dx, dy, dz = read_actor_pos(door)
+            if dx and math.sqrt((dx - px) ^ 2 + (dy - py) ^ 2) > 250 then
+                NV.goal = { x = dx, y = dy, z = dz or pz, cat = "door", key = key }
+                local who = t.name and t.name:match("^[^,]+") or t.cat
+                speak(string.format("%s is inside a building. Routing to its door, %d", who,
+                    math.floor(math.sqrt((dx - px) ^ 2 + (dy - py) ^ 2) + 0.5)))
+                nav_route_begin("walk", dx, dy, dz or pz)
+                return
+            end
+        end
+    end
+    -- the router already failed for this target from about here: say so right away
+    -- (a second press within 4 s tries anyway)
+    if not samehouse and NV.is_noroute(key, px, py)
+        and not (NV.retry_key == key and os.clock() - (NV.retry_t or -10) < 4) then
+        NV.retry_key, NV.retry_t = key, os.clock()
+        speak("Not reachable from here. Press again to try anyway")
+        return
+    end
     -- navmesh first (free + instant if the game has it), else our traced A*
     local pts = nav_find_path(p, px, py, pz, ox, oy, oz)
     if pts then
@@ -3473,7 +3687,8 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
     end
     local dx, dy
     if not wp then
-        if not (NV.goal and NV.goal.cat == "exit") then
+        local gcat = NV.goal and NV.goal.cat
+        if gcat ~= "exit" and gcat ~= "door" then
             nav_walk_stop("Arrived")
             return
         end
@@ -3481,24 +3696,37 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
         -- door: "Arrived" 150 short of it, nothing happened). Keep walking on along
         -- the approach direction for up to 2 s; the transition fade then ends the
         -- walk silently (see the scene check above). No transition -> stop.
+        -- DOOR (first leg to a target inside a building): head for the door's center
+        -- until its "Öffnen, E" prompt shows -- stopping 60 units off to the side left
+        -- you without the prompt (library door, 2026-11-13).
         if not NV.push then
-            local n = #NV.path
-            local ax = NV.path[n].x - (NV.path[n - 1] or NV.path[n]).x
-            local ay = NV.path[n].y - (NV.path[n - 1] or NV.path[n]).y
-            if math.sqrt(ax * ax + ay * ay) < 1 then ax, ay = NV.goal.x - px, NV.goal.y - py end
+            local ax, ay
+            if gcat == "door" then
+                ax, ay = NV.goal.x - px, NV.goal.y - py
+            else
+                local n = #NV.path
+                ax = NV.path[n].x - (NV.path[n - 1] or NV.path[n]).x
+                ay = NV.path[n].y - (NV.path[n - 1] or NV.path[n]).y
+                if math.sqrt(ax * ax + ay * ay) < 1 then ax, ay = NV.goal.x - px, NV.goal.y - py end
+            end
             NV.push = { till = now + 2.0, x = ax, y = ay }
-            log("NAVWALK push through exit")
+            log("NAVWALK push to " .. gcat)
+        end
+        if gcat == "door" then
+            NV.push.x, NV.push.y = NV.goal.x - px, NV.goal.y - py   -- keep aiming at the door
         end
         if M.popup_said then
-            -- a door-type exit: the game shows its prompt ("Öffnen, E", spoken by
+            -- the game shows the door's prompt ("Öffnen, E", spoken by
             -- poll_action_popup) and waits for the key -- stop at the door
             NV.push = nil
             nav_walk_stop()   -- silent: the prompt speech says what to do
+            if gcat == "door" then speak("then backspace again", false) end
             return
         end
         if now > NV.push.till then
             NV.push = nil
-            nav_walk_stop("At the exit, no way through")
+            nav_walk_stop(gcat == "door" and "At the door. Open it, then backspace again"
+                or "At the exit, no way through")
             return
         end
         dx, dy = NV.push.x, NV.push.y
@@ -3565,6 +3793,16 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
             if M.popup_said and gd < 450 then
                 log("NAVWALK at door exit (prompt)")
                 nav_walk_stop()   -- silent: "Arrived" would cut off the prompt speech
+                return
+            end
+        elseif NV.goal.cat == "door" then
+            -- first leg to a target inside a building: stop where the door prompt
+            -- shows (nav_drive pushes on to the door's center until it does); the
+            -- prompt itself says "Öffnen, E" -- add how to go on
+            if M.popup_said and gd < 450 then
+                log("NAVWALK at building door")
+                nav_walk_stop()
+                speak("then backspace again", false)
                 return
             end
         elseif gd < 170 then nav_walk_stop("Arrived"); return end
