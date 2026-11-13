@@ -14,6 +14,10 @@ and the result reading are verified for that one action.
   (`FieldCommandLure_C`), Inquire (`FieldCommandJudge_C`?) and Provoke
   (`FieldCommandMonster_C`) need their own readers once a save with those travelers
   exists. The radar gate already covers them (it uses the manager's flags).
+- **"Talk, ???" for a figure you cannot talk to** (user report 2026-11-13) — FIXED, not
+  yet tested in-game: at the academy entrance the game picked an invisible helper from
+  the always-loaded ResidentGame level; Enter did nothing. Without a path action the talk
+  hint now needs a character the npc category counts as talkable, and never a hidden one.
 - **"Talk, <name>" hint and its sound were never heard by a person.** With Cyrus nearly
   every NPC offers Scrutinize, so in testing the path-action chime played every time; the
   talk-only branch only ran for the save point ("Save point" + the generated pop,
@@ -32,6 +36,33 @@ and the result reading are verified for that one action.
 
 ## Navigation
 
+- **Most markers could not be walked to** (user log 2026-11-13: "No route found" for
+  Russell, Mercedes, the "!" hidden item and the objective exit from one floor down).
+  Three causes:
+  1. *Wrong floor for markers without an actor* — FIXED, not yet tested in-game:
+     icons carry X/Y only, so the target got the player's own height and the router
+     (goal accepted only within ±300 in z) searched the wrong floor. The chest category
+     reached the same "!" spot fine. Markers are now pinned to the chest / exit trigger
+     actor next to the icon, which gives the real height.
+  2. *Targets behind a door.* Russell and Mercedes are inside the library, the
+     headmaster probably behind the office door upstairs. The router walks the open map
+     only and cannot pass a door that needs E. Idea: `HouseEnterTriggerBP_C.BorderBox`
+     likely bounds the room; a target inside it → walk to that building's door and say
+     so ("inside a building"). Needs an in-game check of BorderBox.
+  3. *Search box.* The router only searches the rectangle spanned by start and goal
+     plus 9 cells (~1200 units); detours around a block or to far stairs fail even when
+     a path exists.
+- **The navigator lists targets it cannot reach** (user request 2026-11-13: markers,
+  buildings etc. should only be offered if reachable). After fixing 1–2 above: run the
+  router as a quiet background check over the category's list and skip or mark the
+  targets it cannot reach.
+- **Exits don't say where they lead** (user request 2026-11-13). Data found in the
+  object dump: each exit `LevelTrigger_C` has `MyTriggerID`/`NextTriggerID`; the
+  minimap icon for it carries `LevelTriggerID` + `NextFieldName` (e.g. `T_Plain_L_A`);
+  `/Game/Level/Database/LevelTable` (`LevelInfoData`: `LevelName`, `AreaID`, `TownLabel`,
+  `SubTownLabel`, `WorldMapRegion`), `TownTable` (`TownLabel`/`TownName` text labels)
+  and `LevelTriggerTable` look like the way from the next field to its area name
+  (GetGameTextString). Needs an in-game check that the labels resolve.
 - **Pathfinder gives up on long routes to another floor.** In the Atlasdam academy hall,
   routing to targets on the upper floor fails from most spots
   (`ROUTE fail traces≈1800 pops≈260` → "No route found"). From one spot it found a

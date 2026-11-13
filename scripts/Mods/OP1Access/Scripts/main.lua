@@ -4040,6 +4040,21 @@ M.interact_poll = function()
             return
         end
     end
+    if not has_path and tobj then
+        -- the game also picks figures you cannot really talk to: an invisible helper
+        -- from the always-loaded ResidentGame level by the academy entrance gave
+        -- "Talk, ???" and Enter did nothing (user report 2026-11-13). Without a path
+        -- action, announce only characters the npc category counts as talkable
+        -- (placement dialogue ID or learned by talking), and never a hidden actor.
+        local hidden = false
+        pcall(function() hidden = (tobj.bHidden == true) end)
+        local okt, keep = pcall(npc_interesting, tobj)
+        if hidden or not (okt and keep) then
+            log(string.format("INTERACT %X not talkable (hidden=%s), no hint", addr, tostring(hidden)))
+            return
+        end
+    end
+    if nm == "???" then nm = nil end   -- the game's placeholder for a name not known yet
     if audio_inited then
         pcall(function() shim.AudioPlayCue(has_path and M.PATH_CUE or M.TALK_CUE) end)
     end
@@ -4214,19 +4229,43 @@ M.minimap_markers = function(pz)
         end)
     end)
     if #icons == 0 then return {} end
-    -- pin NPC icons to their actor (NPCs wander; the icon follows the actor)
-    local byname = {}
-    pcall(function()
-        local list = FindAllOf("KSFieldNPCCharacter_C")
-        if list then for _, o in pairs(list) do
-            local okv = false
-            pcall(function() okv = o:IsValid() end)
-            if okv then pcall(function() byname[o:GetFName():ToString()] = o end) end
-        end end
-    end)
+    -- Pin every icon to an actor: NPCs by object name (they wander; the icon follows
+    -- them), hidden items and exits by name or else the nearest chest / exit trigger.
+    -- The actor gives the REAL height. With the player's own z (icons carry X/Y only)
+    -- the router searched the wrong floor: "No route found" to the "!" one floor down
+    -- (user log 2026-11-13), while the chest category reached the very same spot.
+    local byname, npcs, pool = {}, {}, { chest = {}, exit = {} }
+    for _, spec in ipairs({ { "KSFieldNPCCharacter_C", "npc" }, { "TreasureBoxBP_C", "chest" },
+                            { "LevelTrigger_C", "exit" } }) do
+        pcall(function()
+            local list = FindAllOf(spec[1])
+            if not list then return end
+            for _, o in pairs(list) do
+                local okv = false
+                pcall(function() okv = o:IsValid() end)
+                if okv then
+                    pcall(function() byname[o:GetFName():ToString()] = o end)
+                    if spec[2] == "npc" then
+                        pcall(function() npcs[o:GetAddress()] = true end)
+                    else
+                        local ax, ay = read_actor_pos(o)
+                        if ax then local t = pool[spec[2]]; t[#t + 1] = { o = o, x = ax, y = ay } end
+                    end
+                end
+            end
+        end)
+    end
     local out = {}
     for _, ic in ipairs(icons) do
         local actor = (ic.reg ~= "" and ic.reg ~= "None") and byname[ic.reg] or nil
+        if not actor then
+            local cands = (ic.type == 5 and pool.chest) or ((ic.type == 14 or ic.type == 15) and pool.exit) or nil
+            local bd = (ic.type == 5) and 300 or 600
+            for _, c in ipairs(cands or {}) do
+                local d = math.sqrt((c.x - ic.x) ^ 2 + (c.y - ic.y) ^ 2)
+                if d < bd then actor, bd = c.o, d end
+            end
+        end
         local x, y, z = ic.x, ic.y, pz
         if actor then
             local ax, ay, az = read_actor_pos(actor)
@@ -4235,10 +4274,15 @@ M.minimap_markers = function(pz)
         local kind = M.MARKER_KIND[ic.type] or ((ic.type == 14 or ic.type == 15) and "exit toward objective")
             or ("marker type " .. ic.type)
         local label = kind
-        if actor then
+        local aaddr = 0
+        if actor then pcall(function() aaddr = actor:GetAddress() end) end
+        if npcs[aaddr] then
+            -- names only for NPCs: NpcName reads the NPC placement label at a fixed
+            -- offset -- on a chest or trigger that would be garbage (and a bad FName
+            -- can hang GetGameTextString)
             local nm
-            pcall(function() nm = shim.NpcName(actor:GetAddress()) end)
-            if nm and nm ~= "" then label = nm .. ", " .. kind end
+            pcall(function() nm = shim.NpcName(aaddr) end)
+            if nm and nm ~= "" and nm ~= "???" then label = nm .. ", " .. kind end
         end
         out[#out + 1] = { actor = actor, x = x, y = y, z = z, label = label,
             walkcat = (ic.type == 14 or ic.type == 15) and "exit" or nil }
