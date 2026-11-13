@@ -14,6 +14,10 @@
 //   PreferSAPI(bool)           -> bool   (force SAPI as primary)
 //   InstallTalkHook(ufuncAddr) -> bool   (native-hook GetTalkText; speaks dialogue)
 //   PollTalk()                 -> string|nil  (last captured line, for logging)
+//   DtCount / DtRowAt / DtFind -> DataTable rows (RowMap), read only
+//   Peek / PeekFName           -> SEH-guarded raw reads of fields Lua can't reach
+//   GameTextFName(cmp, num)    -> string|nil  (GameText label FName -> localized text)
+//   (and more: see op1access_funcs at the end)
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -1085,6 +1089,129 @@ int l_option_label_for_kind(lua_State* L) {
     return 2;
 }
 
+// ---- DataTable rows + raw reads (exit destinations) -----------------------------
+// Lua does the table logic (which row, which field); these only read memory, under
+// SEH, and never call into the game -- except GameTextFName (GetGameTextString, the
+// same call the NPC names use).
+// UDataTable (4.18): RowMap TMap<FName, uint8*> at +0x30, i.e. a TSparseArray:
+//   +0x00 element data (24 bytes each: FName Key, uint8* Row, HashNextId, HashIndex)
+//   +0x08 Num, +0x10 AllocationFlags inline bits (4 x uint32), +0x20 their heap copy
+//   (used instead when set), +0x34 NumFreeIndices. Tables loaded from disk have no
+//   holes, but a hole's slot holds free-list links, so check its bit when there are any.
+static int dt_num(uintptr_t dt) {
+    int num = 0;
+    __try { num = *reinterpret_cast<int*>(dt + 0x38); } __except (EXCEPTION_EXECUTE_HANDLER) { num = 0; }
+    return (num < 0 || num > 200000) ? 0 : num;
+}
+
+static bool dt_slot(uintptr_t dt, int i, uint64_t* key, uintptr_t* row) {
+    bool ok = false;
+    __try {
+        uintptr_t rm   = dt + 0x30;
+        uintptr_t data = *reinterpret_cast<uintptr_t*>(rm);
+        int num        = *reinterpret_cast<int*>(rm + 0x08);
+        if (data && i >= 0 && i < num) {
+            bool alloc = true;
+            if (*reinterpret_cast<int*>(rm + 0x34) > 0) {
+                const uint32_t* heap = *reinterpret_cast<const uint32_t* const*>(rm + 0x20);
+                const uint32_t* bits = heap ? heap : reinterpret_cast<const uint32_t*>(rm + 0x10);
+                alloc = ((bits[i >> 5] >> (i & 31)) & 1u) != 0;
+            }
+            if (alloc) {
+                uintptr_t el = data + static_cast<uintptr_t>(i) * 24u;
+                *key = *reinterpret_cast<uint64_t*>(el);
+                *row = *reinterpret_cast<uintptr_t*>(el + 8);
+                ok = (*row > 0x10000);
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) { ok = false; }
+    return ok;
+}
+
+// DtCount(dtAddr) -> number of RowMap slots (iterate 0..n-1 with DtRowAt).
+int l_dt_count(lua_State* L) {
+    lua_pushinteger(L, dt_num(static_cast<uintptr_t>(luaL_checkinteger(L, 1))));
+    return 1;
+}
+
+// DtRowAt(dtAddr, i) -> keyCmp, keyNum, rowAddr | nil (a hole or a bad read).
+int l_dt_row_at(lua_State* L) {
+    uintptr_t dt = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
+    int i        = static_cast<int>(luaL_checkinteger(L, 2));
+    uint64_t key = 0; uintptr_t row = 0;
+    if (!dt_slot(dt, i, &key, &row)) { lua_pushnil(L); return 1; }
+    lua_pushinteger(L, static_cast<lua_Integer>(key & 0xFFFFFFFFu));
+    lua_pushinteger(L, static_cast<lua_Integer>(key >> 32));
+    lua_pushinteger(L, static_cast<lua_Integer>(row));
+    return 3;
+}
+
+// DtFind(dtAddr, keyCmp [, keyNum]) -> rowAddr | nil: the row whose name is that FName
+// (Lua builds it: FName("1234"):GetComparisonIndex()).
+int l_dt_find(lua_State* L) {
+    uintptr_t dt = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
+    uint64_t want = static_cast<uint64_t>(static_cast<uint32_t>(luaL_checkinteger(L, 2))) |
+                    (static_cast<uint64_t>(static_cast<uint32_t>(luaL_optinteger(L, 3, 0))) << 32);
+    int n = dt_num(dt);
+    for (int i = 0; i < n; i++) {
+        uint64_t key = 0; uintptr_t row = 0;
+        if (dt_slot(dt, i, &key, &row) && key == want) {
+            lua_pushinteger(L, static_cast<lua_Integer>(row));
+            return 1;
+        }
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
+// Peek(addr, kind) -> number | nil. SEH-guarded read; kind "i32" (default), "u8",
+// "u32", "ptr", "f32". For struct fields Lua can't reach (DataTable rows).
+int l_peek(lua_State* L) {
+    uintptr_t a      = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
+    const char* kind = luaL_optstring(L, 2, "i32");
+    if (a < 0x10000) { lua_pushnil(L); return 1; }
+    bool ok = true; lua_Integer iv = 0; double fv = 0; bool isf = false;
+    __try {
+        if (std::strcmp(kind, "u8") == 0)       iv = *reinterpret_cast<uint8_t*>(a);
+        else if (std::strcmp(kind, "u32") == 0) iv = *reinterpret_cast<uint32_t*>(a);
+        else if (std::strcmp(kind, "ptr") == 0) iv = static_cast<lua_Integer>(*reinterpret_cast<uintptr_t*>(a));
+        else if (std::strcmp(kind, "f32") == 0) { fv = *reinterpret_cast<float*>(a); isf = true; }
+        else                                    iv = *reinterpret_cast<int32_t*>(a);
+    } __except (EXCEPTION_EXECUTE_HANDLER) { ok = false; }
+    if (!ok) lua_pushnil(L);
+    else if (isf) lua_pushnumber(L, fv);
+    else lua_pushinteger(L, iv);
+    return 1;
+}
+
+// PeekFName(addr) -> cmp, num | nil: an FName field (ComparisonIndex, Number).
+int l_peek_fname(lua_State* L) {
+    uintptr_t a = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
+    uint64_t v = 0; bool ok = (a >= 0x10000);
+    if (ok) { __try { v = *reinterpret_cast<uint64_t*>(a); } __except (EXCEPTION_EXECUTE_HANDLER) { ok = false; } }
+    if (!ok) { lua_pushnil(L); return 1; }
+    lua_pushinteger(L, static_cast<lua_Integer>(v & 0xFFFFFFFFu));
+    lua_pushinteger(L, static_cast<lua_Integer>(v >> 32));
+    return 2;
+}
+
+// GameTextFName(cmp [, num]) -> localized text | nil, for a GameText label FName read
+// from game data (DataTable rows, label properties). Only pass real FNames: an index
+// past the name table hangs GetGameTextString, so absurd ones are refused here.
+int l_gametext_fname(lua_State* L) {
+    lua_Integer cmp = luaL_checkinteger(L, 1);
+    lua_Integer num = luaL_optinteger(L, 2, 0);
+    if (cmp <= 0 || cmp >= 0x400000 || num < 0 || num > 0x7FFFFFFF) { lua_pushnil(L); return 1; }
+    uint64_t fn = static_cast<uint64_t>(static_cast<uint32_t>(cmp)) |
+                  (static_cast<uint64_t>(static_cast<uint32_t>(num)) << 32);
+    wchar_t w[256]; w[0] = L'\0';
+    if (resolve_name_for_fname(fn, w, 256) <= 0 || !w[0]) { lua_pushnil(L); return 1; }
+    char u8[768];
+    int u = WideCharToMultiByte(CP_UTF8, 0, w, -1, u8, sizeof(u8) - 1, nullptr, nullptr);
+    if (u > 1) lua_pushlstring(L, u8, static_cast<size_t>(u - 1)); else lua_pushnil(L);
+    return 1;
+}
+
 // ActorLoc(actorAddr) -> (x, y, z) | nil. SEH-guarded read of the actor's world-ish
 // position: AActor.RootComponent @0x160 -> USceneComponent.RelativeLocation (FVector
 // @0x15C). Returns nil for a freed/streamed-out actor instead of faulting. This is the
@@ -1154,6 +1281,12 @@ const luaL_Reg op1access_funcs[] = {
     {"NpcName",              l_npc_name},
     {"LastSpeakerName",      l_last_speaker},
     {"OptionLabelForKind",   l_option_label_for_kind},
+    {"DtCount",              l_dt_count},
+    {"DtRowAt",              l_dt_row_at},
+    {"DtFind",               l_dt_find},
+    {"Peek",                 l_peek},
+    {"PeekFName",            l_peek_fname},
+    {"GameTextFName",        l_gametext_fname},
     {"ActorLoc",             l_actor_loc},
     {"IsForeground",         l_is_foreground},
     {nullptr, nullptr},

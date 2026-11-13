@@ -3132,6 +3132,11 @@ local function nav_announce(prefix)
         if type(r) == "table" and r.name then t.name = r.name
         elseif NV.resolve_name then t.name = NV.resolve_name(t.actor) end
     end
+    -- an exit says where it leads (M.exit_dest: the game's level tables), per focus
+    if t.cat == "exit" and t.name == nil and t.actor then
+        local okd, dest = pcall(M.exit_dest, t.actor)
+        t.name = (okd and dest) and ("to " .. dest) or false
+    end
     local who = t.name and (t.name .. ", ") or ""
     speak(string.format("%s%s %d of %d: %s%s, %d%s",
         prefix or "", t.cat, NV.idx, #NV.list, who, nav_dir(dx, dy), d, lvl))
@@ -4162,6 +4167,16 @@ M.poll_area_name = function()
     M.area_said = key
     M.area_t = os.clock()   -- a walk into an exit ends here (nav_walk_watch)
     log("AREA: " .. key)
+    -- the banner's GameText labels and the level ID, to compare with the EXIT lines
+    -- (an exit's strNextAreaName / strNextMapName is the label the banner shows)
+    pcall(function()
+        local lm, id = FindFirstOf("LevelManagerBP_C"), nil
+        if lm and lm:IsValid() then id = lm.CurrentLevelID end
+        local ml, rl = "?", "?"
+        pcall(function() ml = w.MapNameLabel:ToString() end)
+        pcall(function() rl = w.RegionNameLabel:ToString() end)
+        log(string.format("AREA level=%s labels=%s/%s", tostring(id), ml, rl))
+    end)
     speak((region and region ~= "") and (area .. ", " .. region) or area, false)
 end
 
@@ -4522,10 +4537,144 @@ M.minimap_markers = function(pz)
             pcall(function() nm = shim.NpcName(aaddr) end)
             if nm and nm ~= "" and nm ~= "???" then label = nm .. ", " .. kind end
         end
+        if actor and (ic.type == 14 or ic.type == 15) and not npcs[aaddr] then
+            local okd, dest = pcall(M.exit_dest, actor)
+            if okd and dest then label = kind .. ", to " .. dest end
+        end
         out[#out + 1] = { actor = actor, x = x, y = y, z = z, label = label,
             walkcat = (ic.type == 14 or ic.type == 15) and "exit" or nil }
     end
     return out
+end
+
+-- ===== Exit destinations =====
+-- Where an exit leads (user request 2026-11-13), checked in Atlasdam 2026-11-14. An exit
+-- (LevelTrigger_C; C++ base LevelTriggerActor) carries GameText labels for its
+-- destination: strNextMapName names the level ("T_Plain_L_C" -> "Palast von Atlasdamm",
+-- "D_Plain_1_1" -> "Unterirdisches Studierzimmer"), and strNextAreaName, set on exits
+-- between two parts of one level, names that part ("T_Plain_L_B_AreaB" -> "Königliche
+-- Akademie von Atlasdamm"). The area banner after the walk shows exactly that label:
+-- leaving the academy (area label T_Plain_L_B_AreaA) it said "Palasttor Atlasdamm".
+-- Fallback for an exit without labels: m_nNextMapID is the destination level's ID, a row
+-- name of /Game/Level/Database/LevelTable (LevelInfoData: LevelName FName @8, LevelKind
+-- u8 @0x10, AreaID u8 @0x11, TownLabel i32 @0x14, SubTownLabel i32 @0x18), and TownTable
+-- (TownInfoData: ID i32 @8, TownName FName @0x18) names the town by TownLabel. (The
+-- WorldMapTable's RefLevelName lists held none of the Atlasdam level names.) The shim
+-- only reads memory here (DtRowAt / DtFind / Peek), plus GetGameTextString for the text.
+M.dt_addr = function(name)
+    M.dt_addrs = M.dt_addrs or {}
+    local a = M.dt_addrs[name]
+    if a then return a end
+    pcall(function()
+        local o = StaticFindObject("/Game/Level/Database/" .. name .. "." .. name)
+        if o and o:IsValid() then a = o:GetAddress() end
+    end)
+    if a and a ~= 0 then M.dt_addrs[name] = a; return a end
+    return nil
+end
+-- FName(s) as (cmp, num). UE splits a trailing "_<digits>" off into the Number (not when
+-- the digits start with 0, unless just "0"); GetComparisonIndex names the rest.
+M.fname_of = function(s)
+    if type(s) ~= "string" or s == "" or s == "None" then return nil end
+    local cmp
+    pcall(function()
+        local f
+        if EFindName and EFindName.FNAME_Find then f = FName(s, EFindName.FNAME_Find) else f = FName(s) end
+        cmp = f:GetComparisonIndex()
+    end)
+    if type(cmp) ~= "number" or cmp <= 0 then return nil end
+    local num = 0
+    local digits = s:match("_(%d+)$")
+    if digits and #digits <= 9 and (digits:sub(1, 1) ~= "0" or #digits == 1) then num = tonumber(digits) + 1 end
+    return cmp, num
+end
+-- an FName (cmp, num) as text, for the log
+M.fname_str = function(cmp, num)
+    if not cmp or cmp == 0 then return "None" end
+    local s = "#" .. cmp
+    pcall(function() s = FName(cmp):ToString() end)
+    if num and num > 0 then s = s .. "_" .. (num - 1) end
+    return s
+end
+M.gametext = function(cmp, num)
+    if not (cmp and cmp > 0 and shim and shim.GameTextFName) then return nil end
+    local ok, s = pcall(shim.GameTextFName, cmp, num or 0)
+    if ok and type(s) == "string" and s ~= "" and s ~= "None" then return s end
+    return nil
+end
+-- TownTable: town ID -> TownName label (cmp, num), read once.
+M.town_names = function()
+    if M.town_idx then return M.town_idx end
+    local idx, n = {}, 0
+    local tt = shim and shim.DtCount and M.dt_addr("TownTable")
+    if tt then
+        for i = 0, (shim.DtCount(tt) or 0) - 1 do
+            local _, _, row = shim.DtRowAt(tt, i)
+            local id = row and shim.Peek(row + 0x08, "i32")
+            if id then
+                local c, nn = shim.PeekFName(row + 0x18)
+                if c and c > 0 then idx[id] = { c, nn }; n = n + 1 end
+            end
+        end
+    end
+    log(string.format("DEST towns=%d (table %s)", n, tostring(tt)))
+    if n > 0 then M.town_idx = idx end   -- table not loaded yet: try again next time
+    return idx
+end
+-- Level ID -> { name = town name, level = level name } (or nil). Cached, logged once.
+M.dest_cache = {}
+M.level_dest = function(id)
+    if type(id) ~= "number" or id <= 0 or not (shim and shim.DtFind) then return nil end
+    local c = M.dest_cache[id]
+    if c ~= nil then return c or nil end
+    local res = false
+    pcall(function()
+        local lt = M.dt_addr("LevelTable")
+        local kc, kn = M.fname_of(tostring(id))
+        local row = lt and kc and shim.DtFind(lt, kc, kn)
+        if not row then
+            log(string.format("DEST level %d: no LevelTable row (table=%s key=%s)", id, tostring(lt), tostring(kc)))
+            return
+        end
+        local lc, ln = shim.PeekFName(row + 0x08)
+        local kind, area = shim.Peek(row + 0x10, "u8"), shim.Peek(row + 0x11, "u8")
+        local town, sub = shim.Peek(row + 0x14, "i32"), shim.Peek(row + 0x18, "i32")
+        local tn = town and M.town_names()[town]
+        local tname = tn and M.gametext(tn[1], tn[2])
+        res = { name = tname, level = M.fname_str(lc, ln) }
+        log(string.format("DEST level %d = %s kind=%s area=%s town=%s(%s) sub=%s", id, res.level, tostring(kind),
+            tostring(area), tostring(town), tostring(tname), tostring(sub)))
+    end)
+    M.dest_cache[id] = res
+    return res or nil
+end
+-- Exit actor -> the name of the area behind it, or nil.
+M.exit_logged = {}
+M.exit_dest = function(actor)
+    if not actor then return nil end
+    local id, smap, sarea, my, nx
+    pcall(function() id = actor.m_nNextMapID end)
+    pcall(function() smap = actor.strNextMapName:ToString() end)
+    pcall(function() sarea = actor.strNextAreaName:ToString() end)
+    pcall(function() my = actor.MyTriggerID; nx = actor.NextTriggerID end)
+    -- the part of the level first (what the banner will say), then the level, then the town
+    local narea = M.gametext(M.fname_of(sarea))
+    local nmap = M.gametext(M.fname_of(smap))
+    local name = narea or nmap
+    if not name then
+        local d = M.level_dest(id)
+        name = d and d.name
+    end
+    local addr = 0
+    pcall(function() addr = actor:GetAddress() end)
+    if not M.exit_logged[addr] then
+        M.exit_logged[addr] = true
+        local on = "?"
+        pcall(function() on = actor:GetFName():ToString() end)
+        log(string.format("EXIT %s my=%s next=%s map=%s strMap='%s'(%s) strArea='%s'(%s) -> %s", on, tostring(my),
+            tostring(nx), tostring(id), tostring(smap), tostring(nmap), tostring(sarea), tostring(narea), tostring(name)))
+    end
+    return name
 end
 
 radar_pump = function(src)

@@ -15,9 +15,11 @@ and the result reading are verified for that one action.
   (`FieldCommandMonster_C`) need their own readers once a save with those travelers
   exists. The radar gate already covers them (it uses the manager's flags).
 - **"Talk, ???" for a figure you cannot talk to** (user report 2026-11-13) — FIXED, not
-  yet tested in-game: at the academy entrance the game picked an invisible helper from
-  the always-loaded ResidentGame level; Enter did nothing. Without a path action the talk
+  confirmed: at the academy entrance the game picked an invisible helper from the
+  always-loaded ResidentGame level; Enter did nothing. Without a path action the talk
   hint now needs a character the npc category counts as talkable, and never a hidden one.
+  On 2026-11-14 the walker went in and out of the academy door twice without any talk
+  hint, but the filter never fired either, so the exact spot was probably not hit.
 - **"Talk, <name>" hint and its sound were never heard by a person.** With Cyrus nearly
   every NPC offers Scrutinize, so in testing the path-action chime played every time; the
   talk-only branch only ran for the save point ("Save point" + the generated pop,
@@ -50,13 +52,11 @@ and the result reading are verified for that one action.
   rooms list only wall pieces on one line, so for them the doorway-plane fallback is
   used, and only after a route failed ("Probably inside a building"). Checked in-game:
   Russell, Mercedes (library) and the headmaster (office upstairs) all reached.
-- **Exits don't say where they lead** (user request 2026-11-13). Data found in the
-  object dump: each exit `LevelTrigger_C` has `MyTriggerID`/`NextTriggerID`; the
-  minimap icon for it carries `LevelTriggerID` + `NextFieldName` (e.g. `T_Plain_L_A`);
-  `/Game/Level/Database/LevelTable` (`LevelInfoData`: `LevelName`, `AreaID`, `TownLabel`,
-  `SubTownLabel`, `WorldMapRegion`), `TownTable` (`TownLabel`/`TownName` text labels)
-  and `LevelTriggerTable` look like the way from the next field to its area name
-  (GetGameTextString). Needs an in-game check that the labels resolve.
+- **Exit names are only checked in Atlasdam.** "exit 2 of 5: to Palast von Atlasdamm"
+  comes from the exit's own labels; all five Palasttor exits had one. An exit without
+  labels falls back to its level's town name (never seen yet), and a field or dungeon
+  exit has not been tried. The exit to Atlasdamm is story-blocked right now ("Das ist
+  wohl nicht der Weg …"), so no walk into another level was compared with its banner.
 - **Pathfinder gives up on long routes to another floor.** In the Atlasdam academy hall,
   routing to targets on the upper floor fails from most spots
   (`ROUTE fail traces≈1800 pops≈260` → "No route found"). From one spot it found a
