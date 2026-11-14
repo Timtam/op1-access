@@ -6565,6 +6565,9 @@ local function nav_walk_start(quiet)
     -- plain Backspace is also the GAME's cancel key ("Rück Zurück"): pressed in a menu,
     -- a dialog or a scene it must do nothing here -- no walk, no "Scene running"
     if quiet and (world_susp or M.explore_now == false) then return end
+    -- ...nor the Backspace that just closed a menu: it said "No target selected" as the
+    -- main menu closed, and with a target it would have walked off (2026-11-14)
+    if quiet and os.clock() - (M.unexplore_t or -9) < 0.6 then return end
     if nav_walking then nav_walk_stop("Walk stopped"); return end
     if NV.route then NV.route = nil; speak("Routing cancelled"); return end
     if NV.door_auto then                -- the walker is opening a door: Backspace stops it
@@ -8308,6 +8311,7 @@ radar_pump = function(src)
     beacon_on, wall_on = explore, explore
     M.explore_now = explore                  -- the Backspace walk key acts only while exploring
     M.menu_now = menu_open or talk_open      -- nav_drive: a menu/bubble stops a running walk
+    if not explore then M.unexplore_t = now end   -- (the Backspace that closed a menu: nav_walk_start)
     if explore ~= WS.explore then
         WS.explore = explore
         log("RADAR " .. (explore and "live (exploring)"
