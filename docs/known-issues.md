@@ -52,16 +52,14 @@ and the result reading are verified for that one action.
   inside a house you're not in (they say "inside a building"; the walk goes to the door)
   and, from inside a house, targets outside it. A result only holds within 600 of where
   you stood, so after walking off the list is checked again on the next build.
-- **"Inside a building" for someone standing outside the door.** The Wachmann in front of
-  the Atlasdam library counts as inside: the library's room box (its `Actor_Room` actors
-  plus 250 padding) reaches past the door. A walk to him goes to the library door first.
-  Fix idea: also require the target to be on the inner side of the doorway plane
-  (`BorderBox`).
 - **Room detection only works for some buildings.** "Inside a building" comes from the
-  box around a door's `Actor_Room` actors (good for the Atlasdam library). The academy
-  rooms list only wall pieces on one line, so for them the doorway-plane fallback is
-  used, and only after a route failed ("Probably inside a building"). Checked in-game:
-  Russell, Mercedes (library) and the headmaster (office upstairs) all reached.
+  box around a door's `Actor_Room` actors (good for the Atlasdam library), and since
+  2026-11-14 the target must also be on the inner side of the doorway plane, so people
+  standing in front of the door (the Wachmann) no longer count. The academy rooms list
+  only wall pieces on one line, so for them the doorway-plane fallback is used, and only
+  after a route failed ("Probably inside a building"). The padding can still catch
+  someone beside a house's side wall. Checked in-game: Russell, Mercedes (library) and
+  the headmaster (office upstairs) all reached; the Wachmann is walked to directly.
 - **Exit names are only checked in Atlasdam.** "exit 2 of 5: to Palast von Atlasdamm"
   comes from the exit's own labels; all five Palasttor exits had one. An exit without
   labels falls back to its level's town name (never seen yet), and a field or dungeon
