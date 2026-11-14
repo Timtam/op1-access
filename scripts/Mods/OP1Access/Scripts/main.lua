@@ -1331,8 +1331,16 @@ M.shop_name = function(actor)
     end
     local nc, nn = shim.PeekFName(row)
     local s = M.gametext(nc, nn)
-    log(string.format("SHOPNAME %s -> %s = %s, type %s", M.fname_str(c, n), M.fname_str(nc, nn), tostring(s),
-        tostring(shim.Peek(row + 8, "u8"))))
+    -- the generic names eSHOP_NAME_TEMP_00..04 (Plattner, Händler, Krämer, Gasthaus,
+    -- Wirtshaus) follow ShopType 0..4, except that Atlasdam's tavern counter
+    -- (Plain_L_A_SHOP_Pu, type 4) says "Gasthaus" -- the tavern's own menu is "Wirtshaus":
+    -- a generic name goes by the type
+    local ty = shim.Peek(row + 8, "u8")
+    local raw = M.fname_str(nc, nn)
+    if raw:match("^eSHOP_NAME_TEMP_%d+$") and type(ty) == "number" and ty <= 4 then
+        s = M.gt_label(string.format("eSHOP_NAME_TEMP_%02d", ty)) or s
+    end
+    log(string.format("SHOPNAME %s -> %s, type %s = %s", M.fname_str(c, n), raw, tostring(ty), tostring(s)))
     return s
 end
 do
