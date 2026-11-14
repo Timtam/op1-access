@@ -66,10 +66,12 @@ and the result reading are verified for that one action.
   labels falls back to its level's town name (never seen yet), and a field or dungeon
   exit has not been tried. The exit to Atlasdamm is story-blocked right now ("Das ist
   wohl nicht der Weg …"), so no walk into another level was compared with its banner.
-- **The router can't plan through shut doors.** In the academy hall the doors on the
-  first upper floor within ~1900 are reachable (a walk to one: 29 cells, "Arrived" up
-  there), but doors that lie behind another room's door (dz 918-1058, or 2353 away)
-  say "not reachable": the search ran out of cells (600-800 nodes) with every shut door
-  a wall. For targets inside a room the walk already leads to its door first; a door
-  behind a door would need routing through doors with an E stop on the way. Also: from
-  a wedged corner the router fails at once (`pops=1`: the start cell counts as blocked).
+- **Routing through doors is new and only checked in the academy.** Since 2026-11-14
+  the router may cross shut house/room doors (cost 25 cells each) and the walk stops at
+  each one for E ("A shut door on the way"). Checked: the door 2353 away behind the
+  office door is reached that way. Still "not reachable" from the hall: two doors two
+  and three floors up (dz 918 / 1058) -- the search runs out of cells (750-1100 nodes),
+  so more doors or another wing lie in between. Not yet needed in a test: the step
+  through an open doorway when no route is found from its threshold ("Through the door
+  first"), and "Still shut. Öffnen, E, then backspace again" at a door leg. Also: from a
+  wedged corner the router fails at once (`pops=1`: the start cell counts as blocked).

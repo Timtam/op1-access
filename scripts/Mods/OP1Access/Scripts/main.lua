@@ -3882,9 +3882,11 @@ NV.bg_record = function(job, ok, how, viadoor)
     if ok then
         NV.noroute[job.key] = nil
     else
-        -- maybe behind a house door after all (doorway plane, as after a failed walk)
+        -- maybe behind a house door after all (doorway plane, as after a failed walk).
+        -- Doors too: a door inside a room (behind the academy office door) is reached
+        -- through the room's door. A door is never "inside" its own plane (along > 60).
         local door = nil
-        if job.cat ~= "exit" and job.cat ~= "building" then
+        if job.cat ~= "exit" then
             local okd, d = pcall(M.house_door_for, job.tx, job.ty, job.tz, job.px, job.py, job.pz, false, true)
             if okd and d then door = d end
         end
