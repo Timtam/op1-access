@@ -3,6 +3,25 @@
 Problems noticed in existing features that are not fixed yet. Newest first. When one
 gets fixed, delete its entry (the commit message keeps the history).
 
+## World map and danger levels
+
+Since 2026-11-14 (ac9584a, a053db5), tested from the user's save in the Östliche
+Atlasdamm-Ebenen after Cyrus' chapter 1 (11 places). Open:
+
+- **The cursor can't be sent to a place.** Page Up/Down only reads the places; to fast
+  travel you still steer the cursor yourself (the area under it is announced).
+  `WorldMap_C` has MoveTargetPos/MoveTargetPosRequest, not tried yet.
+- **Distances are map units** (Kammbruch "west, 947" from the flats by Atlasdam).
+- **Which number is "the" level.** Exits, the banner and the map say DangerLevel of the
+  encounter entry for the story progress (1/4/7/11 in the flats by Atlasdam over
+  progress 0-4; progress 1 now). The banner itself shows DisplayLevel as icons (1-2
+  there). The banner logs the encounter manager's own DangerLevel/EncounterLevel
+  ("AREA encounters"), but no area was entered in the test, so they weren't compared.
+- **Story destinations list all of a town's chapters**, also of travelers not in the
+  party: Kammbruch said "Tressa, chapter 2; Cyrus, chapter 2" with Cyrus alone.
+  `DestinationFlag` is set on every unvisited town, not only on the next goal.
+- **Marker type 7** (seen at an NPC on the flats, 2026-11-14) is read as "marker type 7".
+
 ## Installer and updates
 
 Since 2026-11-14 (92e6dc0 and the installer commits): the release ZIP, the installer and

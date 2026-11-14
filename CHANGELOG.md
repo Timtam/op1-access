@@ -19,6 +19,9 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
 - Main menu: categories, the current objective (also with Q), inventory (tabs, items with count
   and description, whom an item is for), abilities (learning skills with costs, support skills),
   equipment (slots, items and what they would change) and the tutorials.
+- World map: the place under the cursor (town, path or dungeon, region, danger level, not
+  visited) and the chapters recommended there; Page Up and Page Down go through every place,
+  nearest first, with its direction from where you are.
 
 ### Story and exploration
 
@@ -26,7 +29,8 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
 - A 3D radar (Steam Audio) for chests, exits, people, buildings and shops, a wall radar and
   bump sounds.
 - A navigator: categories with Home and End, targets with Page Up and Page Down, Ctrl+Backspace
-  for directions. It says which chests are opened and which targets can't be reached.
+  for directions. It says which chests are opened, which targets can't be reached, where exits
+  lead and how dangerous the area behind them is.
 - A walker: Backspace walks to the target over a computed route, opens doors on the way and
   frees itself when stuck.
 
