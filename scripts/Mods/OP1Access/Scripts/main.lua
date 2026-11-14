@@ -4616,13 +4616,29 @@ local function nav_build_list()
                     if dolog and ok2 then log("NPC " .. (keep and "keep " or "omit ") .. tostring(why)) end
                 end
                 if keep then
-                    NV.list[#NV.list + 1] = { actor = o, cat = c.name, known = true, name = nm,
+                    local e = { actor = o, cat = c.name, known = true, name = nm,
                         d = math.sqrt((ox - px) ^ 2 + (oy - py) ^ 2) }
+                    if c.name == "chest" then pcall(function() e.addr = o:GetAddress() end) end
+                    NV.list[#NV.list + 1] = e
                 end
             end
         end
     end
     NV.list_done(px, py)
+end
+-- A chest's state (user request 2026-11-14: opened or not), from TreasureBoxBP_C's own
+-- fields in the object dump: IsOpenFlag (bool, +0x3F8) -- set at load from the save
+-- (the BP's AlreadyOpenCheck) and when you open it. Checked in the study: all 7 open
+-- in Slot 1, none in the older autosave, and "opened" right after E on one. ObjectType
+-- (byte, +0x410; 1 and 2 seen there, meaning unknown -- the BP has wood and thief
+-- materials) is only logged ("CHESTS opened/type"). Raw SEH reads by address
+-- (shim.Peek), fresh at every announce: a chest streamed out meanwhile can't fault.
+-- Returns opened (bool), type (number) -- or nil.
+M.chest_state = function(t)
+    if not (t and t.addr and shim and shim.Peek) then return nil end
+    local f = shim.Peek(t.addr + 0x3F8, "u8")
+    if f == nil then return nil end
+    return f ~= 0, shim.Peek(t.addr + 0x410, "u8")
 end
 -- Nearest first, but targets known to be unreachable from here (a failed walk or the
 -- background check) last; then queue the list for the background check.
@@ -4851,6 +4867,11 @@ local function nav_announce(prefix)
         t.name = (okd and dest) and ("to " .. dest) or false
     end
     local who = t.name and (t.name .. ", ") or ""
+    -- a chest says whether it was opened already (emptied: OT chests hold one thing)
+    if t.cat == "chest" then
+        local okc, opened = pcall(M.chest_state, t)
+        if okc and opened then who = who .. "opened, " end
+    end
     speak(string.format("%s%s %d of %d: %s%s, %d%s",
         prefix or "", t.cat, NV.idx, #NV.list, who, nav_dir(dx, dy), d, lvl))
 end
@@ -4863,7 +4884,19 @@ local function nav_cat_cycle(delta)
         nav_build_list()
         if #NV.list > 0 then
             NV.idx = 1
-            nav_announce(string.format("%s, %d targets. ", NAV_CLASSES[NV.cat].name, #NV.list))
+            -- chests: how many of them were opened already
+            local extra = ""
+            if NAV_CLASSES[NV.cat].name == "chest" then
+                local nopen, kinds = 0, {}
+                for _, t in ipairs(NV.list) do
+                    local okc, opened, otype = pcall(M.chest_state, t)
+                    if okc and opened then nopen = nopen + 1 end
+                    kinds[#kinds + 1] = string.format("%s/%s", tostring(okc and opened), tostring(otype))
+                end
+                log("CHESTS opened/type: " .. table.concat(kinds, " "))
+                extra = string.format(", %d opened", nopen)
+            end
+            nav_announce(string.format("%s, %d targets%s. ", NAV_CLASSES[NV.cat].name, #NV.list, extra))
             return
         end
     end
