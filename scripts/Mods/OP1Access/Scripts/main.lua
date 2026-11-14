@@ -38,6 +38,10 @@ end
 local function speak(text, interrupt)
     if not text or text == "" then return end
     text = tostring(text)
+    if M.money_text then
+        local okm, t2 = pcall(M.money_text, text)
+        if okm and t2 then text = t2 end
+    end
     if not (shim and shim.Speak) then
         log("speak (NO SHIM): " .. text)
         return
@@ -48,6 +52,52 @@ end
 
 local function silence()
     if shim and shim.Silence then shim.Silence() end
+end
+
+-- THE CURRENCY SIGN (user report 2026-11-14: screen readers don't read it). The game
+-- writes money with its own glyph "⑳" (U+2473; GameText eMONEY_UNIT in every language:
+-- "Ein Zimmer kostet Euch ⑳10.", the shop's "3.756 ⑳"). It never names the currency in
+-- words -- the German text has no "Blätter" at all -- so the word comes from this table,
+-- by the game's text language (the user wants it in the game's language). The language:
+-- the text of BASIC_COMMAND_001 ("None", "Keine", "Rien" ...: different in all nine
+-- GameText tables), read again every 30 s (the options can change it). Every spoken line
+-- goes through M.money_text.
+M.MONEY_SIGN = "\226\145\179"
+M.MONEY_WORDS = {
+    en = { "leaf", "leaves" }, de = { "Blatt", "Blätter" }, fr = { "feuille", "feuilles" },
+    es = { "hoja", "hojas" }, it = { "foglia", "foglie" }, ja = { "リーフ", "リーフ" },
+    ko = { "리프", "리프" }, zh_cn = { "叶", "叶" }, zh_tw = { "葉", "葉" },
+}
+M.LANG_BY_NONE = { ["None"] = "en", ["Keine"] = "de", ["Rien"] = "fr", ["Nada"] = "es",
+    ["Nessuno"] = "it", ["なし"] = "ja", ["없음"] = "ko", ["无"] = "zh_cn", ["無"] = "zh_tw" }
+do
+    local lang, lang_t = nil, -99
+    M.game_lang = function()
+        local now = os.clock()
+        if now - lang_t < (lang and 30 or 2) then return lang or "en" end
+        lang_t = now
+        local s
+        if M.gt_label then s = M.gt_label("BASIC_COMMAND_001") end
+        local l = s and M.LANG_BY_NONE[s]
+        if l and l ~= lang then log("LANG: game text language " .. l) end
+        lang = l or lang
+        return lang or "en"
+    end
+end
+M.money_text = function(s)
+    if not s:find(M.MONEY_SIGN, 1, true) then return s end
+    local w = M.MONEY_WORDS[M.game_lang()] or M.MONEY_WORDS.en
+    local function word(n) return (n == "1") and w[1] or w[2] end
+    -- "⑳10." / "⑳ 1.200": the number first ("10 Blätter."; a full stop stays at the end)
+    s = s:gsub(M.MONEY_SIGN .. "%s*(%d[%d%.,]*)", function(n)
+        local num, tail = n:match("^(.-)([%.,]*)$")
+        return num .. " " .. word(num) .. tail
+    end)
+    -- "3.756 ⑳", "{0}⑳"
+    s = s:gsub("(%d[%d%.,]*)%s*" .. M.MONEY_SIGN, function(n) return n .. " " .. word(n) end)
+    -- the sign alone: "(⑳)", "⑳ Wurf"
+    s = s:gsub(M.MONEY_SIGN, w[2])
+    return s
 end
 
 -- One spoken line from text pieces that may hold line breaks: a skill's help is
@@ -8265,6 +8315,11 @@ M.gametext = function(cmp, num)
     local ok, s = pcall(shim.GameTextFName, cmp, num or 0)
     if ok and type(s) == "string" and s ~= "" and s ~= "None" then return s end
     return nil
+end
+-- a GameText label ("eSHOP_BUY_NUMBER") in the game's language, or nil
+M.gt_label = function(label)
+    local c, n = M.fname_of(label)
+    return c and M.gametext(c, n) or nil
 end
 -- TownTable: town ID -> TownName label (cmp, num), read once.
 M.town_names = function()
