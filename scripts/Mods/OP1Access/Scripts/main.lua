@@ -1753,6 +1753,27 @@ M.bt_help = function()
 end
 M.poll_battle = function()
     local bt, now = M.bt, os.clock()
+    if not M.dmg_armed and M.arm_dmg_hooks then pcall(M.arm_dmg_hooks) end
+    -- shield changes go with the damage line: "shield 2", "broken" (PlayBreak is not
+    -- called for a shield break), "recovers, shield 1" when its turn comes
+    bt.shields = bt.shields or {}
+    for _, en in ipairs(M.bt_enemies()) do
+        local sh
+        pcall(function() sh = M.wtext(en.w.BreakStatusIcon.Text_BreakGauge) end)
+        local old = bt.shields[en.addr]
+        if sh and old and sh ~= old then
+            if sh == "0" then M.dmg_push(en.name .. " broken")
+            elseif old == "0" then M.dmg_push(en.name .. " recovers, shield " .. sh)
+            else M.dmg_push(en.name .. " shield " .. sh) end
+        end
+        if sh then bt.shields[en.addr] = sh end
+    end
+    -- damage numbers gathered by the hooks: one line 0.25 s after the last of a burst
+    if bt.dmgbuf and #bt.dmgbuf > 0 and now - (bt.dmg_t or 0) > 0.25 then
+        local line = table.concat(bt.dmgbuf, ", ")
+        bt.dmgbuf = {}
+        speak(line, false)
+    end
     -- the enemies, once at the start
     if not bt.started then
         local en = M.bt_enemies()
@@ -1876,6 +1897,62 @@ M.poll_battle_result = function(w)
     elseif #ups > 0 then
         speak(table.concat(ups, ". "), false)
     end
+end
+-- DAMAGE NUMBERS. The digits on screen are material images, but BattleDamageNumber_C's
+-- Blueprint events get the numbers as plain ints: PlayDamage(DamageValue, DamageType,
+-- Owner), PlayRecoveryHP/MP/BP(RecoveryValue), PlayMiss(Owner), PlayBreak(Owner, ...).
+-- Lua hooks on them (simple params, no structs), armed from the battle poll once the
+-- class is loaded. A burst (one spell on all enemies) is gathered 0.25 s and said as
+-- one line, queued after the action's name: "Eissentinel 54".
+M.DMG_FN = "/Game/UI/Battle/BP/BattleDamageNumber.BattleDamageNumber_C:"
+M.dmg_who = function(ctx, owner)   -- the hit character's name: the Owner param, else the
+    local a                        -- widget's TargetCharacter (0x308, read raw)
+    if owner then pcall(function() a = owner:get():GetAddress() end) end
+    if (not a or a == 0) and ctx then pcall(function() a = M.peekp(ctx:get(), 0x308) end) end
+    if not a or a == 0 then return nil end
+    for _, en in ipairs(M.bt_enemies()) do if en.addr == a then return en.name end end
+    for _, pm in ipairs(M.bt_party()) do if pm.addr == a then return pm.name end end
+    return nil
+end
+M.dmg_push = function(s)
+    M.bt.dmgbuf = M.bt.dmgbuf or {}
+    M.bt.dmgbuf[#M.bt.dmgbuf + 1] = s
+    M.bt.dmg_t = os.clock()
+end
+M.dmg_hook = function(kind)
+    return function(ctx, p1, p2, p3)
+        pcall(function()
+            if kind == "damage" then
+                -- DamageType seen (2026-11-14): 0 a plain hit, 3 a weakness (shield down),
+                -- 4 a plain hit on a broken enemy, 5 a weakness on a broken enemy
+                local v, t = p1:get(), nil
+                pcall(function() t = p2:get() end)
+                local who = M.dmg_who(ctx, p3)
+                log(string.format("DMG %s %s type=%s", tostring(who), tostring(v), tostring(t)))
+                M.dmg_push((who and (who .. " ") or "") .. tostring(v) .. ((t == 3 or t == 5) and " weak" or ""))
+            elseif kind == "miss" or kind == "break" then
+                local who = M.dmg_who(ctx, p1)
+                log(string.format("DMG %s %s", kind, tostring(who)))
+                M.dmg_push((who and (who .. " ") or "") .. kind)
+            else   -- recovery: "hp" / "sp" / "bp"
+                local v = p1:get()
+                local who = M.dmg_who(ctx, nil)
+                log(string.format("DMG %s +%s %s", tostring(who), tostring(v), kind))
+                M.dmg_push((who and (who .. " ") or "") .. "+" .. tostring(v) .. " " .. kind:upper())
+            end
+        end)
+    end
+end
+M.arm_dmg_hooks = function()
+    if M.dmg_armed then return end
+    local ok, id = pcall(RegisterHook, M.DMG_FN .. "PlayDamage", M.fg_guard(M.dmg_hook("damage")))
+    if not (ok and id ~= nil) then return end   -- the class isn't loaded yet: next poll
+    M.dmg_armed = true
+    for fn, kind in pairs({ PlayRecoveryHP = "hp", PlayRecoveryMP = "sp", PlayRecoveryBP = "bp",
+        PlayMiss = "miss", PlayBreak = "break" }) do
+        pcall(RegisterHook, M.DMG_FN .. fn, M.fg_guard(M.dmg_hook(kind)))
+    end
+    log("Damage hooks ARMED")
 end
 -- 1-5: enemy N, 6-9: party member N-5, 0: turn order. Battle only.
 M.bt_key = function(n)
