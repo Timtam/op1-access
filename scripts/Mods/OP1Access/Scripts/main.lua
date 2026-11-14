@@ -162,6 +162,24 @@ M.in_gt = function(fn)
 end
 log("game-thread exec driver: " .. (ExecuteInGameThread and "ExecuteInGameThread" or "DIRECT (fallback -- not available!)"))
 
+-- Key binds run on the GAME thread too (2026-11-14). UE4SS calls them on its own thread
+-- under a lock that stops the game thread at its next ProcessEvent -- but not inside
+-- Blueprint code, so their game calls still raced it. Every RegisterKeyBind below goes
+-- through this wrapper; work a handler queues itself (M.in_gt) runs right after it.
+do
+    local raw = RegisterKeyBind
+    if raw and ExecuteInGameThread then
+        RegisterKeyBind = function(key, a, b)
+            if type(a) == "function" then
+                local f = a
+                return raw(key, function() M.in_gt(f) end)
+            end
+            local f = b
+            return raw(key, a, function() M.in_gt(f) end)
+        end
+    end
+end
+
 -- Hook enablement (globals, not chunk locals, to dodge the main-chunk 200-local limit).
 -- These are the conclusion of isolating the focus-out crash:
 --   OP1_NO_CREATED = true  -- NotifyOnNewObject (every widget construction) is THE focus-
