@@ -480,6 +480,9 @@ local function on_widget_uiopen(Context)
     -- read scene_widgets. Address-deduped, so a reused cached widget isn't re-added.
     -- Runs on the game thread like the old construction hook (cross-thread shape unchanged).
     M.reg_add(widget, cls, label)
+    -- in-game the save/load screen opens at a save point inside an event: its name
+    -- ("Save") comes from the event reader (M.poll_event_menus), with its first slot
+    if cls == "MenuSaveLoad_C" and M.field_player then return end
     schedule_menu_announce(cls, label)
 end
 
@@ -899,16 +902,26 @@ end
 -- State lives in a do-block; the fn hangs off M (no new chunk local -- cap is 200).
 do
     local sl_menu, sl_idx
-    M.poll_saveload = function()
-        local m = sl_menu
-        local alive = false
-        if m then pcall(function() alive = m:IsValid() end) end
-        if not alive then
-            m = nil
-            pcall(function() local f = FindFirstOf("MenuSaveLoad_C"); if f and f:IsValid() then m = f end end)
-            sl_menu = m
+    M.saveload_reset = function() sl_idx = nil end
+    -- evw: the menu handed over by M.poll_event_menus when it is open INSIDE an event
+    -- (the save point's "Speichern"): then no visibility walk, property reads only, and
+    -- the screen name is said here (the normal menu pollers stand down during events).
+    M.poll_saveload = function(evw)
+        local m = evw or sl_menu
+        if not evw then
+            -- inside an event the event reader owns this menu: the visibility test below
+            -- fails then (M.menu_unsafe) and reset the cursor every tick -- "Save, Auto
+            -- save" over and over (2026-11-14)
+            if M.ev_now then return end
+            local alive = false
+            if m then pcall(function() alive = m:IsValid() end) end
+            if not alive then
+                m = nil
+                pcall(function() local f = FindFirstOf("MenuSaveLoad_C"); if f and f:IsValid() then m = f end end)
+                sl_menu = m
+            end
+            if not m or not widget_is_visible(m) then sl_idx = nil; return end
         end
-        if not m or not widget_is_visible(m) then sl_idx = nil; return end
         -- Gate on the menu actually accepting input: while it opens it sweeps the
         -- cursor through every slot (which would voice all 24), and AcceptControl is
         -- false during that. Once ready, announce each focus change immediately.
@@ -918,9 +931,19 @@ do
         local ci = nil
         pcall(function() ci = m.CursorIndex end)
         if ci == nil or ci == sl_idx then return end
-        -- On OPEN (first focused slot, sl_idx still nil), hold until poll_active_menu has
-        -- spoken "Save and load" (M.await_first_item) so the slot comes AFTER the name.
-        if sl_idx == nil and not M.await_first_item then return end
+        if sl_idx == nil then
+            if evw then
+                local save = false
+                pcall(function() save = (m.IsSaveMode == true) end)
+                log("SAVELOAD in event: save mode=" .. tostring(save))
+                speak(save and "Save" or "Load")
+                M.await_first_item = true      -- the slot queues after the name
+            elseif not M.await_first_item then
+                -- On OPEN (first focused slot), hold until poll_active_menu has spoken
+                -- "Save and load" (M.await_first_item) so the slot comes AFTER the name.
+                return
+            end
+        end
         sl_idx = ci
         local slot = nil
         pcall(function()
@@ -930,18 +953,54 @@ do
                 if slot == nil and items.get then slot = items:get(ci) end  -- fallback: 0-based getter
             end
         end)
-        local label = (ci == 0) and "Auto save" or ("Slot " .. tostring(ci))
+        -- The slot's name from what it IS, not from the cursor index: loading, the list
+        -- starts with the autosave (SlotAuto); saving, the autosave is left out and index
+        -- 0 is the first manual slot -- read as "Auto save" at the save point, every
+        -- slot one off (2026-11-14). So: SlotAuto, else its place in NormalSlots.
+        local label
+        if slot then
+            local sa = 0
+            pcall(function() sa = slot:GetAddress() end)
+            pcall(function()
+                local a = m.SlotAuto
+                if a and a:GetAddress() == sa then label = "Auto save" end
+            end)
+            if not label then
+                pcall(function()
+                    local n = 0
+                    m.NormalSlots:ForEach(function(_, v)
+                        n = n + 1
+                        local o = v:get()
+                        if not label and o and o:GetAddress() == sa then label = "Slot " .. n end
+                    end)
+                end)
+            end
+        end
+        label = label or ((ci == 0) and "Auto save" or ("Slot " .. tostring(ci)))
         if not slot then M.say_item(label); return end
+        -- IsEnabled = selectable, not "has a save": loading, empty slots are off; saving,
+        -- the autosave is off (it can't be overwritten) though it holds a save. So
+        -- "empty" comes from the save's play time (IsEnabled only if that is unreadable),
+        -- and a filled but disabled slot says "can't be chosen" (the save point's
+        -- "Auto save, empty" was wrong, 2026-11-14).
         local en = false
         pcall(function() en = slot.IsEnabled and true or false end)
-        if not en then M.say_item(label .. ", empty"); return end
+        local secs = nil; pcall(function() secs = slot.SaveSlotData.PlayTime end)
+        local has = en
+        if type(secs) == "number" then has = secs > 0 end
+        if not has then M.say_item(label .. ", empty"); return end
         local function gt(name)                                       -- localized text of a bound widget
             local r = nil
-            pcall(function() local w = slot[name]; if w then local t = w:GetText(); if t then r = t:ToString() end end end)
+            pcall(function()
+                local w = slot[name]
+                if not w then return end
+                -- in an event: the Text property, no UFunction call on the widget
+                local t = evw and w.Text or w:GetText()
+                if t then r = t:ToString() end
+            end)
             if r == "" then r = nil end
             return r
         end
-        local secs = nil; pcall(function() secs = slot.SaveSlotData.PlayTime end)
         local pt = nil
         if type(secs) == "number" and secs > 0 then
             local h, mn = math.floor(secs / 3600), math.floor((secs % 3600) / 60)
@@ -956,6 +1015,8 @@ do
         if leader then parts[#parts + 1] = leader .. (lvl and (" level " .. lvl) or "") end
         if pt then parts[#parts + 1] = pt end
         if date then parts[#parts + 1] = date .. (tm and (" " .. tm) or "") end
+        if not en then parts[#parts + 1] = "can't be chosen" end
+        log(string.format("SAVELOAD slot %d enabled=%s map=%s pt=%s", ci, tostring(en), tostring(map), tostring(pt)))
         M.say_item(table.concat(parts, ", "))
     end
 end
@@ -1202,8 +1263,52 @@ do
     end
 end
 
+-- MENUS INSIDE AN EVENT: the save point's "Speichern" screen and its confirm dialog
+-- open while IsEventPlaying is true, so the normal menu pollers stand down
+-- (M.menu_unsafe, the cutscene-teardown crash guard) and the screen stayed silent
+-- (known issue since 2026-11-11). While an in-game event -- never a fade -- is up, at
+-- most 10x a second: ask the UI manager for the focused screen (one getter on a
+-- persistent object, no widget-tree walk) and read a save/load menu or a confirm
+-- dialog on top with property reads.
+-- Runs on the GAME thread (M.in_gt from M.event_menus_tick): called straight from the
+-- async loop, its GetActiveStack calls raced the game's own UI changes -- after idling
+-- some minutes in the save point's menu the game crashed with a null read inside UE4SS
+-- on that loop's thread (crash_2026_11_14_01_00_24.dmp).
+M.poll_event_menus = function()
+    if not (M.ev_now and not M.fade_now) then return end
+    local w, cls = M.get_active_screen()
+    if cls ~= M.evm_cls then
+        log("EVENT screen: " .. tostring(cls))
+        if cls ~= "MenuSaveLoad_C" and cls ~= "UICommonDialogBP_C" then pcall(M.saveload_reset) end
+        M.evm_cls = cls
+    end
+    M.evm_active = true
+    if cls == "MenuSaveLoad_C" or cls == "UICommonDialogBP_C" or dlg_visible then
+        pcall(poll_dialog)      -- a dialog on top, or its close
+    end
+    if cls == "MenuSaveLoad_C" then pcall(M.poll_saveload, w) end
+    M.evm_active = false
+end
+-- From the async loop: at most 10x a second, one call in flight, queue the reader onto
+-- the game thread; outside events just forget the screen (no game calls here).
+M.event_menus_tick = function()
+    if not (M.ev_now and not M.fade_now) then
+        if M.evm_cls then M.evm_cls = nil; pcall(M.saveload_reset) end
+        return
+    end
+    local now = os.clock()
+    if M.evm_queued and now - M.evm_queued < 2.0 then return end
+    if now - (M.evm_t or 0) < 0.1 then return end
+    M.evm_t, M.evm_queued = now, now
+    M.in_gt(function()
+        M.evm_queued = nil
+        pcall(M.poll_event_menus)
+    end)
+end
+
 local ok_loop = pcall(LoopAsync, POLL_INTERVAL_MS, function()
     if not M.fg_ok() then return end   -- unfocused: skip menu polls (game calls fault)
+    pcall(M.event_menus_tick)
     -- Capture title widgets on THIS fast loop (20Hz) so the title menu reads immediately;
     -- the game-thread pump only ticks ~5Hz, which made it read seconds late. Pre-game only
     -- (not M.field_player) -- there are no streamed field actors to fault FindAllOf, same
@@ -1586,7 +1691,8 @@ poll_dialog = function()
         end
         -- a path-action result panel under the dialog (Scrutinize: the NPC's age,
         -- statement and the information gained) -- the dialog itself only says "OK"
-        if not desc and M.fc_result_text then
+        -- (not inside an event: that reader runs FindAllOf)
+        if not desc and M.fc_result_text and not M.evm_active then
             local okr, r = pcall(M.fc_result_text, inst)
             if okr then desc = r end
         end
@@ -4998,6 +5104,7 @@ radar_pump = function(src)
         -- but the menus are stable and must read, so qualify ev with "a field player
         -- exists" (WS.px). Without this the title menu never announces.
         M.menu_unsafe = fade_now or (ev and WS.px ~= nil)
+        M.fade_now, M.ev_now = fade_now, (ev and WS.px ~= nil) and true or false   -- M.poll_event_menus
         world_susp = susp   -- update BEFORE the transition handling below: the
                             -- deferred learn there must see the world as RESUMED
                             -- (it used to re-queue itself forever on stale state)
