@@ -101,8 +101,39 @@ and the result reading are verified for that one action.
 - **Ctrl+F9 action names** for enum values 5–7 (Guide/Allure/Inquire) are inferred from
   the event class names, not observed. 8 = Scrutinize is confirmed ("Studieren").
 
+## Threads
+
+- **Some code still calls game functions off the game thread.** Since 2026-11-14
+  (11c8ce1) work queued for the game thread never runs anywhere else. UE4SS 3.0.1 ran it
+  inside whichever thread called a UFunction next, and that crashed the game once in the
+  learn-skill dialog. Still off the game thread on purpose:
+  - **The title and menu polls of the fast async loop.** Each FindFirstOf of a screen
+    that isn't open walks every object, 45-80 ms. Moved to the game thread, they froze
+    the start.
+  - **Most key binds.** They run under UE4SS's lock, which stops the game thread at its
+    next ProcessEvent, but not inside Blueprint code.
+
+  Moving them needs cheaper lookups first (cached screen widgets, GetActiveStack). Work
+  that still lands on a foreign thread is logged ("GT: queued work on a foreign thread
+  (#n), deferred"); it happened 5 times during a load and not after that. The crash was
+  a race, so one clean screenshot in the same dialog proves little.
+
 ## Menus
 
+- **Inventory and abilities: only one traveler and no purchase checked.** Read since
+  2026-11-14 (e0d8fd5), tested with Cyrus alone (Slot 1):
+  - Inventory: tabs, rows with count and description, greyed items, and whom an item is
+    for.
+  - Abilities: the job, LBP and next price, the support-skill rows, each skill with
+    cost and description, learned and locked skills.
+  - The learn dialog with its LBP lines; it was always cancelled.
+
+  Not seen yet:
+  - Learning a skill ("Ja"); the row should then say "learned".
+  - An item for several travelers or for all of them.
+  - "Hilfsfertigkeiten ausrüsten" (still locked).
+  - A secondary job's list (the "sub" path).
+  - Other screens built on the same list widget (equipment, shops).
 - **Menus inside events are only read for save/load and confirm dialogs.** The save
   point's screen is read since 2026-11-14 ("Save", "Slot 1, empty", "An ausgewähltem
   Speicherplatz abspeichern? Nein") by a reader that runs on the game thread while an
