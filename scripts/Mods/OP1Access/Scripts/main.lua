@@ -2355,7 +2355,8 @@ local function bump_step()
         -- only FRESH presses: a field press pumps at once (on_arrow_log), so it is seen
         -- within ~0.1 s. An older one was made in a menu/dialog (e.g. Up to "Ja" in the
         -- load dialog) and must not thud when the field comes back.
-        if now - bump_arrow_t < 0.35 then
+        -- (not the walker's own "face the target" tap after Arrived: M.face_t)
+        if now - bump_arrow_t < 0.35 and not (M.face_t and now - M.face_t < 1.0) then
             bump_snap = { t = now, x = px, y = py, key = bump_arrow_key }
         end
     elseif bump_snap then
@@ -3289,6 +3290,12 @@ local function nav_announce(prefix)
         local r = a and npc_learned[a]
         if type(r) == "table" and r.name then t.name = r.name
         elseif NV.resolve_name then t.name = NV.resolve_name(t.actor) end
+        -- no name: the save point's book is an NPC too (it was "npc 1 of 7: up left,
+        -- 156" by the save point, 2026-11-14) -- its minimap marker names it
+        if not t.name then
+            local okk, kind = pcall(M.marker_kind_of, t.actor)
+            if okk and kind then t.name = kind end
+        end
     end
     -- an exit says where it leads (M.exit_dest: the game's level tables), per focus
     if t.cat == "exit" and t.name == nil and t.actor then
@@ -3379,6 +3386,7 @@ local function nav_walk_begin_path(pts, label)
     NV.path = pts
     NV.wp = 2
     nav_walking = true
+    NV.prompt_at_start = M.popup_said   -- a door prompt already up (nav_walk_watch)
     NV.started = os.clock()
     NV.prog = { t = NV.started, x = pts[1].x, y = pts[1].y }
     NV.attempt_start = { x = pts[1].x, y = pts[1].y }
@@ -3748,8 +3756,9 @@ NV.bg_record = function(job, ok, how)
         end
         NV.noroute[job.key] = { x = job.px, y = job.py, area = job.area, door = door }
     end
-    log(string.format("REACH %s %s: %s (%s, traces=%d, %.1fs)", tostring(job.cat), tostring(job.name or job.key),
-        ok and "ok" or "NOT reachable", how or "route", job.R and job.R.traces or 0,
+    log(string.format("REACH %s %s d=%.0f dz=%.0f: %s (%s, traces=%d, pops=%d, %.1fs)", tostring(job.cat),
+        tostring(job.name or job.key), math.sqrt((job.tx - job.px) ^ 2 + (job.ty - job.py) ^ 2), job.tz - job.pz,
+        ok and "ok" or "NOT reachable", how or "route", job.R and job.R.traces or 0, job.R and job.R.pops or 0,
         job.R and (os.clock() - job.R.started) or 0))
 end
 -- Set up the check of target t from the player's spot; nil = nothing to search
@@ -3856,6 +3865,35 @@ local function nav_walk_stop(msg)
     NV.held = nil
     pcall(function() if shim and shim.HoldKeys then shim.HoldKeys(false, false, false, false) end end)
     if msg then speak(msg) end
+end
+
+-- After "Arrived": one short step toward the target (0.18 s, nav_drive plays it), so
+-- talking / the save point / a chest work with Enter right away. The walker stops
+-- facing its last step, which may point past the target, and up to 170 away -- the
+-- headmaster at 158 gave no talk hint; a 60 ms tap moved nothing. Not exits / doors.
+NV.face_goal = function()
+    local g = NV.goal
+    if not g or g.cat == "exit" or g.cat == "door" or g.cat == "building" then return end
+    local p = get_player_obj(); if not p then return end
+    local px, py = read_actor_pos(p); if not px then return end
+    local tx, ty = g.x, g.y
+    local t = nav_target()
+    if t and g.key and NV.tkey(t) == g.key then   -- a wandering NPC: where it is now
+        local x, y = NV.tpos(t)
+        if x then tx, ty = x, y end
+    end
+    local dx, dy = tx - px, ty - py
+    local dl = math.sqrt(dx * dx + dy * dy)
+    if dl < 25 then return end
+    -- 8 directions like the walk itself: a target up-left needs up AND left (one axis
+    -- missed the headmaster at "up left, 143"; a tap up then gave "Path action")
+    local nx, ny = dx / dl, dy / dl
+    local u, d, r, l = nx > 0.38, nx < -0.38, ny > 0.38, ny < -0.38
+    log(string.format("NAVWALK face target d=%.0f keys=%s%s%s%s", dl, u and "U" or "", d and "D" or "",
+        l and "L" or "", r and "R" or ""))
+    M.face_t = os.clock()   -- bump_step: this tap is ours, no wall thud
+    NV.face = { till = os.clock() + 0.18, u = u, d = d, l = l, r = r,
+        held = { UP_ARROW = u or nil, DOWN_ARROW = d or nil, LEFT_ARROW = l or nil, RIGHT_ARROW = r or nil } }
 end
 
 -- Standing "at a door": the walk's door leg is skipped within this distance of the door
@@ -3968,6 +4006,19 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
         end
         return
     end
+    if NV.face then
+        -- after "Arrived": a short tap toward the target so the character faces it --
+        -- the save point said "Save point" only after a manual tap left (2026-11-14)
+        if os.clock() < NV.face.till then
+            NV.held_t = NV.held_t or {}
+            for k in pairs(NV.face.held) do NV.held_t[k] = os.clock() end
+            pcall(function() shim.HoldKeys(NV.face.u, NV.face.d, NV.face.l, NV.face.r) end)
+        else
+            NV.face = nil
+            pcall(function() shim.HoldKeys(false, false, false, false) end)
+        end
+        return
+    end
     if not nav_walking then return end
     local now = os.clock()
     if now - NV.drive_t < 0.012 then return end
@@ -4020,6 +4071,7 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
         local gcat = NV.goal and NV.goal.cat
         if gcat ~= "exit" and gcat ~= "door" then
             nav_walk_stop("Arrived")
+            pcall(NV.face_goal)
             return
         end
         -- EXIT: its trigger volume can sit past the last waypoint (the palace hall
@@ -4050,7 +4102,8 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
             -- poll_action_popup) and waits for the key -- stop at the door
             NV.push = nil
             nav_walk_stop()   -- silent: the prompt speech says what to do
-            if gcat == "door" then speak("then backspace again", false) end
+            if gcat == "door" then speak("then backspace again", false)
+            elseif NV.prompt_at_start then speak("Still shut. " .. (M.popup_text or "press E")) end
             return
         end
         if now > NV.push.till then
@@ -4123,6 +4176,10 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
             if M.popup_said and gd < 450 then
                 log("NAVWALK at door exit (prompt)")
                 nav_walk_stop()   -- silent: "Arrived" would cut off the prompt speech
+                -- ...unless the prompt was up already when the walk began: the door is
+                -- still shut (an E press that didn't take) -- the walk ended without a
+                -- word after "Walking, total 161" (2026-11-14). Say the prompt again.
+                if NV.prompt_at_start then speak("Still shut. " .. (M.popup_text or "press E")) end
                 return
             end
         elseif NV.goal.cat == "door" then
@@ -4135,7 +4192,11 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
                 speak("then backspace again", false)
                 return
             end
-        elseif gd < 170 then nav_walk_stop("Arrived"); return end
+        elseif gd < 170 and math.abs(pz - (NV.goal.z or pz)) < LEVEL_THRESH then
+            -- (not when the goal is a floor up or down: in the academy hall a walk to
+            -- a door upstairs said "Arrived" passing beneath it)
+            nav_walk_stop("Arrived"); pcall(NV.face_goal); return
+        end
     end
     local jump = math.sqrt((px - NV.prog.x) ^ 2 + (py - NV.prog.y) ^ 2)
     if jump > 900 then nav_walk_stop("Walk ended, went through a door"); return end
@@ -4202,8 +4263,10 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
         else
             NV.noimprove = (NV.noimprove or 0) + 1
         end
-        if gd >= 0 and gd < 220 then
+        local gdz = (NV.goal and NV.goal.z) and math.abs(pz - NV.goal.z) or 0
+        if gd >= 0 and gd < 220 and gdz < LEVEL_THRESH then
             speak("Arrived")                       -- close enough to interact
+            pcall(NV.face_goal)
         elseif NV.goal and (NV.noimprove or 0) < 2 and (NV.retries or 0) < 5 then
             NV.retries = (NV.retries or 0) + 1
             speak("Rerouting")
@@ -4558,6 +4621,7 @@ M.poll_action_popup = function()
     local sig = action .. "|" .. (key or "")
     if sig == M.popup_said then return end
     M.popup_said = sig
+    M.popup_text = key and (action .. ", " .. key) or action   -- as spoken ("Still shut. ...")
     log("PROMPT: " .. sig)
     speak(key and (action .. ", " .. key) or action, false)
 end

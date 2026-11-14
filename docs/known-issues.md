@@ -23,18 +23,18 @@ and the result reading are verified for that one action.
 - **"Talk, <name>" hint and its sound were never heard by a person.** With Cyrus nearly
   every NPC offers Scrutinize, so in testing the path-action chime played every time; the
   talk-only branch only ran for the save point ("Save point" + the generated pop,
-  cue 9). Check the pop's loudness and character against the chime.
+  cue 9). By the generator formulas the pop was ~6.5 dB below the chime; since
+  2026-11-14 it is ~2.7 dB below (louder, a bit longer). Whether that is right needs ears.
 - **Ctrl+F9 action names** for enum values 5–7 (Guide/Allure/Inquire) are inferred from
   the event class names, not observed. 8 = Scrutinize is confirmed ("Studieren").
 
 ## Menus
 
-- **The save screen at a save point is not read.** Pressing Enter at a save point (the
-  book on a lectern, "save point" in the marker category) opens "Speichern", but the
-  game runs it inside an event, and the menu poller pauses during events
-  (`M.menu_unsafe`, a crash guard). The slots and the cursor stay silent. Escape or
-  Backspace leaves it. A fix needs a reader that only uses the active stack and plain
-  property reads while an event is up.
+- **Menus inside events are only read for save/load and confirm dialogs.** The save
+  point's screen is read since 2026-11-14 ("Save", "Slot 1, empty", "An ausgewähltem
+  Speicherplatz abspeichern? Nein") by a reader that runs on the game thread while an
+  event is up. Other screens a game event might open (shops, inns) are not known yet;
+  if one stays silent, add its class to `M.poll_event_menus`.
 
 ## Navigation
 
@@ -56,29 +56,20 @@ and the result reading are verified for that one action.
   box around a door's `Actor_Room` actors (good for the Atlasdam library), and since
   2026-11-14 the target must also be on the inner side of the doorway plane, so people
   standing in front of the door (the Wachmann) no longer count. The academy rooms list
-  only wall pieces on one line, so for them the doorway-plane fallback is used, and only
-  after a route failed ("Probably inside a building"). The padding can still catch
-  someone beside a house's side wall. Checked in-game: Russell, Mercedes (library) and
-  the headmaster (office upstairs) all reached; the Wachmann is walked to directly.
+  only wall pieces on one line, so for them the doorway-plane fallback is used after a
+  failed search -- which the background check now runs by itself: the headmaster says
+  "inside a building" a few seconds after the npc list opens. The padding can still
+  catch someone beside a house's side wall. Checked in-game: Russell, Mercedes (library)
+  and the headmaster (office upstairs) all reached; the Wachmann is walked to directly.
 - **Exit names are only checked in Atlasdam.** "exit 2 of 5: to Palast von Atlasdamm"
   comes from the exit's own labels; all five Palasttor exits had one. An exit without
   labels falls back to its level's town name (never seen yet), and a field or dungeon
   exit has not been tried. The exit to Atlasdamm is story-blocked right now ("Das ist
   wohl nicht der Weg …"), so no walk into another level was compared with its banner.
-- **Pathfinder gives up on long routes to another floor.** In the Atlasdam academy hall,
-  routing to targets on the upper floor fails from most spots
-  (`ROUTE fail traces≈1800 pops≈260` → "No route found"). From one spot it found a
-  13-waypoint "traced route, upstairs", so the search budget looks too small for long
-  multi-level routes. From a wedged corner it fails at once (`pops=1`: the start cell
-  itself counts as blocked). The second, bigger search box (2026-11-14) may help here;
-  not tried in the academy hall yet.
-- **Premature "Arrived" with a target on another floor.** Seen once in the academy hall:
-  "Routing to building, 790" was followed by "Arrived" one second later without getting
-  there; the target was on the upper floor. Suspect: the 170-unit arrival radius in
-  `nav_walk_watch` compares 2D distance only. (The exit case — "Arrived" 150 short of a
-  trigger behind the last waypoint — is fixed: exits are walked through.)
-- **Entering a door after "Öffnen, E" can need a sideways step.** At the academy door, E
-  opened it but walking up hit the door frame until the character stepped left onto the
-  door's center line. The walker stops where the prompt appears, which can be off-center.
-- **A menu opening mid-walk should stop the walk** (`M.menu_now` in `nav_drive`) —
-  written, not yet seen in-game.
+- **The router can't plan through shut doors.** In the academy hall the doors on the
+  first upper floor within ~1900 are reachable (a walk to one: 29 cells, "Arrived" up
+  there), but doors that lie behind another room's door (dz 918-1058, or 2353 away)
+  say "not reachable": the search ran out of cells (600-800 nodes) with every shut door
+  a wall. For targets inside a room the walk already leads to its door first; a door
+  behind a door would need routing through doors with an E stop on the way. Also: from
+  a wedged corner the router fails at once (`pops=1`: the start cell counts as blocked).
