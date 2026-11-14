@@ -1368,6 +1368,41 @@ int l_is_foreground(lua_State* L) {
     return 1;
 }
 
+// IsGameThread() -> bool, or nil while the game window doesn't exist yet. True iff the
+// caller runs on the engine's game thread: the thread that created the game's
+// "UnrealWindow" (UE4's main thread runs the engine loop and owns the window; the
+// splash screen has its own class). Needed because UE4SS 3.0.1 runs the work queued
+// by ExecuteInGameThread inside the FIRST ProcessEvent call made after queueing -- on
+// WHICHEVER thread makes it. Any UFunction our async loop or a key bind calls makes
+// the queued "game thread" work run there, side by side with the real game thread
+// (crash 2026-11-14: the menu list reader's FindAllOf on the async thread while the
+// game thread ran a dialog's Blueprint).
+static DWORD g_game_tid = 0;   // written once; a DWORD store/load is atomic on x64
+static BOOL CALLBACK gt_enum_proc(HWND h, LPARAM lp) {
+    DWORD wpid = 0;
+    DWORD tid = GetWindowThreadProcessId(h, &wpid);
+    if (wpid != GetCurrentProcessId()) return TRUE;
+    wchar_t cls[32] = {0};
+    if (GetClassNameW(h, cls, 32) && wcscmp(cls, L"UnrealWindow") == 0) {
+        *reinterpret_cast<DWORD*>(lp) = tid;
+        return FALSE;
+    }
+    return TRUE;
+}
+int l_is_game_thread(lua_State* L) {
+    DWORD tid = g_game_tid;
+    if (!tid) {
+        EnumWindows(gt_enum_proc, reinterpret_cast<LPARAM>(&tid));
+        if (!tid) {
+            lua_pushnil(L);
+            return 1;
+        }
+        g_game_tid = tid;
+    }
+    lua_pushboolean(L, GetCurrentThreadId() == tid ? 1 : 0);
+    return 1;
+}
+
 const luaL_Reg op1access_funcs[] = {
     {"Speak",                l_speak},
     {"Silence",              l_silence},
@@ -1404,6 +1439,7 @@ const luaL_Reg op1access_funcs[] = {
     {"TraceSetup",           l_trace_setup},
     {"Trace",                l_trace},
     {"IsForeground",         l_is_foreground},
+    {"IsGameThread",         l_is_game_thread},
     {nullptr, nullptr},
 };
 

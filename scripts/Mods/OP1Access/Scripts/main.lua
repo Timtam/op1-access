@@ -89,8 +89,51 @@ end
 -- actors (streaming as you walk, mass-freed on window focus-loss) -> uncatchable
 -- IsA/ProcessEvent crashes. ExecuteInGameThread serializes us with the game's frame so
 -- actors are never half-freed under us. Falls back to direct call if unavailable.
+-- BUT UE4SS 3.0.1 runs the queued work inside the FIRST ProcessEvent call made after
+-- queueing, on whatever thread makes it: also our async loop's or a key bind's, when
+-- they call any UFunction. Then "game thread" work ran beside the real game thread
+-- (crash 2026-11-14 in a dialog's Blueprint while the menu reader ran FindAllOf on the
+-- async thread). So each queued function checks the thread first (shim.IsGameThread);
+-- on a foreign one it waits in M.gt_pending for the next run on the game thread.
+M.gt_pending = {}
+M.on_gt = function()
+    if not (shim and shim.IsGameThread) then return true end
+    local ok, r = pcall(shim.IsGameThread)
+    return not ok or r ~= false   -- nil = window not there yet: as before
+end
+-- Work queued while such a run is going (M.gt_depth > 0) runs right after it, in the
+-- same run, instead of a nested ExecuteInGameThread (UE4SS iterates its queue meanwhile).
+-- One round only: what arrives meanwhile waits for the next run, so a busy queue can't
+-- keep the game thread in our code (that froze the game once).
+M.gt_depth = 0
+M.gt_drain = function()
+    if #M.gt_pending == 0 then return end
+    local l = M.gt_pending
+    M.gt_pending = {}
+    for _, f in ipairs(l) do
+        local ok, err = pcall(f)
+        if not ok then log("GT: queued work failed: " .. tostring(err)) end
+    end
+end
 M.in_gt = function(fn)
-    if ExecuteInGameThread then ExecuteInGameThread(fn) else fn() end
+    if not ExecuteInGameThread then fn(); return end
+    if M.gt_depth > 0 then M.gt_pending[#M.gt_pending + 1] = fn; return end
+    ExecuteInGameThread(function()
+        if not M.on_gt() then
+            M.gt_pending[#M.gt_pending + 1] = fn
+            M.gt_foreign = (M.gt_foreign or 0) + 1
+            if M.gt_foreign <= 5 or M.gt_foreign % 100 == 0 then
+                log(string.format("GT: queued work on a foreign thread (#%d), deferred", M.gt_foreign))
+            end
+            return
+        end
+        M.gt_depth = M.gt_depth + 1
+        pcall(M.gt_drain)
+        local ok, err = pcall(fn)
+        if not ok then log("GT: queued work failed: " .. tostring(err)) end
+        pcall(M.gt_drain)
+        M.gt_depth = M.gt_depth - 1
+    end)
 end
 log("game-thread exec driver: " .. (ExecuteInGameThread and "ExecuteInGameThread" or "DIRECT (fallback -- not available!)"))
 
@@ -2088,12 +2131,13 @@ end
 
 local ok_loop = pcall(LoopAsync, POLL_INTERVAL_MS, function()
     if not M.fg_ok() then return end   -- unfocused: skip menu polls (game calls fault)
-    pcall(M.event_menus_tick)
     -- Capture title widgets on THIS fast loop (20Hz) so the title menu reads immediately;
     -- the game-thread pump only ticks ~5Hz, which made it read seconds late. Pre-game only
     -- (not M.field_player) -- there are no streamed field actors to fault FindAllOf, same
     -- as poll_saveload's FindFirstOf which has run here since launch -- and never mid-fade
     -- (M.menu_unsafe). The find-once guard means it's a cheap registry walk once captured.
+    -- (These polls must stay off the game thread: each FindFirstOf of a screen that isn't
+    -- open walks every object, 45-80 ms -- moved there on 2026-11-14 they froze the game.)
     if M.scan_scene and not M.field_player and not M.menu_unsafe then pcall(M.scan_scene) end
     pcall(poll_active_menu)
     pcall(M.poll_saveload)
@@ -2101,6 +2145,13 @@ local ok_loop = pcall(LoopAsync, POLL_INTERVAL_MS, function()
     pcall(M.poll_mainmenu)
     pcall(M.poll_tutorial)
     pcall(M.poll_fieldcommand)
+    -- Queue the game-thread work LAST: the polls above call UFunctions, and UE4SS runs
+    -- queued work inside the next ProcessEvent call on any thread -- queued after them,
+    -- the game thread nearly always gets it first. Work this thread took anyway waits in
+    -- M.gt_pending; an empty run kicks it back to the game thread.
+    pcall(M.event_menus_tick)
+    if M.menu_lists_tick then pcall(M.menu_lists_tick) end
+    if #M.gt_pending > 0 and M.gt_depth == 0 then M.in_gt(function() end) end
     -- The native GetTalkText hook speaks dialogue directly (independent of this
     -- loop, which can die after a level load). The loop just logs the line.
     -- (dialogue polling moved into the radar pump: this loop dies intermittently
@@ -3290,7 +3341,7 @@ do
     -- thread). Called from the keybind thread it waited for the game thread while
     -- holding the Lua lock the game thread needed -> the game froze (2026-11-11).
     local ok = pcall(RegisterKeyBind, Key.F2, { ModifierKey.CONTROL }, function()
-        ExecuteInGameThread(function()
+        M.in_gt(function()
             local done = false
             pcall(function() if shim and shim.Screenshot then done = shim.Screenshot(SHOT_PATH) end end)
             speak(done and "Screenshot saved" or "Screenshot failed")
