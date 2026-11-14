@@ -31,28 +31,27 @@ gets fixed, delete its entry (the commit message keeps the history).
   - Steering follows the leg's line, and routes stop 110 short of the target instead
     of running into a chest.
 
-  The study's bump spot and the three chest walks checked in-game ran clean. Not
-  checked yet:
+  The study's bump spot, the three chest walks and the Atlasdam walks (library,
+  guards, a building upstairs) ran clean. Not checked yet:
   - Counting a waypoint as reached once the walker is past it (within 60); this is meant
     to stop the circling at turns.
-  - Long walks: random battles stopped every one of them after 10-15 s.
-  - Towns and other dungeons.
+  - Long walks in the dungeon: random battles stopped every one of them after 10-15 s.
+  - Other towns and dungeons.
 
   Planning is fast since 2026-11-14: the shim fires the traces natively (0.010 ms each
   instead of 0.087 through UE4SS). The study's long chest route took 0.8 s instead of
   5.6 s, and a town search that failed took 1.5 s instead of up to 16. A grid kept per
   area is no longer needed for speed.
-- **Bigger search boxes are cheap now, but not done.** "Not reachable" still means no
-  way inside the start/goal box plus 20 cells. From the Atlasdam library a building
-  "3230, above" failed after 11675 traces. A third, bigger box would cost about 2 s
-  more and might find long detours.
-- **The library door from inside: no "Öffnen, E".** Walking out of the Atlasdam
-  library to a target outside, the walker reached the door, but the game showed the
-  Wachmann's path action ("Path action, Wachmann"; he stands outside), not the
-  door's prompt. So the auto door did nothing, and the walk ended with "At the door.
-  Open it, then backspace again" (2026-11-14). Walking in from outside worked.
-  Not checked: whether pressing E there opens the door or starts something with the
-  Wachmann.
+- **Doors from inside: only the open case is checked.** Leaving the Atlasdam library
+  works since 2026-11-14 (af2f147). Its door was open every time: the walker walks on
+  when 2 s of pushing into the doorway bring no "Öffnen" prompt, and steps through
+  first when the route from the threshold fails. A door shut from inside (the library
+  on 2026-11-13) should show the prompt and open by itself as from outside, but that
+  was not seen again.
+- **The side step in front of a person is untested.** When stepping straight toward
+  a person behind a counter gets no closer, every other try steps sideways to stand
+  square in front (Mercedes is picked at 161 with 26 to the side, not at 166 with 48).
+  In the tests the route already ended in front of her.
 
 ## Path actions
 
@@ -90,11 +89,14 @@ and the result reading are verified for that one action.
 ## Navigation
 
 - **"Not reachable" can still be wrong for very long detours.** The router searches
-  the start/goal rectangle plus 9 cells, and when that runs out of cells, once more with
-  20 cells (~2600 units) and 6000 more traces. That fixed the Palasttor cases (the study
-  and the palace exits, a guard up-left: all reachable only via the stairs outside the
-  small box). A way round that leaves even the big box, or needs more traces, still
-  fails. A failing walk can now take up to ~16 s ("Still routing") instead of ~8.
+  the start/goal rectangle plus 9 cells. When that runs out of cells it searches once
+  more with 20 cells (~2600 units) and 6000 more traces. With native traces it then
+  tries a third time with 40 cells (~5200 units) and 20000 more (since 2026-11-14).
+  The +20 box fixed the Palasttor cases (the study and the palace exits, a guard
+  up-left: all reachable only via the stairs outside the small box). A way round that
+  leaves the +40 box, or needs more traces, still fails. Atlasdam's buildings at
+  ~16000 units and one "2922, above" stay "not reachable"; the town region you can
+  walk ends inside that box. A failing search now takes ~1.5-3 s.
 - **The list is checked in the background, but not everything** (user request
   2026-11-13: offer only targets you can reach, or say which you can't). While you
   explore, the walk router checks the open list quietly (40 traces per tick), nearest
