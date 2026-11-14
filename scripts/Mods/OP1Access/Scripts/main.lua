@@ -1304,10 +1304,15 @@ end
 -- how many to buy or sell: Collapsed (1) until a row is chosen, Visible (0) while it asks
 -- (log 2026-11-14). Inns use the same screen.
 -- The top menu shows only the shop's commands: TopShopCommands (TArray<uint8> @0x318) lists
--- them, TopMenuSelectId indexes that list, and command k is panel TopMenu_0k, GameText
--- eSHOP_CONTENT_0k (0 Kaufen, 1 Verkaufen, 2 Bleiben, 3 Ausrüstung, 4/5 Verlassen, 6
--- Gruppe wechseln, 7 Geschichte lauschen, 8 Ruf wiederherstellen, 9 Weiterreisen). An inn
--- read "Kaufen" for its "Bleiben" while the code took TopMenu_<cursor>.
+-- them, TopMenuSelectId indexes that list. A command is what ShopMode becomes when it runs
+-- (ESHOPMENU_MODE); its text is GameText eSHOP_CONTENT_xx, panel TopMenu_xx, in another
+-- order: sh.CONTENT. Found 2026-11-14 from what each command opened in a tavern (3
+-- EquipmentMenuWidget_C, 4 ListCharacterWidget_C, 5 BarMenuStorySelect_C, 6 the
+-- reputation dialog) and a screenshot of it ("Gruppe wechseln, Ausrüstung, Geschichte
+-- lauschen, Ruf wiederherstellen, Weiterreisen" for [4 3 5 6 9]); the shop [0 1 7] and the
+-- inn [2 8] end in "Verlassen" (04 "leave the shop", 05 "leave the inn" in Japanese).
+-- Taking TopMenu_<cursor> read "Kaufen" for an inn's "Bleiben", taking the command as the
+-- text's number read "Verlassen" twice in the tavern.
 -- SHOP NAMES for the navigator (user request 2026-11-14: say what a shop is before
 -- talking to it): ShopTriggerBP_C.ShopLabel @0x370 ("Plain_L_A_SHOP_00") is a row of
 -- /Game/Shop/Database/ShopInfo (ShopInfoData: ShopName FName @0 = a GameText label,
@@ -1332,6 +1337,10 @@ M.shop_name = function(actor)
 end
 do
     local sh = {}
+    -- command (ESHOPMENU_MODE) -> eSHOP_CONTENT_xx: 0 Kaufen, 1 Verkaufen, 2 Bleiben, 3
+    -- Ausrüstung, 4 Gruppe wechseln, 5 Geschichte lauschen, 6 Ruf wiederherstellen, 7
+    -- Verlassen (shop), 8 Verlassen (inn), 9 Weiterreisen
+    sh.CONTENT = { [0] = 0, [1] = 1, [2] = 2, [3] = 3, [4] = 6, [5] = 7, [6] = 8, [7] = 4, [8] = 5, [9] = 9 }
     -- the shop's top menu: { { cmd, text, off }, ... } in menu order (nil: not readable)
     sh.commands = function(w)
         if not (shim and shim.Peek) then return nil end
@@ -1343,17 +1352,30 @@ do
         local out = {}
         for i = 0, cnt - 1 do
             local k = shim.Peek(arr + i, "u8")
-            if type(k) ~= "number" or k > 9 then return nil end
+            local c = type(k) == "number" and sh.CONTENT[k]
+            if not c then return nil end
             local p, t, off
-            pcall(function() p = w[string.format("TopMenu_%02d", k)] end)
+            pcall(function() p = w[string.format("TopMenu_%02d", c)] end)
             if p then
                 t = M.wtext(p.MenuText)
                 pcall(function() off = p.IsUnEnable end)
             end
-            if not t or M.placeholder(t) then t = M.gt_label(string.format("eSHOP_CONTENT_%02d", k)) end
+            if not t or M.placeholder(t) then t = M.gt_label(string.format("eSHOP_CONTENT_%02d", c)) end
             out[#out + 1] = { cmd = k, text = t, off = off == true }
         end
         return out
+    end
+    -- the menu's own panel list, by name (logged on open: is it the shown order?)
+    sh.panels = function(w)
+        local names = {}
+        pcall(function()
+            w.TopMenuItemList:ForEach(function(_, e)
+                local nm = "?"
+                pcall(function() nm = e:get():GetFName():ToString() end)
+                names[#names + 1] = nm
+            end)
+        end)
+        return table.concat(names, " ")
     end
     M.shop_money = function(w)
         local m, u
@@ -1397,8 +1419,9 @@ do
             for _, c in ipairs(sh.cmds or {}) do
                 ct[#ct + 1] = string.format("%d=%s%s", c.cmd, tostring(c.text), c.off and "(off)" or "")
             end
-            log(string.format("SHOP open: %s mode=%s label=%s money=%s commands=[%s]", tostring(title), tostring(mode),
-                tostring(label), tostring(money), table.concat(ct, " ")))
+            local okp, panels = pcall(sh.panels, w)
+            log(string.format("SHOP open: %s mode=%s label=%s money=%s commands=[%s] panels=[%s]", tostring(title),
+                tostring(mode), tostring(label), tostring(money), table.concat(ct, " "), tostring(okp and panels)))
             speak(((title and not M.placeholder(title)) and title or "Shop") .. (money and (", " .. money) or ""), true)
             M.await_first_item = true
         end
