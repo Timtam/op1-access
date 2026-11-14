@@ -3808,6 +3808,10 @@ end
 -- The open door the player stands in (within 160 of its center, no "Öffnen" prompt up)
 -- with the target on its other side: { x1, y1 = doorway center, x2, y2 = 170 beyond
 -- it toward the target, door }. nil otherwise. For the step-through after "no route".
+-- Standing IN the doorway (within 40 of its plane) counts whatever the side: leaving
+-- the library, the walker stopped 1 unit outside the plane and 22 off the center line,
+-- the body-wide test grazed the frame, and "no route" said "The door is shut" in the
+-- open door (2026-11-14). Then the step goes toward the target's side.
 NV.through_door = function(px, py, pz, ox, oy)
     if M.popup_said then return nil end          -- a prompt is up: that door is shut
     local okd, doors = pcall(M.door_list)
@@ -3818,7 +3822,7 @@ NV.through_door = function(px, py, pz, ox, oy)
         if dist < 160 and math.abs((d.z or pz) - pz) < 300 and dist < bd then
             local ap = (px - d.cx) * d.nx + (py - d.cy) * d.ny
             local at = (ox - d.cx) * d.nx + (oy - d.cy) * d.ny
-            if ap * at < 0 then best, bd, bat = d, dist, at end
+            if ap * at < 0 or (math.abs(ap) < 40 and math.abs(at) > 40) then best, bd, bat = d, dist, at end
         end
     end
     if not best then return nil end
@@ -3827,6 +3831,43 @@ NV.through_door = function(px, py, pz, ox, oy)
              door = best }
 end
 
+-- The A* open list as a binary min-heap on f. It was a plain list scanned in full for
+-- every step (and shifted by table.remove): fine for small boxes, but quadratic in
+-- the big ones that cheap native traces allow. Stale duplicates are skipped on pop
+-- (R.closed), as before.
+NV.heap_push = function(h, n)
+    local i = #h + 1
+    local f = n.f
+    while i > 1 do
+        local pi = i // 2
+        local pn = h[pi]
+        if pn.f <= f then break end
+        h[i] = pn
+        i = pi
+    end
+    h[i] = n
+end
+NV.heap_pop = function(h)
+    local cnt = #h
+    if cnt == 0 then return nil end
+    local top, last = h[1], h[cnt]
+    h[cnt] = nil
+    cnt = cnt - 1
+    if cnt > 0 then
+        local i, f = 1, last.f
+        while true do
+            local l = i * 2
+            if l > cnt then break end
+            local r = l + 1
+            local c = (r <= cnt and h[r].f < h[l].f) and r or l
+            if h[c].f >= f then break end
+            h[i] = h[c]
+            i = c
+        end
+        h[i] = last
+    end
+    return top
+end
 -- The router's steps: the 4 straight ones first (NV.route_slice needs them before the
 -- diagonals), then the 4 diagonals.
 NV.DIRS8 = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 } }
@@ -3902,14 +3943,20 @@ end
 -- round may leave the small box. From the academy door the guard up-left counted as
 -- unreachable -- the stairs down lay outside the box -- yet from below he stood in a
 -- straight line (2026-11-14). The traces done so far stay cached (same start cell).
+-- With native traces (cheap since 2026-11-14) a THIRD try follows in a +40 box with
+-- 20000 more traces (~2.5 s for the walk): from the Atlasdam library a building
+-- "3230, above" ran out of the +20 box after 11675 traces.
 NV.route_widen = function(R)
-    if R.pad >= 20 then return nil end
-    local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, R.px, R.py, R.pz, 20)
+    local pad
+    if R.pad < 20 then pad = 20
+    elseif R.pad < 40 and M.tr_native == true then pad = 40
+    else return nil end
+    local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, R.px, R.py, R.pz, pad)
     W.gcache, W.ecache = R.gcache, R.ecache
     W.traces, W.pops, W.started, W.saidlong = R.traces, R.pops, R.started, R.saidlong
     W.cpu, W.ticks = R.cpu, R.ticks
-    W.maxtr, W.maxt = R.traces + 6000, R.maxt + 8
-    log(string.format("ROUTE widen: box +20 cells after %d traces", R.traces))
+    W.maxtr, W.maxt = R.traces + (pad == 40 and 20000 or 6000), R.maxt + 8
+    log(string.format("ROUTE widen: box +%d cells after %d traces", pad, R.traces))
     return W
 end
 -- A body-wide straight corridor (3 knee-high lines, center and +-42) is clear.
@@ -3945,12 +3992,8 @@ NV.route_slice = function(R, budget, itercap, deadline)
         if deadline and os.clock() > deadline then return nil end
         iters = iters + 1
         if iters > itercap then return nil end   -- yield; routing resumes next tick
-        local bi, best
-        for i, n in ipairs(R.open) do
-            if not best or n.f < best.f then bi, best = i, n end
-        end
+        local best = NV.heap_pop(R.open)
         if not best then return "fail", "box" end
-        table.remove(R.open, bi)
         if not R.closed[best.k] then
             R.closed[best.k] = true
             R.pops = R.pops + 1
@@ -4070,7 +4113,7 @@ NV.route_slice = function(R, budget, itercap, deadline)
                         -- that steps near walls cost more than 1
                         local hx, hy = math.abs(R.gx - c[1]), math.abs(R.gy - c[2])
                         local h = math.max(hx, hy) + 0.41421 * math.min(hx, hy)
-                        R.open[#R.open + 1] = { x = c[1], y = c[2], z = c[3], k = nk, g = ng, f = ng + 1.2 * h }
+                        NV.heap_push(R.open, { x = c[1], y = c[2], z = c[3], k = nk, g = ng, f = ng + 1.2 * h })
                     end
                 end
             end
@@ -4326,7 +4369,7 @@ NV.face_goal = function(retry)
         if not retry and t.actor and class_name_of(t.actor) == "KSFieldNPCCharacter_C" then
             local a = 0
             pcall(function() a = t.actor:GetAddress() end)
-            if a ~= 0 then NV.approach = { addr = a, tries = 0, next = os.clock() + 0.7 } end
+            if a ~= 0 then NV.approach = { addr = a, tries = 0, next = os.clock() + 0.7, x = tx, y = ty } end
         end
     end
     local dx, dy = tx - px, ty - py
@@ -4336,10 +4379,28 @@ NV.face_goal = function(retry)
     -- missed the headmaster at "up left, 143"; a tap up then gave "Path action")
     local nx, ny = dx / dl, dy / dl
     local u, d, r, l = nx > 0.38, nx < -0.38, ny > 0.38, ny < -0.38
+    local dur = 0.18
+    -- Odd retries (NV.approach): when the last step got no closer, a step SIDEWAYS
+    -- instead -- a counter between you and the person stops the straight step, and the
+    -- game picks them only when you stand nearly square in front. Mercedes behind the
+    -- library counter: picked 26 to the side at 161, not 48 to the side at 166
+    -- (2026-11-14). The next retry faces them again.
+    local ap = NV.approach
+    if type(retry) == "number" and retry % 2 == 1 and ap and ap.lastd and dl > ap.lastd - 5 then
+        local side
+        if math.abs(dx) >= math.abs(dy) then
+            u, d, r, l, side = false, false, dy > 12, dy < -12, math.abs(dy)
+        else
+            u, d, r, l, side = dx > 12, dx < -12, false, false, math.abs(dx)
+        end
+        if not (u or d or r or l) then return end
+        dur = (side < 60) and 0.12 or 0.18
+    end
+    if ap then ap.lastd = dl end
     log(string.format("NAVWALK face target d=%.0f keys=%s%s%s%s", dl, u and "U" or "", d and "D" or "",
         l and "L" or "", r and "R" or ""))
     M.face_t = os.clock()   -- bump_step: this tap is ours, no wall thud
-    NV.face = { till = os.clock() + 0.18, u = u, d = d, l = l, r = r,
+    NV.face = { till = os.clock() + dur, u = u, d = d, l = l, r = r,
         held = { UP_ARROW = u or nil, DOWN_ARROW = d or nil, LEFT_ARROW = l or nil, RIGHT_ARROW = r or nil } }
 end
 
@@ -4416,11 +4477,16 @@ NV.door_auto_step = function()
             d.phase, d.t = "wait", now
         end
     elseif d.phase == "wait" then
-        if not M.popup_said then               -- the prompt went away: the door is open
+        -- the prompt went away AND stays away 0.4 s: the door is open. A prompt that
+        -- blinked off right after E once read as "opened" while the library door stayed
+        -- shut (the route then said "A shut door on the way", 2026-11-14)
+        if M.popup_said then d.gone = nil end
+        if not M.popup_said and not d.gone then d.gone = now end
+        if d.gone and now - d.gone >= 0.4 then
             log("DOORAUTO opened")
             NV.door_auto = nil
             NV.resume_walk = true
-        elseif now - d.t > 1.5 then
+        elseif now - d.t > 1.5 and not d.gone then
             d.tries = d.tries + 1
             if d.tries >= 2 then
                 log("DOORAUTO no luck")
@@ -4693,6 +4759,23 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
         end
         if now > NV.push.till then
             NV.push = nil
+            if gcat == "door" then
+                local dd = math.sqrt((NV.goal.x - px) ^ 2 + (NV.goal.y - py) ^ 2)
+                log(string.format("DOORLEG no prompt: player (%.0f,%.0f) door (%.0f,%.0f) d=%.0f",
+                    px, py, NV.goal.x, NV.goal.y, dd))
+                -- 2 s of pushing into the doorway and no "Öffnen" prompt: the door is OPEN
+                -- (the library's stayed open after we went in; the walker stood 30 past
+                -- its center and still said "Open it", 2026-11-14) -- walk on to the
+                -- target. Once per target in 30 s, so a door that really is shut can't loop.
+                local w = NV.door_walked_on
+                if dd < 60 and not (w and w.key == NV.goal.key and now - w.t < 30) then
+                    NV.door_walked_on = { key = NV.goal.key, t = now }
+                    log("DOORLEG door is open: walking on")
+                    nav_walk_stop()
+                    NV.resume_walk = true
+                    return
+                end
+            end
             nav_walk_stop(gcat == "door" and "At the door. Open it, then backspace again"
                 or "At the exit, no way through")
             return
@@ -4912,16 +4995,25 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
     -- one to talk to (M.talk_pick = player.refTalkChara), at most 3
     local a = NV.approach
     if a and not nav_walking and not NV.face and not NV.route and os.clock() >= a.next then
-        if M.talk_pick == a.addr then
+        local inrange = (M.talk_pick == a.addr)
+        if not inrange and (M.talk_pick or 0) ~= 0 and M.talk_pick_obj and a.x then
+            -- the game's pick can be ANOTHER object for the same person: in the library
+            -- the hint said "Path action, Mercedes" (pick 24EF9C0D030), yet the list's
+            -- actor differed and the walker stepped on, "not reached" (2026-11-14).
+            -- Someone picked where the target stands counts.
+            local x, y = read_actor_pos(M.talk_pick_obj)
+            if x and math.sqrt((x - a.x) ^ 2 + (y - a.y) ^ 2) < 100 then inrange = true end
+        end
+        if inrange then
             log("NAVWALK in talk range")
             NV.approach = nil
-        elseif a.tries >= 3 then
-            log("NAVWALK talk range not reached")
+        elseif a.tries >= 4 then
+            log(string.format("NAVWALK talk range not reached (pick %X, target %X)", M.talk_pick or 0, a.addr))
             NV.approach = nil
         else
-            a.tries = a.tries + 1
+            a.tries = a.tries + 1        -- odd tries step sideways (NV.face_goal)
             a.next = os.clock() + 0.7
-            pcall(NV.face_goal, true)
+            pcall(NV.face_goal, a.tries)
         end
     end
     pcall(NV.door_auto_step)          -- opening a door on the route (E, wait, walk on)
@@ -5286,7 +5378,7 @@ M.interact_poll = function()
         local o = p.refTalkChara
         if o and o:IsValid() then taddr = o:GetAddress(); tobj = o end
     end) end
-    M.talk_pick = taddr   -- who Enter would talk to now (the walker's approach check)
+    M.talk_pick, M.talk_pick_obj = taddr, tobj   -- who Enter would talk to now (the walker's approach check)
     local raw = {}
     local mgr = get_fcmd_mgr()
     if mgr then local _; _, raw = read_active_commands(mgr) end
