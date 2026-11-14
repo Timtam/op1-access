@@ -5,28 +5,22 @@ gets fixed, delete its entry (the commit message keeps the history).
 
 ## Battles (user report 2026-11-14)
 
-- **The navigator and radar don't know a battle is on.** Navigation keys still act in
-  battle. `KSGameStatics:GetBattleMode` exists (the exit trigger BP calls it) and should
-  gate the navigator, the walker and the radar like an event does.
-- **Battle menus are not read at all.** Command menu, abilities, items, target choice,
-  turn order and the result screen are silent. The battle UI classes are in the object
-  dump (`BattleCommandMenu_C` / `BattleCommandMenuItem_C`, `BattleTargetCursor_C`,
-  `BattleEnemyStatus_C`, `WeakStatusIcon_C`, `BreakStatusIcon_C`,
+- **Battle menus are not read at all.** Command menu (Angriff, Gelehrter-Fertigkeiten,
+  Objekt, Verteidigen, Fliehen), skills, items, target choice, turn order and the result
+  screen are silent; only the battle tutorials are read. In battle the UI manager's
+  focused screen is `InputWrapper_C`. The battle UI classes are in the object dump
+  (`BattleCommandMenu_C` / `BattleCommandMenuItem_C`, `BattleCommandHelpWindow_C`,
+  `BattleTargetCursor_C`, `BattleEnemyStatus_C`, `WeakStatusIcon_C`, `BreakStatusIcon_C`,
   `ActionOrderTimeLine_C`, `BattleResultPanelWidget_C`).
 - **Enemy information needs shortcuts:** names, HP if shown, shield points, revealed
   weaknesses, break state, turn order -- on keys, without having to target each enemy.
+  (Battles are gated since 2026-11-14: the navigator keys say "In battle".)
 
 ## Walker (user report 2026-11-14)
 
-- **Getting stuck still needs the player.** Too often the walker ends with "Stuck, no way
-  on from here. Step aside, then backspace again". It already does one automatic
-  sidestep; it should try more (other directions, a step back) and re-route by itself.
-  From a wedged spot the router fails at once because the start cell itself counts as
-  blocked -- it could start from the nearest free cell instead.
-- **Doors should open by themselves.** At a door on the route the walker stops with
-  "Öffnen, E, then backspace again". The mod could press E itself (only for the door
-  the route goes through, never at NPCs) and walk on once the trace through it is
-  clear -- also through the room door the game closes behind you.
+- **Freeing itself is written but untested.** When a re-route fails from a wedged spot
+  the walker now takes up to 3 steps into open directions before "Step aside"
+  ("Trying another way"). No wedge happened in the tests that would have shown it.
 - **Too many re-routes and wall bumps.** Routes hug walls (4-neighbour grid of 130-unit
   cells, the path keeps every corner cell) and the walker cuts corners. Ideas: smooth the
   path by line of sight with the body-wide test, a cost for cells next to walls,
