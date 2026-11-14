@@ -38,15 +38,25 @@ and the result reading are verified for that one action.
 
 ## Navigation
 
-- **The router's search box.** It only searches the rectangle spanned by start and goal
-  plus 9 cells (~1200 units); detours around a block or to far stairs fail even when a
-  path exists. Such targets now say "not reachable" after one failed try (see below),
-  which can be wrong for them.
-- **The navigator still lists targets it cannot reach** (user request 2026-11-13:
-  markers, buildings etc. should only be offered if reachable). Now: a target inside a
-  building says "inside a building" and the walk leads to its door; a target the router
-  failed on says "not reachable" from then on (from about the same spot). Not done: a
-  quiet background check of the whole list before you ever try a target.
+- **"Not reachable" can still be wrong for very long detours.** The router searches
+  the start/goal rectangle plus 9 cells, and when that runs out of cells, once more with
+  20 cells (~2600 units) and 6000 more traces. That fixed the Palasttor cases (the study
+  and the palace exits, a guard up-left: all reachable only via the stairs outside the
+  small box). A way round that leaves even the big box, or needs more traces, still
+  fails. A failing walk can now take up to ~16 s ("Still routing") instead of ~8.
+- **The list is checked in the background, but not everything** (user request
+  2026-11-13: offer only targets you can reach, or say which you can't). While you
+  explore, the walk router checks the open list quietly (40 traces per tick), nearest
+  and focused targets first; Palasttor's 5 exits took ~13 s with the big box. Failures
+  say "not reachable" and go last when the list is built again. Not checked: targets
+  inside a house you're not in (they say "inside a building"; the walk goes to the door)
+  and, from inside a house, targets outside it. A result only holds within 600 of where
+  you stood, so after walking off the list is checked again on the next build.
+- **"Inside a building" for someone standing outside the door.** The Wachmann in front of
+  the Atlasdam library counts as inside: the library's room box (its `Actor_Room` actors
+  plus 250 padding) reaches past the door. A walk to him goes to the library door first.
+  Fix idea: also require the target to be on the inner side of the doorway plane
+  (`BorderBox`).
 - **Room detection only works for some buildings.** "Inside a building" comes from the
   box around a door's `Actor_Room` actors (good for the Atlasdam library). The academy
   rooms list only wall pieces on one line, so for them the doorway-plane fallback is
@@ -62,7 +72,8 @@ and the result reading are verified for that one action.
   (`ROUTE fail traces≈1800 pops≈260` → "No route found"). From one spot it found a
   13-waypoint "traced route, upstairs", so the search budget looks too small for long
   multi-level routes. From a wedged corner it fails at once (`pops=1`: the start cell
-  itself counts as blocked).
+  itself counts as blocked). The second, bigger search box (2026-11-14) may help here;
+  not tried in the academy hall yet.
 - **Premature "Arrived" with a target on another floor.** Seen once in the academy hall:
   "Routing to building, 790" was followed by "Arrived" one second later without getting
   there; the target was on the upper floor. Suspect: the 170-unit arrival radius in

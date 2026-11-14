@@ -2945,7 +2945,7 @@ local function nav_build_list()
                 end
             end
         end
-        table.sort(NV.list, function(a, b) return a.d < b.d end)
+        NV.list_done(px, py)
         return
     end
     local list = nil
@@ -2975,7 +2975,20 @@ local function nav_build_list()
             end
         end
     end
-    table.sort(NV.list, function(a, b) return a.d < b.d end)
+    NV.list_done(px, py)
+end
+-- Nearest first, but targets known to be unreachable from here (a failed walk or the
+-- background check) last; then queue the list for the background check.
+NV.list_done = function(px, py)
+    for _, t in ipairs(NV.list) do
+        local key = NV.tkey(t)
+        t.unreach = (key and NV.is_noroute(key, px, py) and not NV.noroute[key].door) and true or false
+    end
+    table.sort(NV.list, function(a, b)
+        if a.unreach ~= b.unreach then return b.unreach end
+        return a.d < b.d
+    end)
+    pcall(NV.bg_queue)
 end
 
 -- ===== Reachability: targets inside buildings, and targets the router failed on =====
@@ -3105,6 +3118,7 @@ end
 local function nav_announce(prefix)
     local t = nav_target()
     if not t then speak("No target"); return end
+    pcall(NV.bg_front, t)   -- the background check looks at this one next
     local p = get_player_obj(); if not p then speak("No player"); return end
     local px, py, pz = read_actor_pos(p); if not px then speak("No position"); return end
     local ox, oy, oz = NV.tpos(t)
@@ -3366,13 +3380,60 @@ local function nav_route_finish(goalnode)
     end
 end
 
-local function nav_route_step()
-    local R = NV.route
-    if not R then return end
+-- A routing job (the walk router's NV.route, or a background check's NV.bg.R): the
+-- search box is the start/goal rectangle plus `pad` cells (9); it fails after maxtr
+-- traces or maxt seconds.
+NV.route_job = function(mode, ox, oy, oz, px, py, pz, pad)
+    pad = pad or 9
+    local gx = math.floor((ox - px) / NV.STEP + 0.5)
+    local gy = math.floor((oy - py) / NV.STEP + 0.5)
+    local startk = key3(0, 0, 0)
+    return {
+        mode = mode, ox = ox, oy = oy, oz = oz, pad = pad,
+        px = px, py = py, pz = pz, gx = gx, gy = gy, startk = startk,
+        open = { { x = 0, y = 0, z = pz, k = startk, g = 0, f = math.abs(gx) + math.abs(gy) } },
+        came = {}, gbest = { [startk] = 0 }, closed = {},
+        ecache = {}, gcache = {}, traces = 0, pops = 0, started = os.clock(),
+        maxtr = 5200, maxt = 8,
+        minx = math.min(0, gx) - pad, maxx = math.max(0, gx) + pad,
+        miny = math.min(0, gy) - pad, maxy = math.max(0, gy) + pad,
+    }
+end
+-- Second try in a bigger box (+20 cells) after the first one ran out of cells: a way
+-- round may leave the small box. From the academy door the guard up-left counted as
+-- unreachable -- the stairs down lay outside the box -- yet from below he stood in a
+-- straight line (2026-11-14). The traces done so far stay cached (same start cell).
+NV.route_widen = function(R)
+    if R.pad >= 20 then return nil end
+    local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, R.px, R.py, R.pz, 20)
+    W.gcache, W.ecache = R.gcache, R.ecache
+    W.traces, W.pops, W.started, W.saidlong = R.traces, R.pops, R.started, R.saidlong
+    W.maxtr, W.maxt = R.traces + 6000, R.maxt + 8
+    log(string.format("ROUTE widen: box +20 cells after %d traces", R.traces))
+    return W
+end
+-- A body-wide straight corridor (3 knee-high lines, center and +-42) is clear.
+NV.corridor_clear = function(ksl, p, px, py, pz, ox, oy)
+    local ddx, ddy = ox - px, oy - py
+    local dl = math.sqrt(ddx * ddx + ddy * ddy)
+    local pox, poy = 0, 0
+    if dl > 1 then pox, poy = ddy / dl * 42, -ddx / dl * 42 end
+    for _, off in ipairs({ 0, 1, -1 }) do
+        local ok, hit = line_blocked(ksl, p,
+            px + pox * off, py + poy * off, pz + 30,
+            ox + pox * off, oy + poy * off, pz + 30)
+        if not (ok and not hit) then return false end
+    end
+    return true
+end
+
+-- One slice of the A* search on job R: at most `budget` traces and `itercap` loop
+-- turns. Returns "found", node | "fail", why ("box" = no cells left in the box,
+-- "cap" = out of traces / time) | nil (not done, call again next tick).
+NV.route_slice = function(R, budget, itercap)
     local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
     local p = get_player_obj()
-    if not (ksl and p) then nav_route_finish(nil); return end
-    local budget = 110                     -- traces per pump tick (keeps frames smooth)
+    if not (ksl and p) then return "fail", "player" end
     -- HARD per-tick iteration cap. budget counts TRACES, but nav_ground / the edge
     -- wall-check return used=0 on a cache hit -- so over warm cache budget stops
     -- decrementing and the loop below would spin (O(open) min-scan each iteration)
@@ -3381,12 +3442,12 @@ local function nav_route_step()
     local iters = 0
     while budget > 0 do
         iters = iters + 1
-        if iters > 800 then return end     -- yield; routing resumes next tick
+        if iters > itercap then return nil end   -- yield; routing resumes next tick
         local bi, best
         for i, n in ipairs(R.open) do
             if not best or n.f < best.f then bi, best = i, n end
         end
-        if not best then nav_route_finish(nil); return end
+        if not best then return "fail", "box" end
         table.remove(R.open, bi)
         if not R.closed[best.k] then
             R.closed[best.k] = true
@@ -3398,7 +3459,7 @@ local function nav_route_step()
             -- the real goal position, so the walker finishes the last ~1 cell and arrives.
             if math.abs(best.x - R.gx) <= 1 and math.abs(best.y - R.gy) <= 1
                 and math.abs(best.z - R.oz) <= 300 then
-                nav_route_finish(best); return
+                return "found", best
             end
             for _, d in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
                 local nx, ny = best.x + d[1], best.y + d[2]
@@ -3444,7 +3505,20 @@ local function nav_route_step()
                 end
             end
         end
-        if R.traces > 5200 or os.clock() - R.started > 8 then nav_route_finish(nil); return end
+        if R.traces > R.maxtr or os.clock() - R.started > R.maxt then return "fail", "cap" end
+    end
+    return nil
+end
+
+local function nav_route_step()
+    local R = NV.route
+    if not R then return end
+    local res, node = NV.route_slice(R, 110, 800)   -- 110 traces per tick keeps frames smooth
+    if res == "found" then nav_route_finish(node); return end
+    if res == "fail" then
+        local W = (node == "box") and NV.route_widen(R)
+        if W then NV.route = W; return end
+        nav_route_finish(nil); return
     end
     if os.clock() - R.started > 2 and not R.saidlong then
         R.saidlong = true
@@ -3470,40 +3544,140 @@ local function nav_route_begin(mode, ox, oy, oz)
     -- direct-line shortcut (same level only): if a BODY-WIDTH corridor (3 lines,
     -- center +-42) to the target is clear, skip the search entirely
     local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
-    if ksl and samelevel then
-        local ddx, ddy = ox - px, oy - py
-        local dl = math.sqrt(ddx * ddx + ddy * ddy)
-        local pox, poy = 0, 0
-        if dl > 1 then pox, poy = ddy / dl * 42, -ddx / dl * 42 end
-        local clear = true
-        for _, off in ipairs({ 0, 1, -1 }) do
-            local ok, hit = line_blocked(ksl, p,
-                px + pox * off, py + poy * off, pz + 30,
-                ox + pox * off, oy + poy * off, pz + 30)
-            if not (ok and not hit) then clear = false; break end
+    if ksl and samelevel and NV.corridor_clear(ksl, p, px, py, pz, ox, oy) then
+        if mode == "walk" then
+            nav_walk_begin_path({ { x = px, y = py }, { x = ox, y = oy } }, "direct")
+        else
+            local d = math.floor(math.sqrt((ox - px) ^ 2 + (oy - py) ^ 2) + 0.5)
+            speak(string.format("Path: straight ahead, %d", d))
         end
-        if clear then
-            if mode == "walk" then
-                nav_walk_begin_path({ { x = px, y = py }, { x = ox, y = oy } }, "direct")
-            else
-                local d = math.floor(math.sqrt((ox - px) ^ 2 + (oy - py) ^ 2) + 0.5)
-                speak(string.format("Path: straight ahead, %d", d))
-            end
-            return
-        end
+        return
     end
-    local startk = key3(0, 0, 0)
-    NV.route = {
-        mode = mode, ox = ox, oy = oy, oz = oz,
-        px = px, py = py, pz = pz, gx = gx, gy = gy, startk = startk,
-        open = { { x = 0, y = 0, z = pz, k = startk, g = 0, f = math.abs(gx) + math.abs(gy) } },
-        came = {}, gbest = { [startk] = 0 }, closed = {},
-        ecache = {}, gcache = {}, traces = 0, pops = 0, started = os.clock(),
-        minx = math.min(0, gx) - 9, maxx = math.max(0, gx) + 9,
-        miny = math.min(0, gy) - 9, maxy = math.max(0, gy) + 9,
-    }
+    NV.route = NV.route_job(mode, ox, oy, oz, px, py, pz)
 end
 NV.route_begin = nav_route_begin   -- for nav_route_finish (defined above it)
+
+-- ===== Quiet background reachability check =====
+-- The list says "not reachable" BEFORE you try a target (user request 2026-11-13: offer
+-- only targets you can reach, or at least say which you can't). While you explore and
+-- no walk or route runs, the walk router's own A* checks the current list, nearest
+-- first and the focused target before the rest, gently: 40 traces per pump tick instead
+-- of 110. Same router, same search box, so a target it fails on fails for the walk too.
+-- A failure goes into NV.noroute, so the list (", not reachable", or ", inside a
+-- building" via the doorway plane) and the walk ("Not reachable from here") behave as
+-- after a failed walk; the next list build puts such targets last. Targets inside a
+-- house you're not in (or outside the house you're in) are skipped: the walk leads
+-- through the door. A result holds in the same area within 600 of where you stood.
+NV.reach, NV.bgq, NV.bg = {}, {}, nil
+NV.bg_valid = function(key, px, py)
+    local r = key and NV.reach[key]
+    if not r or r.area ~= M.area_said then return nil end
+    if math.sqrt((px - r.x) ^ 2 + (py - r.y) ^ 2) >= 600 then return nil end
+    return r.ok
+end
+NV.bg_queue = function()     -- the current list, nearest first (nav_build_list)
+    NV.bgq = {}
+    local keep = false
+    for _, t in ipairs(NV.list) do
+        NV.bgq[#NV.bgq + 1] = t
+        if NV.bg and NV.tkey(t) == NV.bg.key then keep = true end
+    end
+    if not keep then NV.bg = nil end   -- a check for another list's target: drop it
+end
+NV.bg_front = function(t)    -- the focused target goes first (nav_announce)
+    if not t then return end
+    for i, q in ipairs(NV.bgq) do
+        if q == t then table.remove(NV.bgq, i); break end
+    end
+    table.insert(NV.bgq, 1, t)
+end
+NV.bg_record = function(job, ok, how)
+    NV.reach[job.key] = { ok = ok, x = job.px, y = job.py, area = job.area }
+    if ok then
+        NV.noroute[job.key] = nil
+    else
+        -- maybe behind a house door after all (doorway plane, as after a failed walk)
+        local door = nil
+        if job.cat ~= "exit" and job.cat ~= "building" then
+            local okd, d = pcall(M.house_door_for, job.tx, job.ty, job.tz, job.px, job.py, job.pz, false, true)
+            if okd and d then door = d end
+        end
+        NV.noroute[job.key] = { x = job.px, y = job.py, area = job.area, door = door }
+    end
+    log(string.format("REACH %s %s: %s (%s, traces=%d, %.1fs)", tostring(job.cat), tostring(job.name or job.key),
+        ok and "ok" or "NOT reachable", how or "route", job.R and job.R.traces or 0,
+        job.R and (os.clock() - job.R.started) or 0))
+end
+-- Set up the check of target t from the player's spot; nil = nothing to search
+-- (gone, already known, behind a house door, or settled by a straight line).
+NV.bg_new = function(t, p, px, py, pz)
+    local okv = true
+    if t.actor then okv = false; pcall(function() okv = t.actor:IsValid() end) end
+    if not okv and not t.pos then return nil end
+    local tx, ty, tz = NV.tpos(t)
+    if not tx then return nil end
+    tz = tz or pz
+    local key = NV.tkey(t)
+    if not key or NV.bg_valid(key, px, py) ~= nil or NV.is_noroute(key, px, py) then return nil end
+    local job = { key = key, cat = t.cat, name = t.name, tx = tx, ty = ty, tz = tz,
+                  px = px, py = py, pz = pz, area = M.area_said }
+    if t.cat ~= "building" then
+        local okd, door, _, pdoor = pcall(M.house_door_for, tx, ty, tz, px, py, pz)
+        if okd and (door or pdoor) then return nil end
+    else
+        -- a house door as the target: from inside another house the shut door would
+        -- fail every search
+        local okd, _, _, pdoor = pcall(M.house_door_for, tx, ty, tz, px, py, pz)
+        if okd and pdoor then return nil end
+    end
+    local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+    if not ksl then return nil end
+    local gx = math.floor((tx - px) / NV.STEP + 0.5)
+    local gy = math.floor((ty - py) / NV.STEP + 0.5)
+    if math.abs(tz - pz) <= 200 and ((gx == 0 and gy == 0) or NV.corridor_clear(ksl, p, px, py, pz, tx, ty)) then
+        NV.bg_record(job, true, "straight")
+        return nil
+    end
+    job.R = NV.route_job("bg", tx, ty, tz, px, py, pz)
+    job.R.maxt = 60          -- slower slices: same trace budget, more time
+    -- checks from the same spot share their ground / wall caches (each one re-traced
+    -- the same cells otherwise); the walk router never uses them -- a door opened in
+    -- between would still look shut
+    local c = NV.bg_cache
+    if c and c.x == px and c.y == py and c.z == pz and os.clock() - c.t < 30 then
+        job.R.gcache, job.R.ecache = c.g, c.e
+    else
+        NV.bg_cache = { x = px, y = py, z = pz, t = os.clock(), g = job.R.gcache, e = job.R.ecache }
+    end
+    return job
+end
+NV.bg_step = function()      -- nav_tick, only while no walk or route runs
+    if nav_walking or NV.route or world_susp or M.explore_now == false or M.menu_now then return end
+    local job = NV.bg
+    if job and job.area ~= M.area_said then NV.bg, NV.bgq, job = nil, {}, nil end   -- area changed
+    if not job then
+        if #NV.bgq == 0 then return end
+        local p = get_player_obj(); if not p then return end
+        local px, py, pz = read_actor_pos(p); if not px then return end
+        for _ = 1, 3 do      -- a few set-ups per tick (each costs a house test + 3 traces)
+            local t = table.remove(NV.bgq, 1)
+            if not t then return end
+            job = NV.bg_new(t, p, px, py, pz)
+            if job then break end
+        end
+        if not job then return end
+        NV.bg = job
+    end
+    local res, why = NV.route_slice(job.R, 40, 100)
+    if res == "fail" and why == "box" then
+        local W = NV.route_widen(job.R)
+        if W then job.R = W; return end
+    end
+    if res then
+        NV.bg = nil
+        NV.bg_record(job, res == "found", job.R.pad > 9 and "wide route" or "route")
+    end
+end
 
 local function nav_info()
     NV.ctrlkey_t = os.clock()
@@ -3901,6 +4075,13 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
         end
     end
     if nav_walking then pcall(nav_walk_watch) end
+    if not NV.route and not nav_walking then
+        local ok, err = pcall(NV.bg_step)   -- quiet reachability check of the list
+        if not ok and tostring(err) ~= NV.bgerr then
+            NV.bgerr = tostring(err)
+            log("REACH ERR: " .. NV.bgerr)
+        end
+    end
 end
 
 -- Laptop-friendly keys (no numpad in the target audience's baseline):
