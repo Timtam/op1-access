@@ -3272,14 +3272,22 @@ local function nav_announce(prefix)
     local d = math.floor(math.sqrt(dx * dx + dy * dy) + 0.5)
     local lvl = ""
     if dz > LEVEL_THRESH then lvl = ", above" elseif dz < -LEVEL_THRESH then lvl = ", below" end
-    -- reachability note: inside a building you're not in, or the router failed here
+    -- reachability note: inside a building you're not in, or the router failed here,
+    -- or the background check found the way only through a shut door
+    local key = NV.tkey(t)
+    local noted = false
     if t.cat ~= "building" then
         local okd, door, how = pcall(M.house_door_for, ox, oy, oz or pz, px, py, pz)
-        local key = NV.tkey(t)
-        if okd and (door or how == "atdoor") then lvl = lvl .. ", inside a building"
+        if okd and (door or how == "atdoor") then lvl = lvl .. ", inside a building"; noted = true
         elseif NV.is_noroute(key, px, py) then
-            lvl = lvl .. (NV.noroute[key].door and ", inside a building" or ", not reachable")
+            lvl = lvl .. (NV.noroute[key].door and ", inside a building" or ", not reachable"); noted = true
         end
+    elseif NV.is_noroute(key, px, py) then
+        lvl = lvl .. ", not reachable"; noted = true
+    end
+    local rr = key and NV.reach[key]
+    if not noted and rr and rr.ok and rr.viadoor and NV.bg_valid(key, px, py) then
+        lvl = lvl .. ", behind a door"
     end
     -- Name the focused NPC: first from the learned cache (talked-to NPCs), then
     -- from STATIC data (NV.resolve_name -> placement label via GetGameTextString)
@@ -3462,6 +3470,19 @@ local function nav_route_finish(goalnode)
             if clear then
                 nav_walk_begin_path({ { x = R.px, y = R.py }, { x = R.ox, y = R.oy } }, "direct")
             else
+                -- standing in an OPEN doorway with the target beyond it: the room
+                -- behind may not be solid yet seen from outside (the game swaps it in
+                -- as you enter) -- from the threshold of the academy office there was
+                -- "no route" (2026-11-14). Step through, then route again from inside.
+                local thr = NV.through_door and NV.through_door(R.px, R.py, R.pz, R.ox, R.oy)
+                if thr and NV.goal then
+                    log(string.format("NAVWALK step through door %s", tostring(thr.door.name)))
+                    NV.goal = { x = thr.x2, y = thr.y2, z = R.pz, cat = "through", key = NV.goal.key }
+                    speak("Through the door first")
+                    nav_walk_begin_path({ { x = R.px, y = R.py }, { x = thr.x1, y = thr.y1 },
+                        { x = thr.x2, y = thr.y2 } }, "through the door")
+                    return
+                end
                 -- no route: maybe behind a house door (doorway-plane test, see
                 -- M.house_door_for) -- then walk to that door instead; else remember
                 -- the failure so the list says "not reachable" from here on
@@ -3510,6 +3531,20 @@ local function nav_route_finish(goalnode)
         raw[#raw + 1] = { x = R.px + chain[i].x * NV.STEP, y = R.py + chain[i].y * NV.STEP }
     end
     raw[#raw + 1] = { x = R.ox, y = R.oy }
+    -- a SHUT DOOR on the way: walk to the first one only. There the door leg's usual
+    -- ending applies (push to its center until "Öffnen, E", "then backspace again");
+    -- the next Backspace routes on through the opened door, door by door.
+    local door, cut = NV.route_first_door(R, goalnode)
+    if door then
+        log(string.format("ROUTE through door %s at (%.0f,%.0f)", tostring(door.name), door.x, door.y))
+        if R.mode == "walk" then
+            local tr = {}
+            for j = 1, math.max(1, cut - 1) do tr[#tr + 1] = raw[j] end
+            tr[#tr + 1] = { x = door.x, y = door.y }
+            raw = tr
+            NV.goal = { x = door.x, y = door.y, z = door.z, cat = "door", key = NV.goal and NV.goal.key }
+        end
+    end
     local pts = { raw[1] }
     for i = 2, #raw - 1 do
         local a, b, c = pts[#pts], raw[i], raw[i + 1]
@@ -3521,35 +3556,106 @@ local function nav_route_finish(goalnode)
     end
     pts[#pts + 1] = raw[#raw]
     local floorword = ""
-    if R.oz - R.pz < -250 then floorword = ", downstairs"
-    elseif R.oz - R.pz > 250 then floorword = ", upstairs" end
+    local ez = (door and R.mode == "walk") and (door.z or R.oz) or R.oz   -- the walk's end
+    if ez - R.pz < -250 then floorword = ", downstairs"
+    elseif ez - R.pz > 250 then floorword = ", upstairs" end
     log(string.format("ROUTE ok cells=%d wps=%d traces=%d %.1fs", #chain, #pts, R.traces, os.clock() - R.started))
     if R.mode == "walk" then
-        nav_walk_begin_path(pts, "traced route" .. floorword)
+        if door then speak("A shut door on the way") end
+        nav_walk_begin_path(pts, (door and "to the door" or "traced route") .. floorword)
     else
         local desc, total = nav_describe_path(pts)
-        speak(string.format("Path: %s. Total %d%s.", desc, total, floorword))
+        speak(string.format("Path: %s. Total %d%s%s.", desc, total, floorword, door and ", through a door" or ""))
     end
+end
+
+-- Doors the router may plan THROUGH: every house/room door (HouseEnterTriggerBP_C) with
+-- a readable doorway plane. A shut door is a wall to the traces, so rooms behind rooms
+-- (the academy's upper doors) were "not reachable" (2026-11-14). Cached per area.
+M.door_list = function()
+    if M.house_cache_area ~= M.area_said then
+        M.house_cache, M.plane_cache, M.house_cache_area = {}, {}, M.area_said
+    end
+    if M.door_list_area == M.area_said and M.door_list_cache then return M.door_list_cache end
+    local out = {}
+    pcall(function()
+        local list = FindAllOf("HouseEnterTriggerBP_C")
+        if not list then return end
+        for _, door in pairs(list) do
+            local okv = false
+            pcall(function() okv = door:IsValid() end)
+            local daddr = 0
+            if okv then pcall(function() daddr = door:GetAddress() end) end
+            if daddr ~= 0 then
+                local dx, dy, dz = read_actor_pos(door)
+                local pl = dx and M.house_plane(door, daddr, dx, dy)
+                if pl then
+                    local nm = "?"
+                    pcall(function() nm = door:GetFName():ToString() end)
+                    out[#out + 1] = { actor = door, name = nm, x = dx, y = dy, z = dz or pl.cz,
+                        cx = pl.cx, cy = pl.cy, cz = pl.cz, nx = pl.nx, ny = pl.ny }
+                end
+            end
+        end
+    end)
+    M.door_list_cache, M.door_list_area = out, M.area_said
+    return out
+end
+
+-- The open door the player stands in (within 160 of its center, no "Öffnen" prompt up)
+-- with the target on its other side: { x1, y1 = doorway center, x2, y2 = 170 beyond
+-- it toward the target, door }. nil otherwise. For the step-through after "no route".
+NV.through_door = function(px, py, pz, ox, oy)
+    if M.popup_said then return nil end          -- a prompt is up: that door is shut
+    local okd, doors = pcall(M.door_list)
+    if not okd or type(doors) ~= "table" then return nil end
+    local best, bd, bat = nil, 1e9, 0
+    for _, d in ipairs(doors) do
+        local dist = math.sqrt((d.x - px) ^ 2 + (d.y - py) ^ 2)
+        if dist < 160 and math.abs((d.z or pz) - pz) < 300 and dist < bd then
+            local ap = (px - d.cx) * d.nx + (py - d.cy) * d.ny
+            local at = (ox - d.cx) * d.nx + (oy - d.cy) * d.ny
+            if ap * at < 0 then best, bd, bat = d, dist, at end
+        end
+    end
+    if not best then return nil end
+    local s = (bat > 0) and 1 or -1
+    return { x1 = best.cx, y1 = best.cy, x2 = best.cx + best.nx * s * 170, y2 = best.cy + best.ny * s * 170,
+             door = best }
 end
 
 -- A routing job (the walk router's NV.route, or a background check's NV.bg.R): the
 -- search box is the start/goal rectangle plus `pad` cells (9); it fails after maxtr
--- traces or maxt seconds.
+-- traces or maxt seconds. doors / via: see the door edges in NV.route_slice.
 NV.route_job = function(mode, ox, oy, oz, px, py, pz, pad)
     pad = pad or 9
     local gx = math.floor((ox - px) / NV.STEP + 0.5)
     local gy = math.floor((oy - py) / NV.STEP + 0.5)
     local startk = key3(0, 0, 0)
+    local okd, doors = pcall(M.door_list)
     return {
         mode = mode, ox = ox, oy = oy, oz = oz, pad = pad,
         px = px, py = py, pz = pz, gx = gx, gy = gy, startk = startk,
         open = { { x = 0, y = 0, z = pz, k = startk, g = 0, f = math.abs(gx) + math.abs(gy) } },
-        came = {}, gbest = { [startk] = 0 }, closed = {},
+        came = {}, gbest = { [startk] = 0 }, closed = {}, via = {},
+        doors = (okd and type(doors) == "table") and doors or {},
         ecache = {}, gcache = {}, traces = 0, pops = 0, started = os.clock(),
         maxtr = 5200, maxt = 8,
         minx = math.min(0, gx) - pad, maxx = math.max(0, gx) + pad,
         miny = math.min(0, gy) - pad, maxy = math.max(0, gy) + pad,
     }
+end
+-- The first shut door a found route goes through (in walking order), and the index in
+-- the raw waypoint list (start = 1) of the first cell behind it. nil: no door.
+NV.route_first_door = function(R, goalnode)
+    local chain = {}
+    local n = goalnode
+    while n and n.k ~= R.startk do chain[#chain + 1] = n; n = R.came[n.k] end
+    for i = #chain, 1, -1 do
+        local di = R.via and R.via[chain[i].k]
+        if di and R.doors[di] then return R.doors[di], #chain - i + 2 end
+    end
+    return nil
 end
 -- Second try in a bigger box (+20 cells) after the first one ran out of cells: a way
 -- round may leave the small box. From the academy door the guard up-left counted as
@@ -3641,13 +3747,41 @@ NV.route_slice = function(R, budget, itercap)
                                         bx0 + pox * off, by0 + poy * off, zb + 55)
                                     if not (ok2 and not hit2) then w = false; break end
                                 end
+                                -- blocked: maybe by a SHUT DOOR -- the step crosses a
+                                -- doorway plane within its width. Then it is a door edge
+                                -- (w = the door's index): passable, but dearer, and the
+                                -- walk stops there for E (nav_route_finish).
+                                if not w and R.doors then
+                                    local mx, my = (ax0 + bx0) / 2, (ay0 + by0) / 2
+                                    for di, dd in ipairs(R.doors) do
+                                        local sa = (ax0 - dd.cx) * dd.nx + (ay0 - dd.cy) * dd.ny
+                                        local sb = (bx0 - dd.cx) * dd.nx + (by0 - dd.cy) * dd.ny
+                                        local tm = math.abs((mx - dd.cx) * dd.ny - (my - dd.cy) * dd.nx)
+                                        if sa * sb <= 0 and tm < 100 and math.abs(best.z - dd.cz) < 300 then
+                                            w = di
+                                            break
+                                        end
+                                    end
+                                end
                                 R.ecache[ekey] = w
                             end
+                            -- never through the TARGET's own door: a door is reached in
+                            -- front of it ("through Room4" to Room4 made no sense). Per
+                            -- job, so not in the (shared) cache.
+                            if type(w) == "number" then
+                                local dd = R.doors[w]
+                                if not dd or math.sqrt((dd.x - R.ox) ^ 2 + (dd.y - R.oy) ^ 2) <= 100 then w = false end
+                            end
                             if w then
-                                local ng = best.g + 1
+                                local isdoor = type(w) == "number"
+                                -- a door costs a stop and an E press: open ways up to
+                                -- 25 cells longer win (at +6 the router took a door to a
+                                -- target it also reached in the open)
+                                local ng = best.g + (isdoor and 25 or 1)
                                 if ng < (R.gbest[nk] or 1e9) then
                                     R.gbest[nk] = ng
                                     R.came[nk] = best
+                                    R.via[nk] = isdoor and w or nil
                                     R.open[#R.open + 1] = { x = nx, y = ny, z = zb, k = nk, g = ng,
                                         f = ng + math.abs(R.gx - nx) + math.abs(R.gy - ny) }
                                 end
@@ -3743,8 +3877,8 @@ NV.bg_front = function(t)    -- the focused target goes first (nav_announce)
     end
     table.insert(NV.bgq, 1, t)
 end
-NV.bg_record = function(job, ok, how)
-    NV.reach[job.key] = { ok = ok, x = job.px, y = job.py, area = job.area }
+NV.bg_record = function(job, ok, how, viadoor)
+    NV.reach[job.key] = { ok = ok, x = job.px, y = job.py, area = job.area, viadoor = viadoor }
     if ok then
         NV.noroute[job.key] = nil
     else
@@ -3831,7 +3965,9 @@ NV.bg_step = function()      -- nav_tick, only while no walk or route runs
     end
     if res then
         NV.bg = nil
-        NV.bg_record(job, res == "found", job.R.pad > 9 and "wide route" or "route")
+        local door = (res == "found") and NV.route_first_door(job.R, why) or nil
+        NV.bg_record(job, res == "found", (job.R.pad > 9 and "wide route" or "route")
+            .. (door and (", door " .. tostring(door.name)) or ""), door ~= nil)
     end
 end
 
@@ -4069,6 +4205,11 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
     local dx, dy
     if not wp then
         local gcat = NV.goal and NV.goal.cat
+        if gcat == "through" then          -- stepped through a doorway: route on
+            nav_walk_stop()
+            NV.resume_walk = true
+            return
+        end
         if gcat ~= "exit" and gcat ~= "door" then
             nav_walk_stop("Arrived")
             pcall(NV.face_goal)
@@ -4102,8 +4243,9 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
             -- poll_action_popup) and waits for the key -- stop at the door
             NV.push = nil
             nav_walk_stop()   -- silent: the prompt speech says what to do
-            if gcat == "door" then speak("then backspace again", false)
-            elseif NV.prompt_at_start then speak("Still shut. " .. (M.popup_text or "press E")) end
+            -- a prompt that was up before the walk wasn't spoken now: say it again
+            if NV.prompt_at_start then speak("Still shut. " .. (M.popup_text or "press E") .. ", then backspace again")
+            elseif gcat == "door" then speak("then backspace again", false) end
             return
         end
         if now > NV.push.till then
@@ -4182,6 +4324,15 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
                 if NV.prompt_at_start then speak("Still shut. " .. (M.popup_text or "press E")) end
                 return
             end
+        elseif NV.goal.cat == "through" then
+            -- the step through an open doorway: once beyond it, route on to the
+            -- real target from inside (nav_tick restarts the walk)
+            if gd < 70 then
+                log("NAVWALK through the door, routing on")
+                nav_walk_stop()
+                NV.resume_walk = true
+                return
+            end
         elseif NV.goal.cat == "door" then
             -- first leg to a target inside a building: stop where the door prompt
             -- shows (nav_drive pushes on to the door's center until it does); the
@@ -4189,7 +4340,11 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
             if M.popup_said and gd < 450 then
                 log("NAVWALK at building door")
                 nav_walk_stop()
-                speak("then backspace again", false)
+                if NV.prompt_at_start then
+                    speak("Still shut. " .. (M.popup_text or "press E") .. ", then backspace again")
+                else
+                    speak("then backspace again", false)
+                end
                 return
             end
         elseif gd < 170 and math.abs(pz - (NV.goal.z or pz)) < LEVEL_THRESH then
@@ -4289,6 +4444,10 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
         end
     end
     if nav_walking then pcall(nav_walk_watch) end
+    if NV.resume_walk and not nav_walking and not NV.route then
+        NV.resume_walk = nil
+        pcall(nav_walk_start, true)   -- after a step through a doorway: on to the target
+    end
     if not NV.route and not nav_walking then
         local ok, err = pcall(NV.bg_step)   -- quiet reachability check of the list
         if not ok and tostring(err) ~= NV.bgerr then
