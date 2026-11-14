@@ -1605,6 +1605,166 @@ M.poll_worldmap = function()
     M.say_item(M.wm_describe(info))
 end
 
+-- ROUTE FINDER (user request 2026-11-14): fast travel works only to towns visited once,
+-- so the way to a new town is walked area by area. Ctrl+Backspace on the world map says
+-- the areas from here to the place Page Up/Down picked, and keeps it as the route goal:
+-- in the field the navigator then names the exit that leads on along that route.
+-- The game has no table of which area leads where: every exit is a LevelTrigger in its
+-- level, m_nNextMapID its destination. scripts/level-links.py read them once from the
+-- game's area levels into Scripts\worldlinks.lua (level name -> destination level IDs);
+-- the LevelTable turns the names into IDs (row name = ID, LevelName @8). The search runs
+-- over levels; the WorldMapTable's places (RefLevelName = their levels) name the steps.
+-- (Its DestinationStart / DestinationFinish are story flags, not links.)
+M.wm_graph = function()
+    if M.wm_g then return M.wm_g end
+    local tbl = M.dt_addr and M.dt_addr("WorldMapTable")
+    local lt = M.dt_addr and M.dt_addr("LevelTable")
+    if not (tbl and lt and shim and shim.DtCount) then return nil end
+    local okd, links = pcall(require, "worldlinks")
+    if not okd or type(links) ~= "table" then log("ROUTE: no worldlinks.lua: " .. tostring(links)); return nil end
+    local g = { nodes = {}, bylevel = {}, byrow = {}, adj = {} }
+    for i = 0, (shim.DtCount(tbl) or 0) - 1 do
+        pcall(function()
+            local rc, rn, row = shim.DtRowAt(tbl, i)
+            if not row then return end
+            local rname = M.fname_str(rc, rn)
+            local info = M.wm_row_info(row) or {}
+            local nd = { row = rname, name = info.name or rname, region = info.region, what = M.wm_what(rname),
+                lmin = info.lmin, lmax = info.lmax, levels = {} }
+            for _, s in ipairs(info.refs or {}) do
+                local id = tonumber(s:match("^(%d+)") or "")
+                if id then nd.levels[#nd.levels + 1] = id; g.bylevel[id] = g.bylevel[id] or nd end
+            end
+            g.byrow[rname] = nd
+            g.nodes[#g.nodes + 1] = nd
+        end)
+    end
+    -- level name -> ID from the LevelTable, then the exits as level -> level links
+    local idof, nlev = {}, 0
+    for i = 0, (shim.DtCount(lt) or 0) - 1 do
+        pcall(function()
+            local rc, rn, row = shim.DtRowAt(lt, i)
+            local id = row and tonumber(M.fname_str(rc, rn))
+            local lc, ln = shim.PeekFName(row + 0x08)
+            if id and lc and lc > 0 then idof[M.fname_str(lc, ln)] = id; nlev = nlev + 1 end
+        end)
+    end
+    local nlinks, unknown = 0, 0
+    for name, dsts in pairs(links) do
+        local src = idof[name]
+        if src then
+            g.adj[src] = g.adj[src] or {}
+            for _, d in ipairs(dsts) do
+                if d ~= src and not g.adj[src][d] then g.adj[src][d] = true; nlinks = nlinks + 1 end
+            end
+        else
+            unknown = unknown + 1
+        end
+    end
+    log(string.format("ROUTE graph: %d places, %d levels, %d exit links (%d level names not in the LevelTable)",
+        #g.nodes, nlev, nlinks, unknown))
+    if #g.nodes > 0 and nlinks > 0 then M.wm_g = g end
+    return g
+end
+-- The current level ID (LevelManagerBP_C, found once)
+M.current_level = function()
+    local id
+    pcall(function()
+        local lm = M.levelmgr
+        local okm = false
+        if lm then pcall(function() okm = lm:IsValid() end) end
+        if not okm then lm = FindFirstOf("LevelManagerBP_C"); M.levelmgr = lm end
+        id = lm.CurrentLevelID
+    end)
+    return type(id) == "number" and id or nil
+end
+-- Fewest exits from level `from` into any level of place `to`: the level IDs (both ends
+-- included), or nil
+M.wm_level_route = function(g, from, to)
+    if not (g and from and to) then return nil end
+    local goal = {}
+    for _, l in ipairs(to.levels) do goal[l] = true end
+    if goal[from] then return { from } end
+    local prev, q, head = { [from] = from }, { from }, 1
+    while head <= #q do
+        local cur = q[head]; head = head + 1
+        for nxt in pairs(g.adj[cur] or {}) do
+            if not prev[nxt] then
+                prev[nxt] = cur
+                if goal[nxt] then
+                    local path, x = {}, nxt
+                    while x ~= from do table.insert(path, 1, x); x = prev[x] end
+                    table.insert(path, 1, from)
+                    return path
+                end
+                q[#q + 1] = nxt
+            end
+        end
+    end
+    return nil
+end
+-- The places along a level route, in order, without the one you start in and without
+-- repeats (a town's parts are one place; levels of no place are passed over)
+M.wm_route_places = function(g, path)
+    local out, last = {}, g.bylevel[path[1]]
+    for i = 2, #path do
+        local nd = g.bylevel[path[i]]
+        if nd and nd ~= last then out[#out + 1] = nd; last = nd end
+    end
+    return out
+end
+-- "4 areas: Nördliche Atlasdamm-Ebenen, path, danger level 1; ...; Kammbruch"
+M.wm_route_text = function(places)
+    local parts = {}
+    for _, nd in ipairs(places) do
+        local s = nd.name or nd.row
+        if nd.what and nd.what ~= "town" then s = s .. ", " .. nd.what end
+        if nd.lmin then s = s .. ", danger level " .. nd.lmin end
+        parts[#parts + 1] = s
+    end
+    return string.format("%d areas: %s", #places, table.concat(parts, "; "))
+end
+-- Ctrl+Backspace on the world map: the route to the place Page Up/Down picked
+M.wm_route_say = function()
+    local WM = M.WM
+    local e = WM.list and WM.list[WM.idx]
+    if not e then speak("Pick a place with page up and page down first"); return end
+    local g = M.wm_graph()
+    if not g then speak("No route data"); return end
+    local to = e.row and g.byrow[e.row]
+    local from = M.current_level()
+    if not (from and to) then
+        log(string.format("ROUTE from level %s to %s: unknown", tostring(from), tostring(e.row)))
+        speak("Can't tell where you are on the map")
+        return
+    end
+    local path = M.wm_level_route(g, from, to)
+    if not path then
+        log(string.format("ROUTE from level %d to %s (levels %s): none", from, to.row, table.concat(to.levels, ",")))
+        speak("No route known to " .. tostring(to.name))
+        return
+    end
+    if #path == 1 then speak("You are there"); return end
+    M.route_goal = to
+    log("ROUTE levels " .. table.concat(path, " > ") .. " to " .. to.row)
+    speak(string.format("Route to %s, %s. In each area the exit on the way says so.", to.name,
+        M.wm_route_text(M.wm_route_places(g, path))), true)
+end
+-- The exit that leads on along the route to M.route_goal: its destination is the next
+-- level of the route from here. "on the way to Kammbruch"
+M.route_exit_note = function(actor)
+    local goal = M.route_goal
+    if not (goal and actor) then return nil end
+    local g = M.wm_graph()
+    local here = M.current_level()
+    local path = g and here and M.wm_level_route(g, here, goal)
+    if not path or #path < 2 then return nil end
+    local id
+    pcall(function() id = actor.m_nNextMapID end)
+    if id == path[2] then return "on the way to " .. tostring(goal.name) end
+    return nil
+end
+
 -- Tutorial pop-up reader. The pop-up's active widget is UITutorial_C; its current page
 -- is UITutorial_C.NowPageTemplate (a UITutorialTemplateNN_C), whose PageText array holds
 -- the page's text-block widgets (title, body, captions -- order varies per template, so
@@ -5410,6 +5570,11 @@ local function nav_announce(prefix)
         t.name = (okd and dest) and ("to " .. dest .. (lv and (", " .. lv) or "")) or false
     end
     local who = t.name and (t.name .. ", ") or ""
+    -- the exit that leads on along the world map route (M.route_goal)
+    if t.actor and (t.cat == "exit" or t.walkcat == "exit") then
+        local okr, note = pcall(M.route_exit_note, t.actor)
+        if okr and note then who = who .. note .. ", " end
+    end
     -- a chest says whether it was opened already (emptied: OT chests hold one thing)
     if t.cat == "chest" then
         local okc, opened = pcall(M.chest_state, t)
@@ -6409,6 +6574,8 @@ end
 
 local function nav_info()
     NV.ctrlkey_t = os.clock()
+    -- on the world map: the route to the place Page Up/Down picked (M.wm_route_say)
+    if M.WM and M.WM.open then pcall(M.wm_route_say); return end
     if #NV.list > 0 and NV.list_stale() and NV.list_refresh() then   -- after a teleport
         if #NV.list == 0 then speak("Targets changed, none here"); return end
         nav_announce(string.format("Targets changed. %s, %d targets. ", NAV_CLASSES[NV.cat].name, #NV.list))
@@ -8041,6 +8208,10 @@ M.fname_str = function(cmp, num)
     if not cmp or cmp == 0 then return "None" end
     local s = "#" .. cmp
     pcall(function() s = FName(cmp):ToString() end)
+    -- UE4SS's FName(index) prints a "_0" of its own ("79_0", "eMAP_T_Cliff_M_0": the
+    -- route finder missed every row name, 2026-11-14). A base name never ends in "_0" (UE
+    -- splits that off into the number), so it goes.
+    s = s:gsub("_0$", "")
     if num and num > 0 then s = s .. "_" .. (num - 1) end
     return s
 end
