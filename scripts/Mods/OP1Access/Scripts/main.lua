@@ -782,6 +782,11 @@ M.get_active_screen = function()
     if kuim then pcall(function() ok = kuim:IsValid() end) end
     if not ok then
         M.ui_manager = nil
+        -- FindFirstOf walks every object (~45 ms) while no manager exists yet (boot):
+        -- at most once a second, not on every call of every reader
+        local now = os.clock()
+        if now - (M.uim_tried or -9) < 1.0 then return nil, nil end
+        M.uim_tried = now
         pcall(function() local x = FindFirstOf("KSUIManager"); if x and x:IsValid() then M.ui_manager = x end end)
         kuim = M.ui_manager
     end
@@ -1004,8 +1009,12 @@ do
             local alive = false
             if m then pcall(function() alive = m:IsValid() end) end
             if not alive then
+                -- the screen is the focused one while it's up (title "Fortsetzen" too; in
+                -- an event the event reader hands it over). FindFirstOf walked every
+                -- object 20x a second while no such menu existed.
                 m = nil
-                pcall(function() local f = FindFirstOf("MenuSaveLoad_C"); if f and f:IsValid() then m = f end end)
+                local aw, acls = M.get_active_screen()
+                if acls == "MenuSaveLoad_C" then m = aw end
                 sl_menu = m
             end
             if not m or not widget_is_visible(m) then sl_idx = nil; return end
@@ -2692,28 +2701,55 @@ for n = 0, 9 do
     end)
 end
 
+-- The screen polls, ON THE GAME THREAD since 2026-11-14. On the async loop they raced
+-- the game (the game died while idle in a menu) and their UFunction calls took queued
+-- game-thread work. They used to be far too slow for the game thread (each FindFirstOf
+-- of a closed screen walks every object, 45-80 ms -- that froze the start once); now
+-- get_active_screen and poll_saveload search at most every 1-2 s. A slow run is logged.
+-- Capture title widgets at this rate (20Hz) so the title menu reads immediately; the
+-- pump only ticks ~5Hz, which made it read seconds late. Pre-game only (not
+-- M.field_player) and never mid-fade (M.menu_unsafe).
+M.fast_steps = {
+    { "scan", function() if M.scan_scene and not M.field_player and not M.menu_unsafe then M.scan_scene() end end },
+    { "active", function() poll_active_menu() end },
+    { "saveload", function() M.poll_saveload() end },
+    { "options", function() M.poll_options() end },
+    { "mainmenu", function() M.poll_mainmenu() end },
+    { "tutorial", function() M.poll_tutorial() end },
+    { "fieldcmd", function() M.poll_fieldcommand() end },
+}
+M.fast_polls = function()
+    M.fast_q = nil
+    local t0, slow = os.clock(), nil
+    for _, s in ipairs(M.fast_steps) do
+        local ts = os.clock()
+        pcall(s[2])
+        local d = os.clock() - ts
+        if d > 0.015 then slow = (slow and (slow .. " ") or "") .. string.format("%s=%.0f", s[1], d * 1000) end
+    end
+    local dt = os.clock() - t0
+    -- a slow run stalls the game: log it, at most every 10 s, with the count meanwhile
+    if dt > 0.02 then
+        M.fast_slow = (M.fast_slow or 0) + 1
+        if os.clock() - (M.fast_slow_t or -99) > 10 then
+            M.fast_slow_t = os.clock()
+            log(string.format("FAST polls slow: %.0f ms [%s] (%d slow runs so far)", dt * 1000, tostring(slow),
+                M.fast_slow))
+        end
+    end
+end
 local ok_loop = pcall(LoopAsync, POLL_INTERVAL_MS, function()
     if not M.fg_ok() then return end   -- unfocused: skip menu polls (game calls fault)
-    -- Capture title widgets on THIS fast loop (20Hz) so the title menu reads immediately;
-    -- the game-thread pump only ticks ~5Hz, which made it read seconds late. Pre-game only
-    -- (not M.field_player) -- there are no streamed field actors to fault FindAllOf, same
-    -- as poll_saveload's FindFirstOf which has run here since launch -- and never mid-fade
-    -- (M.menu_unsafe). The find-once guard means it's a cheap registry walk once captured.
-    -- (These polls must stay off the game thread: each FindFirstOf of a screen that isn't
-    -- open walks every object, 45-80 ms -- moved there on 2026-11-14 they froze the game.)
-    if M.scan_scene and not M.field_player and not M.menu_unsafe then pcall(M.scan_scene) end
-    pcall(poll_active_menu)
-    pcall(M.poll_saveload)
-    pcall(M.poll_options)
-    pcall(M.poll_mainmenu)
-    pcall(M.poll_tutorial)
-    pcall(M.poll_fieldcommand)
-    -- Queue the game-thread work LAST: the polls above call UFunctions, and UE4SS runs
-    -- queued work inside the next ProcessEvent call on any thread -- queued after them,
-    -- the game thread nearly always gets it first. Work this thread took anyway waits in
-    -- M.gt_pending; an empty run kicks it back to the game thread.
     pcall(M.event_menus_tick)
     if M.menu_lists_tick then pcall(M.menu_lists_tick) end
+    -- one queued run of the screen polls at a time (a stuck one is re-queued after 2 s)
+    local now = os.clock()
+    if not (M.fast_q and now - M.fast_q < 2.0) then
+        M.fast_q = now
+        M.in_gt(M.fast_polls)
+    end
+    -- work some other thread took anyway (UE4SS runs queued work in any thread's
+    -- ProcessEvent) waits in M.gt_pending; an empty run kicks it back to the game thread
     if #M.gt_pending > 0 and M.gt_depth == 0 then M.in_gt(function() end) end
     -- The native GetTalkText hook speaks dialogue directly (independent of this
     -- loop, which can die after a level load). The loop just logs the line.
