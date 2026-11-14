@@ -50,6 +50,31 @@ local function silence()
     if shim and shim.Silence then shim.Silence() end
 end
 
+-- One spoken line from text pieces that may hold line breaks: a skill's help is
+-- "Kosten: 8 FP\nFügt allen Gegnern Blitzschaden zu.". A piece ending without
+-- punctuation before one that doesn't start in lower case gets ". " (a pause);
+-- otherwise a plain space, so a sentence wrapped mid-way stays whole and a tutorial's
+-- "behalten!" isn't followed by another ".".
+M.join_text = function(parts)
+    local out = ""
+    for _, part in ipairs(parts) do
+        for line in (tostring(part) .. "\n"):gmatch("(.-)\r?\n") do
+            line = line:gsub("^%s+", ""):gsub("%s+$", "")
+            if line ~= "" then
+                if out == "" then
+                    out = line
+                elseif out:find("[%.!%?:;,]$") or out:find("\226\128\166$") or line:find("^%l")
+                    or line:find("^\195[\159-\191]") then
+                    out = out .. " " .. line
+                else
+                    out = out .. ". " .. line
+                end
+            end
+        end
+    end
+    return out
+end
+
 -- Speak a focused MENU ITEM with the right interrupt behaviour. When a menu opens,
 -- poll_active_menu speaks the screen NAME and sets M.await_first_item; the first item then
 -- QUEUES after the name (interrupt=false) so you hear "Menu name, first option" in order.
@@ -1161,7 +1186,7 @@ do
             if s and s ~= "" then parts[#parts + 1] = s end
         end) end)
         if #parts == 0 then return end
-        local say = table.concat(parts, ". ")
+        local say = M.join_text(parts)
         if say ~= last_tut then last_tut = say; speak(say) end
     end
 end
@@ -1798,7 +1823,7 @@ M.bt_help = function()
         local v = M.wvis(h)
         if v == 0 or v == 3 or v == 4 then
             local s = M.wtext(h.HelpText)
-            if s and not M.placeholder(s) then return s end
+            if s and not M.placeholder(s) then return M.join_text({ s }) end
         end
     end
     return nil
