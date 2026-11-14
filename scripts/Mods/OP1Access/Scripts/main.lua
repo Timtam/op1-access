@@ -1365,20 +1365,19 @@ M.battle_dump = function()
     each("BattleTargetCursor_C", function(w, i)
         local cv, tn
         pcall(function() cv = w.CursorVisible end)
-        pcall(function() tn = string.format("%X", M.addr_of(w.TargetCharacter) or 0) end)
+        pcall(function() tn = string.format("%X", M.peekp(w, 0x208) or 0) end)   -- TargetCharacter
         log(string.format("BDUMP cursor#%d vis=%s cv=%s target=%s", i, tostring(M.wvis(w)), tostring(cv), tostring(tn)))
     end)
     each("BattleEnemyStatus_C", function(w, i)
         local sh, en, nweak
         pcall(function() sh = M.wtext(w.BreakStatusIcon.Text_BreakGauge) end)
-        pcall(function() en = string.format("%X", M.addr_of(w.Enemy) or 0) end)
+        pcall(function() en = string.format("%X", M.peekp(w, 0x2C8) or 0) end)   -- Enemy
         pcall(function() nweak = w.EnableWeakIconNum end)
         local weaks = {}
         for k = 0, 4 do
             pcall(function()
                 local ic = w["WeakStatusIcon_0" .. k]
-                local res = "?"
-                pcall(function() res = ic.AttributeIcon.Brush.ResourceObject:GetFName():ToString() end)
+                local res = M.icon_tex(ic, 0x248) or "?"   -- AttributeIcon
                 weaks[#weaks + 1] = string.format("%d:a%s o%s l%s s%s v%s %s", k, tostring(ic.AttributeIndex),
                     tostring(ic.IconOpened), tostring(ic.WeakLocked), tostring(ic.IsSetup), tostring(M.wvis(ic)), res)
             end)
@@ -1403,13 +1402,21 @@ M.battle_dump = function()
     each("BattleActionInfo_C", function(w, i)
         log(string.format("BDUMP action#%d vis=%s name=%s", i, tostring(M.wvis(w)), tostring(M.wtext(w.CommandName))))
     end)
+    each("BuffIcon_C", function(w, i)   -- status icons: texture, turns, visibility
+        local res, inn = M.icon_tex(w, 0x258), nil   -- StateIcon
+        pcall(function() inn = w.IconIN end)
+        if res then
+            log(string.format("BDUMP buff#%d vis=%s in=%s %s turns=%s", i, tostring(M.wvis(w)), tostring(inn),
+                tostring(res), tostring(M.wtext(w.TurnNum))))
+        end
+    end)
     each("ActionOrderTimeLine_C", function(w, i)
         local icons = {}
         for k = 0, 5 do
             pcall(function()
                 local ic = w["InterceptIcon_0" .. k]
                 local ca, en, br, nx = 0, nil, nil, nil
-                pcall(function() ca = M.addr_of(ic.Character) or 0 end)
+                pcall(function() ca = M.peekp(ic, 0x288) or 0 end)   -- Character
                 pcall(function() en, br, nx = ic.EnableActionOrder, ic.IsBreak, ic.IsNextOrder end)
                 icons[#icons + 1] = string.format("%d:%X e%s b%s n%s v%s", k, ca, tostring(en), tostring(br), tostring(nx),
                     tostring(M.wvis(ic)))
@@ -1419,7 +1426,7 @@ M.battle_dump = function()
     end)
     each("ActionOrderIcon_C", function(w, i)
         local ca, en, nx = 0, nil, nil
-        pcall(function() ca = M.addr_of(w.Character) or 0 end)
+        pcall(function() ca = M.peekp(w, 0x288) or 0 end)   -- Character
         pcall(function() en, nx = w.EnableActionOrder, w.IsNextOrder end)
         if ca ~= 0 then
             log(string.format("BDUMP orderIcon#%d vis=%s char=%X e%s n%s", i, tostring(M.wvis(w)), ca, tostring(en), tostring(nx)))
@@ -1454,6 +1461,56 @@ M.addr_of = function(o)
     local a
     pcall(function() a = o:GetAddress() end)
     return a
+end
+-- A battle widget's OTHER object pointers (characters, an image brush's texture) are
+-- read as raw NUMBERS (shim.Peek, SEH-guarded), never handed to UE4SS as objects:
+-- UE4SS inspects an object pointer when it wraps it, and a stale one -- unused order
+-- icons, unused status icons -- ended the Lua call, once the whole game (2026-11-14).
+-- Offsets from the object dump.
+M.peekp = function(obj, off)
+    local a = M.addr_of(obj)
+    if not (a and shim and shim.Peek) then return nil end
+    local v = shim.Peek(a + off, "ptr")
+    if v and v ~= 0 then return v end
+    return nil
+end
+M.TEX_NAMES = { "WeaponIcon_sword", "WeaponIcon_spear", "WeaponIcon_dagger", "WeaponIcon_ax",
+    "WeaponIcon_arrow", "WeaponIcon_cane", "AttributeIcon_Flame", "AttributeIcon_FIre", "AttributeIcon_Ice",
+    "AttributeIcon_Thunder", "AttributeIcon_Wind", "AttributeIcon_Light", "AttributeIcon_Dark" }
+for _, k in ipairs({ "AbilityAll", "AttackAll", "Avoid", "BPBoost", "Counter", "Critical", "CriticalContinu",
+    "Dark", "DDefense", "EAvoid", "Fire", "Health", "Hit", "Ice", "Invincible", "ItemAll", "Light", "MAttack",
+    "MContinu", "MConverge", "MCritical", "Mdefense", "PAttack", "PDefense", "Provoke", "Reflec", "Regene",
+    "Reraise", "Speed", "SPRegene", "Thunder", "Wind" }) do
+    M.TEX_NAMES[#M.TEX_NAMES + 1] = "IconStatus_Up_" .. k
+end
+for _, k in ipairs({ "Adhesive", "Avoid", "Break", "BuffUnavailable", "Confu", "Critical", "Dark", "Faint",
+    "Fear", "Hit", "MAttack", "MDefense", "MSealed", "PAttack", "Pdefense", "Poison", "Silence", "Sleep",
+    "Speed", "Spoison" }) do
+    M.TEX_NAMES[#M.TEX_NAMES + 1] = "IconStatus_Down_" .. k
+end
+-- texture address -> name ("IconStatus_Down_Poison"), once per battle (M.bt)
+M.tex_map = function()
+    if M.bt.texmap then return M.bt.texmap end
+    local map = {}
+    for _, n in ipairs(M.TEX_NAMES) do
+        for _, dir in ipairs({ "Texture_x2", "Texture" }) do
+            pcall(function()
+                local o = StaticFindObject("/Game/UI/Battle/" .. dir .. "/UiTX_Battle_" .. n .. ".UiTX_Battle_" .. n)
+                local a = o and M.addr_of(o)
+                if a and a ~= 0 then map[a] = n end
+            end)
+        end
+    end
+    M.bt.texmap = map
+    return map
+end
+-- the texture name of an icon widget's image (its UImage* at imgoff; Brush 0xF8 +
+-- ResourceObject 0x48 = 0x140)
+M.icon_tex = function(icon, imgoff)
+    local img = M.peekp(icon, imgoff)
+    if not img then return nil end
+    local tex = shim.Peek(img + 0x140, "ptr")
+    return tex and M.tex_map()[tex]
 end
 -- the unused copies' filler: "0123456", "0124", "0123" and Japanese "ああ...". Only
 -- digit runs that START "012" -- a real "8" (an SP cost) is no placeholder.
@@ -1491,8 +1548,7 @@ end
 M.bt_enemies = function()
     local out = {}
     for _, w in ipairs(M.bt_list("BattleEnemyStatus_C")) do
-        local ea, name = nil, M.wtext(w.characterName)
-        pcall(function() ea = M.addr_of(w.Enemy) end)
+        local ea, name = M.peekp(w, 0x2C8), M.wtext(w.characterName)   -- Enemy
         if ea and ea ~= 0 and not M.placeholder(name) then
             out[#out + 1] = { w = w, addr = ea, name = name }
         end
@@ -1504,9 +1560,7 @@ M.bt_party = function()
     for _, w in ipairs(M.bt_list("BattleSelectPlayerStatus_C")) do
         local name = M.wtext(w.CharaName)
         if not M.placeholder(name) then
-            local o
-            pcall(function() o = w.Owner end)
-            out[#out + 1] = { w = w, addr = o and M.addr_of(o), name = name }
+            out[#out + 1] = { w = w, addr = M.peekp(w, 0x388), name = name }   -- Owner
         end
     end
     return out
@@ -1526,8 +1580,7 @@ M.bt_enemy_text = function(en)
         if ic then pcall(function() setup, opened = ic.IsSetup, ic.IconOpened end) end
         if setup then
             if opened then
-                local res
-                pcall(function() res = ic.AttributeIcon.Brush.ResourceObject:GetFName():ToString() end)
+                local res = M.icon_tex(ic, 0x248)   -- AttributeIcon's texture
                 local key = res and res:match("Icon_(%a+)$")
                 known[#known + 1] = (key and M.WEAK_DE[key]) or key or "?"
             else
@@ -1537,7 +1590,83 @@ M.bt_enemy_text = function(en)
     end
     if #known > 0 then parts[#parts + 1] = "weak to " .. table.concat(known, ", ") end
     if unknown > 0 then parts[#parts + 1] = unknown .. " unknown" end
-    return table.concat(parts, ", ")
+    local s = table.concat(parts, ", ")
+    local st = M.bt_enemy_statuses(w)
+    -- "broken" is already said from the shield; its icon only adds the turns
+    for i = #st, 1, -1 do
+        if st[i]:match("^broken") then
+            if sh == "0" and st[i]:find(",") then s = s:gsub(", broken", ", " .. st[i], 1) end
+            table.remove(st, i)
+        end
+    end
+    if #st > 0 then s = s .. ". " .. table.concat(st, "; ") end
+    return s
+end
+-- STATUS EFFECTS: BuffIcon_C widgets whose StateIcon texture names the effect,
+-- "UiTX_Battle_IconStatus_Up_PAttack" / "..._Down_Poison"; TurnNum = turns left.
+-- Party panel: BuffIcon_00..03 and DebuffIcon_00..03. Enemy panel: StateIcon01/02 (the
+-- two shown, cycling) and DiseaseIconList (all of them).
+M.STATUS_UP = { AbilityAll = "abilities hit all", AttackAll = "attacks hit all", Avoid = "evasion up",
+    BPBoost = "BP boost", Counter = "counter", Critical = "critical up", CriticalContinu = "criticals continue",
+    Dark = "dark enchant", DDefense = "damage guard", EAvoid = "elemental evasion up", Fire = "fire enchant",
+    Health = "health up", Hit = "accuracy up", Ice = "ice enchant", Invincible = "invincible",
+    ItemAll = "items hit all", Light = "light enchant", MAttack = "elemental attack up",
+    MContinu = "spells continue", MConverge = "spells converge", MCritical = "spell criticals",
+    Mdefense = "elemental defense up", PAttack = "physical attack up", PDefense = "physical defense up",
+    Provoke = "provoke", Reflec = "reflect", Regene = "HP regeneration", Reraise = "auto revive",
+    Speed = "speed up", SPRegene = "SP regeneration", Thunder = "lightning enchant", Wind = "wind enchant" }
+M.STATUS_DOWN = { Adhesive = "stuck", Avoid = "evasion down", Break = "broken", BuffUnavailable = "buffs blocked",
+    Confu = "confused", Critical = "critical down", Dark = "blinded", Faint = "unconscious", Fear = "terrified",
+    Hit = "accuracy down", MAttack = "elemental attack down", MDefense = "elemental defense down",
+    MSealed = "abilities sealed", PAttack = "physical attack down", Pdefense = "physical defense down",
+    Poison = "poisoned", Silence = "silenced", Sleep = "asleep", Speed = "speed down", Spoison = "badly poisoned" }
+M.bt_icon_status = function(ic)   -- -> "poisoned, 2 turns" or nil
+    -- an icon in use has IconIN set: the 54 unused copies in a test were "visible" (4)
+    -- with the default texture (Up_MAttack) and "8" turns, but IconIN false
+    local inn = false
+    pcall(function() inn = ic.IconIN end)
+    if not inn then return nil end
+    local v = M.wvis(ic)
+    if not (v == 0 or v == 3 or v == 4) then return nil end
+    local res = M.icon_tex(ic, 0x258)   -- StateIcon's texture
+    local dir, key = (res or ""):match("IconStatus_(%a+)_(%w+)$")
+    if not dir then return nil end
+    local name = (dir == "Up" and M.STATUS_UP[key]) or (dir == "Down" and M.STATUS_DOWN[key])
+        or (key .. (dir == "Up" and " up" or " down"))
+    local t = M.wtext(ic.TurnNum)
+    if t and t:match("^%d+$") and not M.placeholder(t) then
+        name = name .. ", " .. t .. (t == "1" and " turn" or " turns")
+    end
+    return name
+end
+M.bt_statuses = function(icons)   -- unique effects of a list of BuffIcon_C widgets
+    local out, seen = {}, {}
+    for _, ic in ipairs(icons) do
+        local s
+        pcall(function() s = M.bt_icon_status(ic) end)
+        local k = s and s:match("^[^,]+")
+        if s and not seen[k] then seen[k] = true; out[#out + 1] = s end
+    end
+    return out
+end
+M.bt_enemy_statuses = function(w)
+    local icons = {}
+    for _, nm in ipairs({ "StateIcon01", "StateIcon02" }) do
+        pcall(function() local ic = w[nm]; if ic then icons[#icons + 1] = ic end end)
+    end
+    pcall(function()
+        w.DiseaseIconList:ForEach(function(_, e) local ic = e:get(); if ic then icons[#icons + 1] = ic end end)
+    end)
+    return M.bt_statuses(icons)
+end
+M.bt_party_statuses = function(w)
+    local icons = {}
+    for k = 0, 3 do
+        for _, nm in ipairs({ "BuffIcon_0", "DebuffIcon_0" }) do
+            pcall(function() local ic = w[nm .. k]; if ic then icons[#icons + 1] = ic end end)
+        end
+    end
+    return M.bt_statuses(icons)
 end
 -- boost points: the filled ones of the 5 gauge points (BattleBoostGaugePoint_C)
 M.bt_bp = function(w)
@@ -1557,6 +1686,8 @@ M.bt_party_text = function(pm)
         tostring(M.wtext(w.TextHPMaxValue)), tostring(M.wtext(w.TextMPValue)), tostring(M.wtext(w.TextMPMaxValue)),
         M.bt_bp(w))
     if dead then s = s .. ", down" end
+    local st = M.bt_party_statuses(w)
+    if #st > 0 then s = s .. ". " .. table.concat(st, "; ") end
     return s
 end
 M.bt_describe = function(addr)   -- a battle character by address: enemy or party
@@ -1574,10 +1705,8 @@ M.bt_targets = function()   -- addresses under a visible target cursor, sorted
         local cv = false
         pcall(function() cv = c.CursorVisible end)
         if cv and M.wvis(c) == 0 then
-            local tc
-            pcall(function() tc = c.TargetCharacter end)
-            local a = tc and M.addr_of(tc)
-            if a and a ~= 0 then t[#t + 1] = a end
+            local a = M.peekp(c, 0x208)   -- TargetCharacter
+            if a then t[#t + 1] = a end
         end
     end
     table.sort(t)
@@ -1602,8 +1731,7 @@ M.bt_menu = function()   -- the focused command of the topmost open menu
     if M.placeholder(text) then return nil end
     local usable = true
     pcall(function() usable = it.CommandUseable end)
-    local who
-    pcall(function() who = M.addr_of(best.Player) end)
+    local who = M.peekp(best, 0x368)   -- Player
     local boost = 0   -- the boost level chosen with O (BoostLevel; the highest of the open menus)
     for _, mm in ipairs(M.bt_list("BattleCommandMenu_C")) do
         local open, b = false, 0
@@ -1773,9 +1901,8 @@ M.bt_order = function()
     for _, pm in ipairs(M.bt_party()) do if pm.addr then names[pm.addr] = pm.name end end
     local now_l, next_l = {}, {}
     for _, ic in ipairs(M.bt_list("ActionOrderIcon_C")) do
-        local en, a = false, nil
+        local en, a = false, M.peekp(ic, 0x288)   -- Character
         pcall(function() en = ic.EnableActionOrder end)
-        pcall(function() a = M.addr_of(ic.Character) end)
         if en and a and names[a] and M.wvis(ic) == 0 then
             local nx, brk = false, false
             pcall(function() nx, brk = ic.IsNextOrder, ic.IsBreak end)
