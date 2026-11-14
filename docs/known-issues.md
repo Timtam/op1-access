@@ -3,6 +3,38 @@
 Problems noticed in existing features that are not fixed yet. Newest first. When one
 gets fixed, delete its entry (the commit message keeps the history).
 
+## Battles (user report 2026-11-14)
+
+- **The navigator and radar don't know a battle is on.** Navigation keys still act in
+  battle. `KSGameStatics:GetBattleMode` exists (the exit trigger BP calls it) and should
+  gate the navigator, the walker and the radar like an event does.
+- **Battle menus are not read at all.** Command menu, abilities, items, target choice,
+  turn order and the result screen are silent. The battle UI classes are in the object
+  dump (`BattleCommandMenu_C` / `BattleCommandMenuItem_C`, `BattleTargetCursor_C`,
+  `BattleEnemyStatus_C`, `WeakStatusIcon_C`, `BreakStatusIcon_C`,
+  `ActionOrderTimeLine_C`, `BattleResultPanelWidget_C`).
+- **Enemy information needs shortcuts:** names, HP if shown, shield points, revealed
+  weaknesses, break state, turn order -- on keys, without having to target each enemy.
+
+## Walker (user report 2026-11-14)
+
+- **Getting stuck still needs the player.** Too often the walker ends with "Stuck, no way
+  on from here. Step aside, then backspace again". It already does one automatic
+  sidestep; it should try more (other directions, a step back) and re-route by itself.
+  From a wedged spot the router fails at once because the start cell itself counts as
+  blocked -- it could start from the nearest free cell instead.
+- **Doors should open by themselves.** At a door on the route the walker stops with
+  "Öffnen, E, then backspace again". The mod could press E itself (only for the door
+  the route goes through, never at NPCs) and walk on once the trace through it is
+  clear -- also through the room door the game closes behind you.
+- **Too many re-routes and wall bumps.** Routes hug walls (4-neighbour grid of 130-unit
+  cells, the path keeps every corner cell) and the walker cuts corners. Ideas: smooth the
+  path by line of sight with the body-wide test, a cost for cells next to walls,
+  8-neighbour steps, steering toward the farthest visible waypoint, and a walkability
+  grid traced once per area in the background and kept -- then a search is instant, and
+  one Dijkstra/BFS flood from the player answers reachability for the whole list at
+  once instead of one A* per target.
+
 ## Path actions
 
 Tested 2026-11-11 with Cyrus' Scrutinize ("Studieren") only. The hint, the radar gate
