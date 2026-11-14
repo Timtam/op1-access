@@ -4481,7 +4481,17 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
     while wp do
         local dx, dy = wp.x - px, wp.y - py
         local reach = (NV.wp == #NV.path) and 110 or (wp.reach or 40)   -- tight at turns (nav_walk_begin_path)
-        if math.sqrt(dx * dx + dy * dy) >= reach then break end
+        local dist = math.sqrt(dx * dx + dy * dy)
+        if dist >= reach then
+            -- ...or already PAST it: within 60 and beyond the line through it square to
+            -- its leg. 8 keys rarely pass a turn point within 22, so the walker circled
+            -- it at ~30 until the "no closer" skip (0.35 s; chest 2, 2026-11-14)
+            local wb = NV.wpbest
+            if not (NV.wp < #NV.path and dist < 60 and wb and wb.i == NV.wp and wb.path == NV.path
+                and (px - wp.x) * (wp.x - wb.ax) + (py - wp.y) * (wp.y - wb.ay) > 0) then
+                break
+            end
+        end
         NV.wp = NV.wp + 1
         wp = NV.path[NV.wp]
     end

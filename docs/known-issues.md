@@ -21,13 +21,27 @@ gets fixed, delete its entry (the commit message keeps the history).
 - **Freeing itself is written but untested.** When a re-route fails from a wedged spot
   the walker now takes up to 3 steps into open directions before "Step aside"
   ("Trying another way"). No wedge happened in the tests that would have shown it.
-- **Too many re-routes and wall bumps.** Routes hug walls (4-neighbour grid of 130-unit
-  cells, the path keeps every corner cell) and the walker cuts corners. Ideas: smooth the
-  path by line of sight with the body-wide test, a cost for cells next to walls,
-  8-neighbour steps, steering toward the farthest visible waypoint, and a walkability
-  grid traced once per area in the background and kept -- then a search is instant, and
-  one Dijkstra/BFS flood from the player answers reachability for the whole list at
-  once instead of one A* per target.
+- **Wall bumps: mostly fixed, a few checks left.** The cause was OT's invisible walls,
+  which the router's channel 0 doesn't see (channel 1 and the capsule's "Pawn" profile
+  do, CHPROBE on every bump). Since 2026-11-14:
+  - 8-neighbour routes with a cost near walls; a step the Pawn trace calls blocked costs
+    8 instead of being a wall (all 7 study chests reachable).
+  - Waypoints are pushed off walls before the walker heads for one; a waypoint it gets
+    no closer to for 0.35 s is skipped.
+  - Steering follows the leg's line, and routes stop 110 short of the target instead
+    of running into a chest.
+
+  The study's bump spot and the three chest walks checked in-game ran clean. Not
+  checked yet:
+  - Counting a waypoint as reached once the walker is past it (within 60); this is meant
+    to stop the circling at turns.
+  - Long walks: random battles stopped every one of them after 10-15 s.
+  - Towns and other dungeons.
+
+  Long routes still take ~5 s to plan, and the background check took up to 14 s per
+  far chest. The next speed-up would be a walkability grid traced once per area and
+  kept; a search is then instant, and one Dijkstra flood from the player answers the
+  whole list at once.
 
 ## Path actions
 
