@@ -1,0 +1,53 @@
+# Builds the shim, the installer and the release ZIP on every push to the main branch, for pull
+# requests and on demand. The ZIP and the installer are kept as artifacts of the run.
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+    paths-ignore: ['**/*.md', 'docs/**']
+  pull_request:
+    paths-ignore: ['**/*.md', 'docs/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Visual Studio with the C++ tools, CMake and Ninja comes with the runner.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 8.0.x
+
+      # Lua (UE4SS sources), Prism, MinHook, miniaudio, the Steam Audio SDK and UE4SS, pinned in
+      # fetch-deps.ps1: a new pin gives a new cache.
+      - name: Cache dependencies
+        uses: actions/cache@v6
+        with:
+          path: tools
+          key: deps-${{ hashFiles('scripts/fetch-deps.ps1') }}
+
+      - name: Build and package
+        shell: pwsh
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: ./scripts/build-release.ps1 -RepositorySlug $env:REPOSITORY
+
+      - name: Upload the ZIP
+        uses: actions/upload-artifact@v7
+        with:
+          name: OP1Access-zip
+          path: dist/OP1Access-*.zip
+          if-no-files-found: error
+
+      - name: Upload the installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: OP1AccessInstaller
+          path: dist/OP1AccessInstaller.exe
+          if-no-files-found: error
