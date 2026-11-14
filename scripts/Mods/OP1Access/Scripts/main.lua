@@ -2854,23 +2854,19 @@ end
 -- (Ctrl+F6 beacon toggle removed: the radar is now always-on, auto-gated by the
 -- exploration state in the pump -- see the AUTO RADAR block in radar_pump.)
 
--- ===== Wall-radar probe (phase 4 / A6): validate engine line-tracing =====
--- Before building the wall radar we must confirm we can cast a collision ray from
--- Lua. KismetSystemLibrary:LineTraceSingle is a normal ray-cast; FVector *params*
--- (as opposed to struct *returns*) marshal fine in UE4SS Lua. Ctrl+F5 traces the 4
--- cardinal directions from the player and reports which are blocked. If this works,
--- the radar is just "trace each tick -> panned tone for blocked dirs"; if it
--- crashes/fails we fall back to a C++ ProcessEvent trace. Trace channel 0 =
--- TraceTypeQuery1 (usually Visibility) -- tune if it doesn't see walls.
+-- ===== Line traces (wall radar, router, walker) =====
 local WALL_DIRS = {
     { name = "up",    dx = 1,  dy = 0 },   -- world +X (screen up)
     { name = "down",  dx = -1, dy = 0 },
     { name = "right", dx = 0,  dy = 1 },   -- world +Y (screen right)
     { name = "left",  dx = 0,  dy = -1 },
 }
--- Working LineTraceSingle call form (confirmed): colon syntax, OutHit passed as a
--- {} placeholder at param 8, returns the hit bool. Trace channel 0 = TraceTypeQuery1.
-local TRACE_COL = { R = 0, G = 0, B = 0, A = 1 }
+-- Every line trace goes through the shim (shim.Trace): KismetSystemLibrary
+-- LineTraceSingle / LineTraceSingleByProfile called through ProcessEvent with one
+-- reused parameter buffer -- 0.010 ms a trace, against 0.087 through UE4SS's own call,
+-- which built Lua tables for both vectors and the whole FHitResult. A long route fires
+-- ~6000. UE4SS's call stayed as a fallback until the native one had agreed with it on
+-- every test (13 of 13 traces, dungeon and town); removed 2026-11-14 (user request).
 -- ch = ETraceTypeQuery (default 0 = TraceTypeQuery1/Visibility, used by the
 -- pathfinder for ground/clearance). The wall radar passes 1+ because OT's invisible
 -- collision walls (non-enterable archways, map fences) IGNORE channel 0 but BLOCK
@@ -2879,32 +2875,16 @@ local TRACE_COL = { R = 0, G = 0, B = 0, A = 1 }
 -- channel. It blocks what the character collides with: the invisible walls channel 0
 -- misses (the study's ledge the walker kept running into: ch0 miss, ch1 and Pawn hit at
 -- 28, 2026-11-14) but not channel 1's camera-only decoration.
-M.line_blocked_lua = function(ksl, p, sx, sy, sz, ex, ey, ez, ch)   -- UE4SS's own call
-    local outHit = {}
-    local ok, hit
-    if ch == "pawn" then
-        if not M.pawn_fname then M.pawn_fname = FName(M.pawn_profile or "Pawn") end
-        ok, hit = pcall(function()
-            return ksl:LineTraceSingleByProfile(p, { X = sx, Y = sy, Z = sz }, { X = ex, Y = ey, Z = ez },
-                M.pawn_fname, false, {}, 0, outHit, true, TRACE_COL, TRACE_COL, 0.0)
-        end)
-    else
-        ok, hit = pcall(function()
-            return ksl:LineTraceSingle(p, { X = sx, Y = sy, Z = sz }, { X = ex, Y = ey, Z = ez },
-                ch or 0, false, {}, 0, outHit, true, TRACE_COL, TRACE_COL, 0.0)
-        end)
-    end
-    return ok, hit, outHit
-end
--- NATIVE traces (2026-11-14): shim.Trace calls the same UFunctions through
--- ProcessEvent with one reused parameter buffer -- no Lua tables per trace, no
--- FHitResult converted back. A long route fires ~6000 traces. Set up on first use; a
--- self-test then compares 13 traces (4 directions x ch0, ch1, Pawn profile, plus one
--- down to the floor) with UE4SS's own call, and any difference keeps the Lua call.
--- M.tr_native: true | false (off for good) | "retry" (try again after M.tr_retry_t).
+-- Set up on first use. The check: straight down from the player must hit the floor.
+-- M.tr_native: true | "retry" (set up again after M.tr_retry_t) | false (no shim.Trace).
 M.trace_setup = function(ksl, p)
-    M.tr_native = false
-    if not (shim and shim.TraceSetup and shim.Trace) then return end
+    M.tr_native, M.tr_retry_t = "retry", os.clock() + 30
+    if not (shim and shim.TraceSetup and shim.Trace) then
+        M.tr_native = false
+        log("TRACE: the shim has no Trace -- no walls, no routes")
+        speak("Navigation traces unavailable")
+        return
+    end
     local a = {}
     pcall(function()
         a.k  = ksl:GetAddress()
@@ -2921,85 +2901,49 @@ M.trace_setup = function(ksl, p)
     end)
     local px, py, pz = read_actor_pos(p)
     if not (a.k and a.f1 and a.f2 and a.lf and a.p and a.pf and px) then
-        M.tr_native, M.tr_retry_t = "retry", os.clock() + 30
-        log("TRACE native: lookup failed, retry in 30 s")
+        log("TRACE setup: lookup failed, retry in 30 s")
         return
     end
     local oks, res = pcall(shim.TraceSetup, a.k, a.f1, a.f2, a.p, a.lf)
-    if not (oks and res) then log("TRACE native: setup failed (ProcessEvent check)"); return end
-    local tests = {}
-    for _, d in ipairs(WALL_DIRS) do
-        for _, ch in ipairs({ 0, 1, "pawn" }) do
-            tests[#tests + 1] = { px + d.dx * 12, py + d.dy * 12, pz + 30,
-                px + d.dx * 300, py + d.dy * 300, pz + 30, ch, d.name }
+    local okf, hitf, df = false, false, nil
+    if oks and res then okf, hitf, df = shim.Trace(a.p, px, py, pz + 20, px, py, pz - 600, 0) end
+    if not (okf and hitf and type(df) == "number" and df > 20 and df < 400) then
+        log(string.format("TRACE setup failed (setup %s, floor %s/%s/%s), retry in 30 s",
+            tostring(res), tostring(okf), tostring(hitf), tostring(df)))
+        if not M.tr_warned then
+            M.tr_warned = true
+            speak("Navigation traces failed, retrying")
         end
-    end
-    tests[#tests + 1] = { px + 40, py, pz + 100, px + 40, py, pz - 400, 0, "floor" }
-    local bad = 0
-    for _, t in ipairs(tests) do
-        local ok1, hit1, oh1 = M.line_blocked_lua(ksl, p, t[1], t[2], t[3], t[4], t[5], t[6], t[7])
-        local okn, hitn, dn
-        if t[7] == "pawn" then
-            okn, hitn, dn = shim.Trace(a.p, t[1], t[2], t[3], t[4], t[5], t[6], -1, a.pf)
-        else
-            okn, hitn, dn = shim.Trace(a.p, t[1], t[2], t[3], t[4], t[5], t[6], t[7])
-        end
-        local d1
-        if hit1 then pcall(function() d1 = oh1.Distance end) end
-        if not (ok1 and okn) or (hit1 and true or false) ~= (hitn and true or false)
-            or (hit1 and math.abs((d1 or -99) - (dn or 0)) > 1) then
-            bad = bad + 1
-            log(string.format("TRACE selftest %s ch=%s lua=%s/%s native=%s/%s/%s", t[8], tostring(t[7]),
-                tostring(hit1), tostring(d1), tostring(okn), tostring(hitn), tostring(dn)))
-        end
+        return
     end
     M.pawn_fidx = a.pf
-    M.tr_native = (bad == 0)
-    log(string.format("TRACE native %s (selftest %d of %d agree)", tostring(M.tr_native), #tests - bad, #tests))
-    if M.tr_native then   -- what one trace costs either way (once: a ~0.1 s pause)
-        local c0 = os.clock()
-        for _ = 1, 8 do
-            for _, t in ipairs(tests) do M.line_blocked_lua(ksl, p, t[1], t[2], t[3], t[4], t[5], t[6], t[7]) end
-        end
-        local c1 = os.clock()
-        for _ = 1, 8 do
-            for _, t in ipairs(tests) do
-                if t[7] == "pawn" then shim.Trace(a.p, t[1], t[2], t[3], t[4], t[5], t[6], -1, a.pf)
-                else shim.Trace(a.p, t[1], t[2], t[3], t[4], t[5], t[6], t[7]) end
-            end
-        end
-        local c2 = os.clock()
-        local n = 8 * #tests
-        log(string.format("TRACE cost per trace: lua %.3f ms, native %.3f ms (%d each)",
-            (c1 - c0) * 1000 / n, (c2 - c1) * 1000 / n, n))
-    end
+    M.tr_native = true
+    log(string.format("TRACE ready (floor %.0f below)", df))
 end
+-- -> ok, hit, {Distance} (on a hit). ok = false: no trace (not set up, or the call
+-- faulted) -- every caller then counts the way as blocked.
 local function line_blocked(ksl, p, sx, sy, sz, ex, ey, ez, ch)
-    local nat = M.tr_native
-    if nat == nil or (nat == "retry" and os.clock() > M.tr_retry_t) then
-        pcall(M.trace_setup, ksl, p)
-        nat = M.tr_native
-    end
-    if nat == true then
-        if not rawequal(p, M.tr_p) then   -- the player's address, once per object
-            M.tr_p, M.tr_addr = p, nil
-            pcall(function() M.tr_addr = p:GetAddress() end)
+    if M.tr_native ~= true then
+        if M.tr_native == nil or (M.tr_native == "retry" and os.clock() > M.tr_retry_t) then
+            pcall(M.trace_setup, ksl, p)
         end
-        local addr = M.tr_addr
-        if addr then
-            local okn, hit, dist
-            if ch == "pawn" then
-                okn, hit, dist = shim.Trace(addr, sx, sy, sz, ex, ey, ez, -1, M.pawn_fidx)
-            else
-                okn, hit, dist = shim.Trace(addr, sx, sy, sz, ex, ey, ez, ch or 0)
-            end
-            if okn then
-                if hit then return true, true, { Distance = dist } end
-                return true, false, nil
-            end
-        end
+        if M.tr_native ~= true then return false, false, nil end
     end
-    return M.line_blocked_lua(ksl, p, sx, sy, sz, ex, ey, ez, ch)
+    if not rawequal(p, M.tr_p) then   -- the player's address, once per object
+        M.tr_p, M.tr_addr = p, nil
+        pcall(function() M.tr_addr = p:GetAddress() end)
+    end
+    local addr = M.tr_addr
+    if not addr then return false, false, nil end
+    local okn, hit, dist
+    if ch == "pawn" then
+        okn, hit, dist = shim.Trace(addr, sx, sy, sz, ex, ey, ez, -1, M.pawn_fidx)
+    else
+        okn, hit, dist = shim.Trace(addr, sx, sy, sz, ex, ey, ez, ch or 0)
+    end
+    if not okn then return false, false, nil end
+    if hit then return true, true, { Distance = dist } end
+    return true, false, nil
 end
 NV_TRACE = "pawn"   -- the router's clearance trace (a global: the main chunk is at 200 locals)
 -- Which trace sees what the player bumps into? ch0 (the router's), ch1 (the wall
@@ -3017,23 +2961,15 @@ M.chan_probe = function(tag)
         M.pawn_profile = (prof and prof ~= "" and prof ~= "None") and prof or "Pawn"
     end
     local prof = M.pawn_profile
-    local function dist_of(fn)
-        local oh = {}
-        local ok, hit = pcall(fn, oh)
-        if not ok then return "err" end
-        if not hit then return "-" end
-        local dd
-        pcall(function() dd = oh.Distance end)
-        return type(dd) == "number" and string.format("%.0f", dd) or "hit"
-    end
     local parts = {}
     for _, d in ipairs(WALL_DIRS) do
-        local s = { X = px + d.dx * 12, Y = py + d.dy * 12, Z = pz + 30 }
-        local e = { X = px + d.dx * 200, Y = py + d.dy * 200, Z = pz + 30 }
-        local c0 = dist_of(function(oh) return ksl:LineTraceSingle(p, s, e, 0, false, {}, 0, oh, true, TRACE_COL, TRACE_COL, 0.0) end)
-        local c1 = dist_of(function(oh) return ksl:LineTraceSingle(p, s, e, 1, false, {}, 0, oh, true, TRACE_COL, TRACE_COL, 0.0) end)
-        local cp = dist_of(function(oh) return ksl:LineTraceSingleByProfile(p, s, e, FName(prof), false, {}, 0, oh, true, TRACE_COL, TRACE_COL, 0.0) end)
-        parts[#parts + 1] = string.format("%s ch0=%s ch1=%s prof=%s", d.name, c0, c1, cp)
+        local sx, sy, ex, ey = px + d.dx * 12, py + d.dy * 12, px + d.dx * 200, py + d.dy * 200
+        local res = {}
+        for _, ch in ipairs({ 0, 1, "pawn" }) do
+            local ok, hit, oh = line_blocked(ksl, p, sx, sy, pz + 30, ex, ey, pz + 30, ch)
+            res[#res + 1] = not ok and "err" or (hit and string.format("%.0f", oh.Distance) or "-")
+        end
+        parts[#parts + 1] = string.format("%s ch0=%s ch1=%s prof=%s", d.name, res[1], res[2], res[3])
     end
     log(string.format("CHPROBE %s at (%.0f,%.0f) profile=%s: %s", tag, px, py, prof, table.concat(parts, " | ")))
 end
@@ -3760,8 +3696,8 @@ local function nav_route_finish(goalnode)
     local ez = (door and R.mode == "walk") and (door.z or R.oz) or R.oz   -- the walk's end
     if ez - R.pz < -250 then floorword = ", downstairs"
     elseif ez - R.pz > 250 then floorword = ", upstairs" end
-    log(string.format("ROUTE ok cells=%d wps=%d traces=%d %.1fs (%s, %d ticks, %.1f ms/tick, %.3f ms/trace)",
-        #chain, #pts, R.traces, os.clock() - R.started, M.tr_native == true and "native" or "lua",
+    log(string.format("ROUTE ok cells=%d wps=%d traces=%d %.1fs (%d ticks, %.1f ms/tick, %.3f ms/trace)",
+        #chain, #pts, R.traces, os.clock() - R.started,
         R.ticks or 0, (R.cpu or 0) * 1000 / math.max(1, R.ticks or 0), (R.cpu or 0) * 1000 / math.max(1, R.traces)))
     if R.mode == "walk" then
         if door then speak("A shut door on the way") end
@@ -3943,13 +3879,13 @@ end
 -- round may leave the small box. From the academy door the guard up-left counted as
 -- unreachable -- the stairs down lay outside the box -- yet from below he stood in a
 -- straight line (2026-11-14). The traces done so far stay cached (same start cell).
--- With native traces (cheap since 2026-11-14) a THIRD try follows in a +40 box with
+-- With the shim's cheap traces (2026-11-14) a THIRD try follows in a +40 box with
 -- 20000 more traces (~2.5 s for the walk): from the Atlasdam library a building
 -- "3230, above" ran out of the +20 box after 11675 traces.
 NV.route_widen = function(R)
     local pad
     if R.pad < 20 then pad = 20
-    elseif R.pad < 40 and M.tr_native == true then pad = 40
+    elseif R.pad < 40 then pad = 40
     else return nil end
     local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, R.px, R.py, R.pz, pad)
     W.gcache, W.ecache = R.gcache, R.ecache
@@ -4126,16 +4062,11 @@ end
 local function nav_route_step()
     local R = NV.route
     if not R then return end
-    -- 110 traces per tick kept frames smooth with UE4SS's own trace call. Native traces
-    -- (M.tr_native) are far cheaper: up to 1500 per tick, but at most 8 ms of it (the
-    -- game thread's Lua hooks wait for the Lua lock meanwhile).
+    -- Up to 1500 traces per tick, but at most 8 ms of it (the game thread's Lua hooks
+    -- wait for the Lua lock meanwhile). Through UE4SS's own trace call 110 traces took
+    -- ~10 ms; the shim's are ~9 times cheaper.
     local t0 = os.clock()
-    local res, node
-    if M.tr_native == true then
-        res, node = NV.route_slice(R, 1500, 6000, t0 + 0.008)
-    else
-        res, node = NV.route_slice(R, 110, 800)
-    end
+    local res, node = NV.route_slice(R, 1500, 6000, t0 + 0.008)
     R.cpu, R.ticks = (R.cpu or 0) + (os.clock() - t0), (R.ticks or 0) + 1
     if res == "found" then nav_route_finish(node); return end
     if res == "fail" then
@@ -4297,13 +4228,8 @@ NV.bg_step = function()      -- nav_tick, only while no walk or route runs
         if not job then return end
         NV.bg = job
     end
-    -- quiet background work: 40 Lua traces per tick, or native ones for up to 4 ms
-    local res, why
-    if M.tr_native == true then
-        res, why = NV.route_slice(job.R, 800, 3000, os.clock() + 0.004)
-    else
-        res, why = NV.route_slice(job.R, 40, 100)
-    end
+    -- quiet background work: traces for at most 4 ms per tick
+    local res, why = NV.route_slice(job.R, 800, 3000, os.clock() + 0.004)
     if res == "fail" and why == "box" then
         local W = NV.route_widen(job.R)
         if W then job.R = W; return end
