@@ -1,0 +1,34 @@
+Third-party software in OP1 Access {VERSION}
+============================================
+
+UE4SS {UE4SS_VERSION}
+  The files dwmapi.dll, UE4SS.dll and UE4SS-settings.ini and the folders in Mods except
+  OP1Access, unchanged from the official release except "GuiConsoleEnabled = 0" in the settings:
+  https://github.com/UE4SS-RE/RE-UE4SS/releases/tag/v{UE4SS_VERSION}
+  License: MIT, see licenses\LICENSE-UE4SS.txt.
+
+Prism (commit a5fec84)
+  Speech and braille output, built from the unmodified source code and linked into
+  OP1AccessShim.dll.
+  Source code: https://github.com/ethindp/prism/tree/a5fec84e3409cc466a98dfef77b1ea1eeb18aaa8
+  License: Mozilla Public License 2.0, see licenses\prism\LICENSE. Prism uses code from further
+  projects under their own licenses, see licenses\prism\NOTICE and licenses\prism\LICENSES.
+
+Steam Audio 4.8.1
+  The file phonon.dll in Octopath_Traveler\Binaries\Win64, unchanged from the official SDK.
+  Source code: https://github.com/ValveSoftware/steam-audio
+  License: Apache License 2.0, see licenses\LICENSE-SteamAudio.txt.
+
+Lua 5.4
+  Linked into OP1AccessShim.dll, from the UE4SS sources (deps/first/LuaRaw).
+  License: MIT, see licenses\LICENSE-Lua.txt.
+
+MinHook
+  Linked into OP1AccessShim.dll. Source code: https://github.com/TsudaKageyu/minhook
+  License: BSD 2-Clause, see licenses\LICENSE-MinHook.txt.
+
+miniaudio 0.11.25
+  Linked into OP1AccessShim.dll. Source code: https://github.com/mackron/miniaudio
+  License: public domain or MIT No Attribution, at your choice (see the end of miniaudio.h).
+
+Octopath Traveler is a game by Square Enix. OP1 Access is unofficial and not affiliated with it.

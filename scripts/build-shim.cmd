@@ -147,8 +147,26 @@ if errorlevel 1 (
     popd
     exit /b 1
 )
-popd
 echo [build] Built %SHIM_OUT%
+
+:: luac from the same Lua objects: main.lua must at least compile (UE4SS only says so in its
+:: log when the game starts).
+set LUAOBJS=
+for %%F in (%LUASRCS%) do set LUAOBJS=!LUAOBJS! "%%~nF.obj"
+cl /nologo /MD /O2 /I"%LUAINC%" /I"%LUASRC%" "%LUASRC%\luac.c" %LUAOBJS% /Fe:"%BUILD%\luac.exe" >"%BUILD%\luac-build.log" 2>&1
+if errorlevel 1 (
+    type "%BUILD%\luac-build.log"
+    echo [build] luac build failed.
+    popd
+    exit /b 1
+)
+popd
+"%BUILD%\luac.exe" -p "%REPO%\scripts\Mods\OP1Access\Scripts\main.lua"
+if errorlevel 1 (
+    echo [build] main.lua does not compile.
+    exit /b 1
+)
+echo [build] main.lua compiles.
 if defined NO_DEPLOY (
     echo [build] Done ^(--no-deploy^).
     exit /b 0
