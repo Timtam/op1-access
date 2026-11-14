@@ -2709,6 +2709,131 @@ end
 -- Capture title widgets at this rate (20Hz) so the title menu reads immediately; the
 -- pump only ticks ~5Hz, which made it read seconds late. Pre-game only (not
 -- M.field_player) and never mid-fade (M.menu_unsafe).
+-- ===== Updates (2026-11-14) =====
+-- A release has Scripts\buildinfo.lua (written by scripts/package.ps1) with its version and the
+-- GitHub repository. Then the mod asks GitHub for the latest release when it loads (the shim's
+-- HTTP thread; no game calls) and says when a newer one is out. F5 checks again; F5 twice
+-- installs it: the mod starts OP1AccessInstaller.exe from its folder with --update --restart
+-- --game <game folder> and closes the game; the installer updates and starts the game again.
+-- Development copies (no buildinfo.lua) don't check.
+do
+    local extra = "Mods\\OP1Access\\Scripts\\?.lua"
+    if not package.path:find(extra, 1, true) then package.path = extra .. ";" .. package.path end
+end
+M.build = {}
+do
+    local okb, bi = pcall(require, "buildinfo")
+    if okb and type(bi) == "table" then M.build = bi end
+    log(string.format("build: version %s, update source %s", tostring(M.build.version or "dev"),
+        tostring(M.build.repo ~= "" and M.build.repo or "none")))
+end
+M.upd = { confirm_until = -1 }
+M.has_update_source = function() return type(M.build.repo) == "string" and M.build.repo ~= "" end
+-- "v1.2.3" / "1.2" -> { 1, 2, 3 }, or nil
+M.version_parse = function(s)
+    local a, b, c = tostring(s or ""):match("^[vV]?(%d+)%.(%d+)%.?(%d*)")
+    if not a then return nil end
+    return { tonumber(a), tonumber(b), tonumber(c) or 0 }
+end
+M.version_newer = function(x, y)
+    local a, b = M.version_parse(x), M.version_parse(y)
+    if not (a and b) then return false end
+    for i = 1, 3 do
+        if a[i] ~= b[i] then return a[i] > b[i] end
+    end
+    return false
+end
+M.update_check = function(manual)
+    if not (M.has_update_source() and shim and shim.HttpGetStart) then return false end
+    local url = "https://api.github.com/repos/" .. M.build.repo .. "/releases/latest"
+    if not shim.HttpGetStart(url, "OP1Access/" .. tostring(M.build.version)) then return false end
+    M.upd.pending, M.upd.manual = true, manual
+    return true
+end
+-- From the fast loop (any thread: only the shim's HTTP result and speech).
+M.update_poll = function()
+    if not (M.upd.pending and shim and shim.HttpGetPoll) then return end
+    local status, body = shim.HttpGetPoll()
+    if status == nil then return end
+    M.upd.pending = false
+    local manual = M.upd.manual
+    if status == 404 then
+        M.upd.latest = nil
+        log("UPDATE no release published yet")
+        if manual then speak("No release of OP1 Access is published yet") end
+        return
+    end
+    if status ~= 200 or type(body) ~= "string" then
+        log("UPDATE check failed: " .. tostring(status) .. " " .. tostring(status == false and body or ""))
+        if manual then speak("Could not check for updates") end
+        return
+    end
+    local tag = body:match('"tag_name"%s*:%s*"([^"]+)"')
+    M.upd.latest = tag
+    M.upd.page = body:match('"html_url"%s*:%s*"([^"]+)"')
+    log(string.format("UPDATE latest release %s, this version %s", tostring(tag), tostring(M.build.version)))
+    if tag and M.version_newer(tag, M.build.version) then
+        if manual or M.upd.announced ~= tag then
+            M.upd.announced = tag
+            speak(string.format("OP1 Access %s is available. Press F5 twice to install it.", (tag:gsub("^[vV]", ""))), manual)
+        end
+    elseif manual then
+        speak("OP1 Access is up to date, version " .. tostring(M.build.version))
+    end
+end
+M.update_key = function()
+    -- Ctrl+F5 is the menu dump; don't count it as an F5 press (if UE4SS fires both)
+    if shim and shim.KeyModifiers then
+        local ctrl, shift, alt = shim.KeyModifiers()
+        if ctrl or shift or alt then return end
+    end
+    if not M.has_update_source() then
+        speak("This copy of OP1 Access has no update source")
+        return
+    end
+    if M.upd.pending then speak("Checking for updates"); return end
+    local tag = M.upd.latest
+    if tag and M.version_newer(tag, M.build.version) then
+        if os.clock() <= M.upd.confirm_until then
+            M.upd.confirm_until = -1
+            M.update_install()
+            return
+        end
+        M.upd.confirm_until = os.clock() + 10
+        speak(string.format("Version %s. Press F5 again to install it. The game closes without saving and starts again.",
+            (tag:gsub("^[vV]", ""))), true)
+        return
+    end
+    speak("Checking for updates")
+    if not M.update_check(true) then speak("Could not check for updates") end
+end
+M.update_install = function()
+    -- ...\OCTOPATH TRAVELER\Octopath_Traveler\Binaries\Win64\Octopath_Traveler-Win64-Shipping.exe
+    -- (paths stay UTF-8 strings for the shim; Lua's io.open can't open non-ASCII paths)
+    local exe = shim and shim.GameExePath and shim.GameExePath()
+    local bin = exe and exe:match("^(.*)\\[^\\]+$")
+    local game = bin and bin:match("^(.*)\\[^\\]+\\[^\\]+\\[^\\]+$")
+    local ok, err = false, "no game folder"
+    if game and shim.StartProcess then
+        ok, err = shim.StartProcess(bin .. "\\Mods\\OP1Access\\OP1AccessInstaller.exe",
+            '--update --restart --game "' .. game .. '"')
+    end
+    if not ok then
+        log("UPDATE could not start the installer: " .. tostring(err))
+        speak("Could not start the installer. Opening the download page.", true)
+        local page = M.upd.page or ("https://github.com/" .. M.build.repo .. "/releases/latest")
+        pcall(shim.StartProcess, (os.getenv("SystemRoot") or "C:\\Windows") .. "\\explorer.exe", '"' .. page .. '"')
+        return
+    end
+    log("UPDATE installer started for " .. tostring(M.upd.latest) .. ", closing the game")
+    speak("Installing the update. The game closes now.", true)
+    -- after a moment for the speech; the installer waits until the game has ended
+    local okc, closing = pcall(shim.CloseGame, 1500)
+    log("UPDATE closing the game: " .. tostring(okc and closing))
+end
+pcall(RegisterKeyBind, Key.F5, function() pcall(M.update_key) end)
+if M.has_update_source() then pcall(M.update_check, false) end
+
 M.fast_steps = {
     { "scan", function() if M.scan_scene and not M.field_player and not M.menu_unsafe then M.scan_scene() end end },
     { "active", function() poll_active_menu() end },
@@ -2739,6 +2864,7 @@ M.fast_polls = function()
     end
 end
 local ok_loop = pcall(LoopAsync, POLL_INTERVAL_MS, function()
+    pcall(M.update_poll)   -- the release check's answer (no game calls)
     if not M.fg_ok() then return end   -- unfocused: skip menu polls (game calls fault)
     pcall(M.event_menus_tick)
     if M.menu_lists_tick then pcall(M.menu_lists_tick) end

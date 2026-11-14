@@ -4,10 +4,16 @@
 :: Builds Prism (static library, via CMake) and OP1AccessShim.dll, which links
 :: Prism in, then deploys the shim to the game's Mods/OP1Access/Scripts folder.
 ::
-:: Dependencies live in tools\ (gitignored). Set OP1_TOOLS to use a tools
-:: folder elsewhere, e.g. the main checkout's when building from a worktree.
+:: Dependencies live in tools\ (gitignored; scripts\fetch-deps.ps1 fetches them).
+:: Set OP1_TOOLS to use a tools folder elsewhere, e.g. the main checkout's when
+:: building from a worktree.
+::
+:: --no-deploy builds only (CI, release packages): no copy into the game.
 
 setlocal enabledelayedexpansion
+
+set NO_DEPLOY=
+if /I "%~1"=="--no-deploy" set NO_DEPLOY=1
 
 set REPO=%~dp0..
 if not defined OP1_TOOLS set "OP1_TOOLS=%REPO%\tools"
@@ -134,7 +140,7 @@ cl /nologo /MD /O2 /EHsc /std:c++20 /DPRISM_STATIC ^
    /WHOLEARCHIVE:"%PRISM_BUILD%\prism.lib" ^
    advapi32.lib user32.lib gdi32.lib ole32.lib oleaut32.lib uuid.lib shell32.lib ^
    onecore.lib runtimeobject.lib uiautomationcore.lib rpcrt4.lib xaudio2.lib powrprof.lib ^
-   "%STEAMAUDIO%\lib\windows-x64\phonon.lib"
+   winhttp.lib "%STEAMAUDIO%\lib\windows-x64\phonon.lib"
 
 if errorlevel 1 (
     echo [build] Shim build failed.
@@ -143,6 +149,10 @@ if errorlevel 1 (
 )
 popd
 echo [build] Built %SHIM_OUT%
+if defined NO_DEPLOY (
+    echo [build] Done ^(--no-deploy^).
+    exit /b 0
+)
 
 :: ---------------------------------------------------------------------
 :: Step 3: Deploy

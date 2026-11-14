@@ -21,6 +21,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <winhttp.h>
 
 #include <mutex>
 #include <string>
@@ -1403,6 +1404,200 @@ int l_is_game_thread(lua_State* L) {
     return 1;
 }
 
+// ===== Updates (2026-11-14): the GitHub release check and the installer start =====
+// UE4SS's Lua has no HTTP. HttpGetStart(url, userAgent) -> bool runs one GET at a time on its
+// own thread (WinHTTP, TLS, 20 s timeouts) and never touches the game; HttpGetPoll() -> nil while
+// it runs, then status (int) and body (string), or false and an error text. StartProcess(exe,
+// args) -> true, or false and the Windows error code, starts a program without waiting for it.
+// CloseGame([delayMs]) -> bool asks the game window to close (WM_CLOSE, as its close button).
+// GameExePath() -> the running game EXE's full path.
+static std::wstring u8_to_wide(const char* s) {
+    int n = MultiByteToWideChar(CP_UTF8, 0, s, -1, nullptr, 0);
+    std::wstring w(n > 1 ? n - 1 : 0, L'\0');
+    if (n > 1) MultiByteToWideChar(CP_UTF8, 0, s, -1, w.data(), n);
+    return w;
+}
+static std::string wide_to_u8(const std::wstring& w) {
+    int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    std::string s(n > 1 ? n - 1 : 0, '\0');
+    if (n > 1) WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, s.data(), n, nullptr, nullptr);
+    return s;
+}
+
+static std::mutex g_http_mu;
+static int g_http_state = 0;   // 0 idle, 1 running, 2 finished
+static long g_http_status = 0;
+static std::string g_http_body, g_http_error;
+
+static void http_worker(std::wstring url, std::wstring agent) {
+    long status = 0;
+    std::string body, error;
+    HINTERNET session = nullptr, connect = nullptr, request = nullptr;
+    do {
+        URL_COMPONENTS uc{};
+        uc.dwStructSize = sizeof(uc);
+        wchar_t host[256] = {0}, path[2048] = {0}, extra[1024] = {0};
+        uc.lpszHostName = host;  uc.dwHostNameLength = 256;
+        uc.lpszUrlPath = path;   uc.dwUrlPathLength = 2048;
+        uc.lpszExtraInfo = extra; uc.dwExtraInfoLength = 1024;
+        if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) { error = "bad URL"; break; }
+        session = WinHttpOpen(agent.c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+        if (!session)
+            session = WinHttpOpen(agent.c_str(), WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+        if (!session) { error = "WinHttpOpen failed"; break; }
+        WinHttpSetTimeouts(session, 20000, 20000, 20000, 20000);
+        connect = WinHttpConnect(session, host, uc.nPort, 0);
+        if (!connect) { error = "connect failed"; break; }
+        std::wstring target = std::wstring(path) + extra;
+        request = WinHttpOpenRequest(connect, L"GET", target.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                     uc.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0);
+        if (!request) { error = "request failed"; break; }
+        WinHttpAddRequestHeaders(request, L"Accept: application/vnd.github+json", static_cast<DWORD>(-1), WINHTTP_ADDREQ_FLAG_ADD);
+        if (!WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+            !WinHttpReceiveResponse(request, nullptr)) {
+            error = "no answer (error " + std::to_string(GetLastError()) + ")";
+            break;
+        }
+        DWORD code = 0, size = sizeof(code);
+        WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
+                            &code, &size, WINHTTP_NO_HEADER_INDEX);
+        status = static_cast<long>(code);
+        for (;;) {
+            DWORD avail = 0;
+            if (!WinHttpQueryDataAvailable(request, &avail) || avail == 0) break;
+            if (body.size() + avail > 4u * 1024u * 1024u) { error = "answer too large"; break; }
+            std::string chunk(avail, '\0');
+            DWORD got = 0;
+            if (!WinHttpReadData(request, chunk.data(), avail, &got) || got == 0) break;
+            body.append(chunk.data(), got);
+        }
+    } while (false);
+    if (request) WinHttpCloseHandle(request);
+    if (connect) WinHttpCloseHandle(connect);
+    if (session) WinHttpCloseHandle(session);
+    std::lock_guard<std::mutex> lock(g_http_mu);
+    g_http_status = status;
+    g_http_body = std::move(body);
+    g_http_error = std::move(error);
+    g_http_state = 2;
+}
+
+int l_http_get_start(lua_State* L) {
+    const char* url = luaL_checkstring(L, 1);
+    const char* agent = luaL_optstring(L, 2, "OP1Access");
+    {
+        std::lock_guard<std::mutex> lock(g_http_mu);
+        if (g_http_state == 1) { lua_pushboolean(L, 0); return 1; }
+        g_http_state = 1;
+        g_http_status = 0;
+        g_http_body.clear();
+        g_http_error.clear();
+    }
+    try {
+        std::thread(http_worker, u8_to_wide(url), u8_to_wide(agent)).detach();
+    } catch (...) {
+        std::lock_guard<std::mutex> lock(g_http_mu);
+        g_http_state = 0;
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+int l_http_get_poll(lua_State* L) {
+    std::lock_guard<std::mutex> lock(g_http_mu);
+    if (g_http_state != 2) { lua_pushnil(L); return 1; }
+    g_http_state = 0;
+    if (g_http_status == 0) {
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, g_http_error.empty() ? "failed" : g_http_error.c_str());
+        return 2;
+    }
+    lua_pushinteger(L, g_http_status);
+    lua_pushlstring(L, g_http_body.data(), g_http_body.size());
+    return 2;
+}
+
+int l_start_process(lua_State* L) {
+    std::wstring exe = u8_to_wide(luaL_checkstring(L, 1));
+    std::wstring args = u8_to_wide(luaL_optstring(L, 2, ""));
+    std::wstring cmd = L"\"" + exe + L"\"" + (args.empty() ? std::wstring() : L" " + args);
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    BOOL ok = CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi);
+    if (!ok) {
+        lua_pushboolean(L, 0);
+        lua_pushinteger(L, static_cast<lua_Integer>(GetLastError()));
+        return 2;
+    }
+    // Its window may take the foreground (screen readers follow it).
+    AllowSetForegroundWindow(pi.dwProcessId);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static BOOL CALLBACK close_enum_proc(HWND h, LPARAM lp) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(h, &pid);
+    if (pid != GetCurrentProcessId()) return TRUE;
+    wchar_t cls[32] = {0};
+    if (GetClassNameW(h, cls, 32) && wcscmp(cls, L"UnrealWindow") == 0) {
+        *reinterpret_cast<HWND*>(lp) = h;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static bool close_game_window() {
+    HWND h = nullptr;
+    EnumWindows(close_enum_proc, reinterpret_cast<LPARAM>(&h));
+    return h != nullptr && PostMessageW(h, WM_CLOSE, 0, 0);
+}
+
+// CloseGame([delayMs]): with a delay, a thread of its own closes the game later (no Lua loop
+// needed, so a stalled LoopAsync can't keep the game open while the installer waits for it).
+int l_close_game(lua_State* L) {
+    lua_Integer delay = luaL_optinteger(L, 1, 0);
+    if (delay <= 0) {
+        lua_pushboolean(L, close_game_window() ? 1 : 0);
+        return 1;
+    }
+    if (delay > 60000) delay = 60000;
+    try {
+        std::thread([delay] {
+            Sleep(static_cast<DWORD>(delay));
+            close_game_window();
+        }).detach();
+    } catch (...) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+// KeyModifiers() -> ctrl, shift, alt (held right now). Plain-key binds use it to stay quiet
+// when the same key comes with a modifier (another bind's job).
+int l_key_modifiers(lua_State* L) {
+    lua_pushboolean(L, (GetAsyncKeyState(VK_CONTROL) & 0x8000) ? 1 : 0);
+    lua_pushboolean(L, (GetAsyncKeyState(VK_SHIFT) & 0x8000) ? 1 : 0);
+    lua_pushboolean(L, (GetAsyncKeyState(VK_MENU) & 0x8000) ? 1 : 0);
+    return 3;
+}
+
+int l_game_exe_path(lua_State* L) {
+    wchar_t buf[1024] = {0};
+    DWORD n = GetModuleFileNameW(nullptr, buf, 1024);
+    if (n == 0 || n >= 1024) { lua_pushnil(L); return 1; }
+    std::string s = wide_to_u8(std::wstring(buf, n));
+    lua_pushstring(L, s.c_str());
+    return 1;
+}
+
 const luaL_Reg op1access_funcs[] = {
     {"Speak",                l_speak},
     {"Silence",              l_silence},
@@ -1440,6 +1635,12 @@ const luaL_Reg op1access_funcs[] = {
     {"Trace",                l_trace},
     {"IsForeground",         l_is_foreground},
     {"IsGameThread",         l_is_game_thread},
+    {"HttpGetStart",         l_http_get_start},
+    {"HttpGetPoll",          l_http_get_poll},
+    {"StartProcess",         l_start_process},
+    {"CloseGame",            l_close_game},
+    {"GameExePath",          l_game_exe_path},
+    {"KeyModifiers",         l_key_modifiers},
     {nullptr, nullptr},
 };
 
