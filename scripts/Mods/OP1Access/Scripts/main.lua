@@ -2713,6 +2713,8 @@ M.poll_menu_list = function()
     -- (only right after an item row was chosen: backing out of the tabs also puts the
     -- item screen on top for a moment -- that once said "Cyrus, level 5, ..." in passing)
     local aw, top = M.get_active_screen()
+    -- inside an event only the focused list itself, never the widget scans below
+    if M.ev_now and not M.ev_list_ok(top) then return end
     -- a tutorial pop-up over the list (first visit): its reader speaks it; the list
     -- waits, or its header cut the tutorial text off
     if top == "UITutorial_C" then return end
@@ -2895,8 +2897,17 @@ M.poll_menu_list = function()
     end
 end
 -- From the async loop: while a menu is up, the list reader on the game thread, 10x/s.
+-- Also INSIDE AN EVENT while a list is the focused screen (2026-11-14: the tavern keeper's
+-- "Ausrüstung" opens the equipment screen within the talk event; the reader stood down
+-- and only "Equipment" was said). M.evm_cls is the event reader's focused screen; never
+-- in a fade, and poll_menu_list checks the screen again (M.ev_list_ok).
+M.EVENT_LIST_SCREENS = { ListWidget_C = true }
+M.ev_list_ok = function(cls)
+    return M.ev_now and not M.fade_now and not M.battle_now and M.EVENT_LIST_SCREENS[cls or ""] == true
+end
 M.menu_lists_tick = function()
-    if not M.menu_now or M.ev_now or M.battle_now then
+    local in_ev = M.ev_list_ok(M.evm_cls)
+    if not in_ev and (not M.menu_now or M.ev_now or M.battle_now) then
         if M.ml.said then M.ml.said, M.ml.help_said = nil, nil end
         M.ml.first_at = nil
         if next(M.ml_cache) then M.ml_cache = {} end
