@@ -37,9 +37,12 @@ against one Eissentinel in the study dungeon. Not yet seen or checked:
 
 ## Walker (user report 2026-11-14)
 
-- **Freeing itself is written but untested.** When a re-route fails from a wedged spot
-  the walker now takes up to 3 steps into open directions before "Step aside"
-  ("Trying another way"). No wedge happened in the tests that would have shown it.
+- **Freeing itself works, but no real wedge was found to try it on.** When a re-route
+  fails, or a first route dies at the start (<= 3 cells), the walker takes up to 3
+  steps into open directions, each with a new route ("Trying another way"), before
+  "Step aside" (0fa43cb). Forced once with a test flag: three diagonal steps and a new
+  route from each new spot. A real corner (walls at 30 up and left) did not box the
+  router in at all, so it was not needed there.
 - **Wall bumps: mostly fixed, a few checks left.** The cause was OT's invisible walls,
   which the router's channel 0 doesn't see (channel 1 and the capsule's "Pawn" profile
   do, CHPROBE on every bump). Since 2026-11-14:
@@ -51,9 +54,9 @@ against one Eissentinel in the study dungeon. Not yet seen or checked:
     of running into a chest.
 
   The study's bump spot, the three chest walks and the Atlasdam walks (library,
-  guards, a building upstairs) ran clean. Not checked yet:
-  - Counting a waypoint as reached once the walker is past it (within 60); this is meant
-    to stop the circling at turns.
+  guards, a building upstairs) ran clean. Counting a waypoint as reached once the
+  walker is past it (f5d23e7) works: in about 45 walks since, no waypoint was skipped
+  for "no closer" (before: 2 in a handful). Not checked yet:
   - Long walks in the dungeon: random battles stopped every one of them after 10-15 s.
   - Other towns and dungeons.
 
@@ -70,7 +73,8 @@ against one Eissentinel in the study dungeon. Not yet seen or checked:
 - **The side step in front of a person is untested.** When stepping straight toward
   a person behind a counter gets no closer, every other try steps sideways to stand
   square in front (Mercedes is picked at 161 with 26 to the side, not at 166 with 48).
-  In the tests the route already ended in front of her.
+  In 6 walks to people the route already ended in front of them, and the talk range was
+  reached each time without it.
 
 ## Path actions
 
@@ -145,5 +149,6 @@ and the result reading are verified for that one action.
   and three floors up (dz 918 / 1058) -- the search runs out of cells (750-1100 nodes),
   so more doors or another wing lie in between. Not yet needed in a test: the step
   through an open doorway when no route is found from its threshold ("Through the door
-  first"), and "Still shut. Öffnen, E, then backspace again" at a door leg. Also: from a
-  wedged corner the router fails at once (`pops=1`: the start cell counts as blocked).
+  first"), and "Still shut. Öffnen, E, then backspace again" at a door leg. A search
+  that dies at the start (`pops <= 3`, seen once in the academy) now makes the walker
+  step free and try again (0fa43cb); a plain corner did not cause it.
