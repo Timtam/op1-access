@@ -36,3 +36,8 @@ desktop.ini
 
 # user's local cue staging folder (canonical copies live in scripts/Mods/OP1Access/Assets/)
 /Assets/
+
+# Release builds
+dist/
+installer/**/bin/
+installer/**/obj/
