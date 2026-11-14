@@ -363,6 +363,7 @@ local function schedule_menu_announce(cls, label)
         last_spoken_class = pending_class
         local label_to_speak = pending_label
         pending_label = nil
+        M.scr_said_t = os.clock()   -- the menu list reader queues its first line after this
         speak(label_to_speak)
     end)
 end
@@ -882,6 +883,7 @@ local function poll_active_menu()
         if pending_polled_n >= POLL_ANNOUNCE_SETTLE then
             last_polled_class = best_class
             last_spoken_class = best_class
+            M.scr_said_t = os.clock()
             speak(best_label)              -- screen name (interrupts)
             M.await_first_item = true      -- the next item queues after this name (open)
             cs_coord_mute = CS_COORD_MUTE   -- don't let coords step on the new screen name
@@ -1519,6 +1521,418 @@ M.battle_dump = function()
     log("BDUMP active screen: " .. tostring(cls))
 end
 pcall(RegisterKeyBind, Key.F3, { ModifierKey.CONTROL }, function() M.in_gt(function() pcall(M.battle_dump) end) end)
+
+-- Exploration dump of the main menu's lists (Ctrl+F5, game thread): every ListWidget_C
+-- (inventory, abilities, ... share it) with cursor, category tabs and the visible rows'
+-- text columns; the item detail, footer help, help window and the abilities screen's
+-- state. Widgets and texts only -- no object pointers of characters.
+M.menu_dump = function()
+    local function each(cls, fn)
+        local list
+        pcall(function() list = FindAllOf(cls) end)
+        if not list then log("MDUMP " .. cls .. ": none"); return end
+        for i, w in ipairs(list) do
+            local ok = false
+            pcall(function() ok = w:IsValid() end)
+            if ok then pcall(fn, w, i) end
+        end
+    end
+    each("ListWidget_C", function(w, i)
+        local act, en, cur, ccur, usecat, catsel
+        pcall(function() act, en, cur = w.ActiveFlag, w.EnableCursor, w.CursorPosition end)
+        pcall(function() ccur, usecat, catsel = w.CategoryCursorPos, w.UseCategory, w.CategorySelect end)
+        local rows, cats = {}, {}
+        pcall(function()
+            w.ItemWidgetList_ActiveItems:ForEach(function(k, e)
+                local r = e:get()
+                local idx, st, cv
+                pcall(function() idx, st = r.IndexInAll, r.ItemStatus end)
+                pcall(function() cv = M.wvis(r.RefIcon_Cursor) end)
+                rows[#rows + 1] = string.format("%s:%s|%s|%s|%s i%s s%s c%s", tostring(k), tostring(M.wtext(r.RefText_Col1)),
+                    tostring(M.wtext(r.RefText_Col2)), tostring(M.wtext(r.RefText_Col3)), tostring(M.wtext(r.RefText_Unit)),
+                    tostring(idx), tostring(st), tostring(cv))
+            end)
+        end)
+        pcall(function()
+            w.CategoryWidgetList:ForEach(function(k, e)
+                local c = e:get()
+                local t, cv, ln, nn, ht, id, gt
+                pcall(function() t = c.CategoryText:ToString() end)
+                pcall(function() cv = M.wvis(c.CurcorIcon) end)
+                pcall(function() ln = c.ListNameText:ToString() end)
+                pcall(function() nn = c.ListNumText:ToString() end)
+                pcall(function() ht = c.CategoryHelpText:ToString() end)
+                pcall(function() id = c.CategoryId end)
+                pcall(function()
+                    local idx = c.CategoryGameTextID:GetComparisonIndex()
+                    if idx and idx > 0 and shim and shim.GameTextFName then gt = shim.GameTextFName(idx) end
+                end)
+                cats[#cats + 1] = string.format("%s:[%s|%s|%s|%s|id%s|gt %s] c%s", tostring(k), tostring(t), tostring(ln),
+                    tostring(nn), tostring(ht), tostring(id), tostring(gt), tostring(cv))
+            end)
+        end)
+        log(string.format("MDUMP list#%d vis=%s act=%s en=%s cur=%s cat=%s usecat=%s catsel=%s | cats: %s | rows: %s", i,
+            tostring(M.wvis(w)), tostring(act), tostring(en), tostring(cur), tostring(ccur), tostring(usecat), tostring(catsel),
+            table.concat(cats, ", "), table.concat(rows, " ; ")))
+    end)
+    each("ListItemDetailWidget_C", function(w, i)
+        log(string.format("MDUMP detail#%d vis=%s text=%s", i, tostring(M.wvis(w)), tostring(M.wtext(w.KSTextBlock_0))))
+    end)
+    each("MenuFooter_C", function(w, i)
+        local ho
+        pcall(function() ho = w.HelpOpen end)
+        log(string.format("MDUMP footer#%d vis=%s open=%s help=%s", i, tostring(M.wvis(w)), tostring(ho), tostring(M.wtext(w.HelpText))))
+    end)
+    each("HelpWindowWBP_C", function(w, i)
+        log(string.format("MDUMP helpwin#%d vis=%s text=%s", i, tostring(M.wvis(w)), tostring(M.wtext(w.HelpText))))
+    end)
+    each("MainMenuSubItemPanel_C", function(w, i)
+        local cv, un
+        pcall(function() cv = M.wvis(w.CursorIcon) end)
+        pcall(function() un = w.IsUnEnable end)
+        log(string.format("MDUMP sub#%d vis=%s text=%s cur=%s un=%s", i, tostring(M.wvis(w)), tostring(M.wtext(w.MenuText)),
+            tostring(cv), tostring(un)))
+    end)
+    each("MainMenuAbilityWidget_C", function(w, i)
+        local st, sub, cmd, cost
+        pcall(function() st, sub, cmd, cost = w.State, w.ShowSubJobList, w.SubMenuSelectCommand, w.AcquisitionJPCost end)
+        log(string.format("MDUMP ability#%d vis=%s state=%s showsub=%s subcmd=%s jp=%s", i, tostring(M.wvis(w)), tostring(st),
+            tostring(sub), tostring(cmd), tostring(cost)))
+    end)
+    each("SupportAbilityWidget_C", function(w, i)
+        local lf
+        pcall(function() lf = w.ListFocus end)
+        log(string.format("MDUMP support#%d vis=%s focus=%s", i, tostring(M.wvis(w)), tostring(lf)))
+    end)
+    each("MainMenuItemListWidget_C", function(w, i)
+        local un, tn
+        pcall(function() un = w.UseItemName:ToString() end)
+        pcall(function() tn = w.TargetCharacterName:ToString() end)
+        log(string.format("MDUMP itemscreen#%d vis=%s use=%s target=%s", i, tostring(M.wvis(w)), tostring(un), tostring(tn)))
+    end)
+    each("PartyCharacterList_C", function(w, i)
+        local cp, open, valid
+        pcall(function() cp, open, valid = w.CursorPosition, w.IsOpen, w.ValidListNum end)
+        local mem = {}
+        for k = 0, 3 do
+            pcall(function()
+                local pc = w["PartyCharacter_0" .. k]
+                local cv
+                pcall(function() cv = M.wvis(pc.CursorIcon) end)
+                mem[#mem + 1] = string.format("%d:%s c%s", k, tostring(M.ml_member(pc)), tostring(cv))
+            end)
+        end
+        log(string.format("MDUMP party#%d vis=%s cur=%s open=%s valid=%s caption=%s | %s", i, tostring(M.wvis(w)), tostring(cp),
+            tostring(open), tostring(valid), tostring(M.wtext(w.CaptionText)), table.concat(mem, " ; ")))
+    end)
+    -- every VISIBLE text block of the menu screens, with its path (where a title lives)
+    for _, tcls in ipairs({ "TextBlock", "KSTextBlock" }) do
+        local list
+        pcall(function() list = FindAllOf(tcls) end)
+        for _, t in ipairs(list or {}) do
+            local ok = false
+            pcall(function() ok = t:IsValid() end)
+            if ok then
+                local v = M.wvis(t)
+                local s = (v == 0 or v == 3 or v == 4) and M.wtext(t) or nil
+                if s and not M.placeholder(s) then
+                    local full = ""
+                    pcall(function() full = t:GetFullName() end)
+                    if (full:find("MainMenu") and not full:find("MainMenuList")) or full:find("HelpWindow") then
+                        local short = (full:gsub("^.-PersistentLevel%.", ""):gsub("WidgetTree%.", ""))
+                        log(string.format("MDUMP text %s = %s", short, s))
+                    end
+                end
+            end
+        end
+    end
+    local _, cls = M.get_active_screen()
+    log("MDUMP active screen: " .. tostring(cls))
+end
+pcall(RegisterKeyBind, Key.F5, { ModifierKey.CONTROL }, function() M.in_gt(function() pcall(M.menu_dump) end) end)
+
+-- MAIN MENU LISTS (2026-11-14): the inventory ("Inventar") and "Fertigkeiten erlernen"
+-- -- and other main-menu screens -- share ListWidget_C (seen in-game with the MDUMP):
+--   ActiveFlag + visible: the list in use. UseCategory + CategorySelect: the cursor is
+--   on the tabs on the left (CategoryCursorPos; inventory: 10 icon tabs, abilities: one
+--   per traveler); the tabs have no text, the list's TitleText names the tab ("Alles",
+--   "Cyrus"). Otherwise in the rows (ItemWidgetList_ActiveItems, ListItemWidget_C):
+--   RefText_Col1 name, RefText_Col2 count, ItemStatus 1 = greyed out, the row whose
+--   RefIcon_Cursor shows is the focused one (CursorPosition as a fallback).
+--   The description: HelpWindowWBP_C.HelpText while it shows.
+-- Which screen: the owner's list property (MainMenuItemListWidget_C.ListWidget,
+-- MainMenuAbilityWidget_C.MainJobAbilityAcquisitionListWidget) has the same address.
+M.ml = {}
+-- FindAllOf walks every object (~50 ms on the game thread), so a list it found is kept
+-- while all of it stays valid; an empty one is searched again after 3 s. Cleared when
+-- the menu closes (M.menu_lists_tick).
+M.ml_cache = {}
+M.ml_list = function(cls)
+    local c, now = M.ml_cache[cls], os.clock()
+    if c then
+        if #c.l == 0 then
+            if now - c.t < 3 then return c.l end
+        else
+            local all = true
+            for _, w in ipairs(c.l) do
+                local v = false
+                pcall(function() v = w:IsValid() end)
+                if not v then all = false; break end
+            end
+            if all then return c.l end
+        end
+    end
+    local l = {}
+    pcall(function()
+        for _, w in ipairs(FindAllOf(cls) or {}) do
+            local ok = false
+            pcall(function() ok = w:IsValid() end)
+            if ok then l[#l + 1] = w end
+        end
+    end)
+    M.ml_cache[cls] = { t = now, l = l }
+    return l
+end
+M.ml_screen = function(addr)   -- "items" / "abilities" / nil, with the owner widget
+    for _, o in ipairs(M.ml_list("MainMenuItemListWidget_C")) do
+        local a
+        pcall(function() a = M.addr_of(o.ListWidget) end)
+        if a == addr then return "items", o end
+    end
+    for _, o in ipairs(M.ml_list("MainMenuAbilityWidget_C")) do
+        local a1, a2
+        pcall(function() a1 = M.addr_of(o.MainJobAbilityAcquisitionListWidget) end)
+        pcall(function() a2 = M.addr_of(o.SubJobAbilityAcquisitionListWidget) end)
+        if a1 == addr then return "abilities", o, "main" end
+        if a2 == addr then return "abilities", o, "sub" end
+    end
+    return nil
+end
+M.ml_help = function()
+    for _, h in ipairs(M.ml_list("HelpWindowWBP_C")) do
+        if M.wvis(h) == 0 then
+            local s = M.wtext(h.HelpText)
+            if s and not M.placeholder(s) then return M.join_text({ s }) end
+        end
+    end
+    return nil
+end
+-- The abilities screen's support-skill rows under the list (no cursor goes there):
+-- MainJobListBottomParts (or SubJob...) .SupportAbility01..04.Column1_Text, caption
+-- ListCaption.Column1_Title. Rows that differ only in their number are merged:
+-- "Hilfsfertigkeiten: Hierfür 4, 5, 6, 7 Fertigkeiten freischalten."
+M.ml_support = function(owner, which)
+    local bp
+    pcall(function() bp = (which == "sub") and owner.SubJobListBottomParts or owner.MainJobListBottomParts end)
+    if not bp then return nil end
+    local items = {}
+    for i = 1, 4 do
+        local r
+        pcall(function() r = bp["SupportAbility0" .. i] end)
+        local v = r and M.wvis(r)
+        if r and v ~= 1 and v ~= 2 then
+            local t = M.wtext(r.Column1_Text)
+            if not t then pcall(function() t = M.wtext(r.RefText_Col1) end) end
+            if t and not M.placeholder(t) then items[#items + 1] = t end
+        end
+    end
+    if #items == 0 then return nil end
+    local out, i = {}, 1
+    while i <= #items do
+        local tmpl = items[i]:gsub("%d+", "#")
+        local nums = { items[i]:match("%d+") }
+        local j = i + 1
+        while j <= #items and items[j]:gsub("%d+", "#") == tmpl do
+            nums[#nums + 1] = items[j]:match("%d+")
+            j = j + 1
+        end
+        if j - i > 1 and #nums == j - i and select(2, tmpl:gsub("#", "")) == 1 then
+            out[#out + 1] = (tmpl:gsub("#", table.concat(nums, ", ")))
+        else
+            for k = i, j - 1 do out[#out + 1] = items[k] end
+        end
+        i = j
+    end
+    local cap
+    pcall(function() cap = M.wtext(bp.ListCaption.Column1_Title) end)
+    if cap and M.placeholder(cap) then cap = nil end
+    return (cap and (cap .. ": ") or "") .. M.join_text(out)
+end
+-- a party member panel (PartyCharacterPanel_C): "Cyrus, level 5, HP 259 of 284, SP 56 of 64"
+M.ml_member = function(pc)
+    local name = M.wtext(pc.Name)
+    if not name or M.placeholder(name) then return nil end
+    local s = name
+    local lv = M.wtext(pc.LevelValue)
+    if lv and not M.placeholder(lv) then s = s .. ", level " .. lv end
+    local hp, hpm, sp, spm = M.wtext(pc.HPValue), M.wtext(pc.HPMax), M.wtext(pc.MPValue), M.wtext(pc.MPMax)
+    if hp and hpm then s = s .. ", HP " .. hp .. " of " .. hpm end
+    if sp and spm then s = s .. ", SP " .. sp .. " of " .. spm end
+    return s
+end
+M.poll_menu_list = function()
+    local st, now = M.ml, os.clock()
+    -- choosing whom an item is for: the item screen itself is on top of the UI stack (the
+    -- list below it), the party list on the right moves its CursorPosition
+    -- (only right after an item row was chosen: backing out of the tabs also puts the
+    -- item screen on top for a moment -- that once said "Cyrus, level 5, ..." in passing)
+    local _, top = M.get_active_screen()
+    -- a tutorial pop-up over the list (first visit): its reader speaks it; the list
+    -- waits, or its header cut the tutorial text off
+    if top == "UITutorial_C" then return end
+    -- a confirm dialog over the list (learn a skill?): its reader speaks it; afterwards
+    -- the row is said again, so you hear where you are (or "learned")
+    if top == "UICommonDialogBP_C" then st.said, st.help_said = nil, nil; return end
+    if top == "MainMenuItemListWidget_C" and (st.said or ""):match("^[RP]") then
+        for _, o in ipairs(M.ml_list("MainMenuItemListWidget_C")) do
+            local pl, cp = nil, 0
+            pcall(function() pl = o.PartyList end)
+            pcall(function() cp = pl.CursorPosition end)
+            local pc
+            pcall(function() pc = pl["PartyCharacter_0" .. (cp or 0)] end)
+            local s = pc and M.ml_member(pc)
+            if s then
+                local sig = "P" .. s
+                if sig ~= st.said then
+                    st.said = sig
+                    speak(s)
+                end
+                return
+            end
+        end
+    end
+    local w
+    for _, l in ipairs(M.ml_list("ListWidget_C")) do
+        local act = false
+        pcall(function() act = l.ActiveFlag end)
+        if act and M.wvis(l) == 0 then w = l; break end
+    end
+    if not w then
+        -- the abilities screen's little sub menu ("Fertigkeiten erlernen" / "Hilfs-
+        -- fertigkeiten ausrüsten", the latter "???" until unlocked): State 2, the choice
+        -- in SubMenuSelectCommand (the panels' cursor icons all read as shown)
+        for _, o in ipairs(M.ml_list("MainMenuAbilityWidget_C")) do
+            local state, cmd = nil, nil
+            pcall(function() state, cmd = o.State, o.SubMenuSelectCommand end)
+            if state == 2 and M.wvis(o) ~= 1 then
+                local p
+                pcall(function() p = cmd and o.SubMenuCommandAbility or o.SubMenuSupportAbility end)
+                local t, un = p and M.wtext(p.MenuText), false
+                pcall(function() un = p.IsUnEnable end)
+                local s = (t == "???" or un) and "Locked" or (t or "?")
+                local sig = "S" .. s
+                if sig ~= st.said then st.said = sig; speak(s) end
+                return
+            end
+        end
+        st.said, st.help_said, st.first_at = nil, nil, nil
+        return
+    end
+    local addr = M.addr_of(w)
+    local scr, owner, which = M.ml_screen(addr)
+    local usecat, catsel, ccur, cur = false, false, 0, 0
+    pcall(function() usecat, catsel, ccur, cur = w.UseCategory, w.CategorySelect, w.CategoryCursorPos, w.CursorPosition end)
+    local sig, say, extra
+    if usecat and catsel then
+        local title = M.wtext(w.TitleText)
+        local ntab = 0
+        pcall(function() w.CategoryWidgetList:ForEach(function() ntab = ntab + 1 end) end)
+        sig = string.format("C%X:%s:%s", addr or 0, tostring(ccur), tostring(title))
+        say = (title or ("Tab " .. (ccur + 1))) .. (ntab > 1 and string.format(", tab %d of %d", ccur + 1, ntab) or "")
+        if scr == "abilities" then
+            -- the traveler's job, LBP and the next skill's price (the list header)
+            local hd
+            pcall(function()
+                hd = (which == "sub") and owner.SubJobAbilityListHeaderWidget or owner.MainJobAbilityListHeaderWidget
+            end)
+            if hd then
+                local job, jp, cost = M.wtext(hd.TextMainJobName), M.wtext(hd.JobPoint), M.wtext(hd.AcquisitionJP)
+                if job and not M.placeholder(job) then say = say .. ", " .. job end
+                if jp and not M.placeholder(jp) and not jp:match("^9999") then say = say .. ", " .. jp .. " LBP" end
+                if cost and not M.placeholder(cost) and not cost:match("^9999") then
+                    say = say .. ", next skill " .. cost .. " LBP"
+                end
+            end
+            -- the support-skill rows, as the "help" line after the header
+            local okp, sp = pcall(M.ml_support, owner, which)
+            if okp and sp then extra = sp end
+        end
+    else
+        local row, idx, nrow = nil, nil, 0
+        pcall(function()
+            w.ItemWidgetList_ActiveItems:ForEach(function(_, e)
+                nrow = nrow + 1
+                local r = e:get()
+                local v
+                pcall(function() v = M.wvis(r.RefIcon_Cursor) end)
+                if not row and (v == 0 or v == 3 or v == 4) then row = r end
+            end)
+        end)
+        if not row then
+            pcall(function()
+                w.ItemWidgetList_ActiveItems:ForEach(function(k, e) if k == cur + 1 then row = e:get() end end)
+            end)
+        end
+        if not row then return end
+        local c1, c2, stv = M.wtext(row.RefText_Col1), M.wtext(row.RefText_Col2), 0
+        pcall(function() idx, stv = row.IndexInAll, row.ItemStatus end)
+        if not c1 or M.placeholder(c1) then return end
+        say = c1
+        if c2 and not M.placeholder(c2) then say = say .. ", " .. c2 end
+        if scr == "items" and stv == 1 then say = say .. ", not usable here" end
+        if scr == "abilities" then
+            if c1 == "???" then say = "Locked skill"
+            elseif stv == 1 then say = say .. ", learned" end
+        end
+        sig = string.format("R%X:%s:%s", addr or 0, tostring(idx), say)
+    end
+    if sig ~= st.said then
+        -- a screen just opened (nothing said yet): its name ("Items") comes from the
+        -- screen announcer ~1 s later and cut this off -- so wait for it (at most 1.2 s),
+        -- then queue
+        local first = st.said == nil
+        if first then
+            if not st.first_at then st.first_at = now; return end
+            local named = (M.scr_said_t or -1) >= st.first_at
+            if not named and now < st.first_at + 1.2 then return end
+        end
+        st.first_at = nil
+        st.said = sig
+        speak(say, not first)
+        st.help_at = now + 0.3
+        st.extra_say = extra
+    end
+    if st.help_at and now >= st.help_at then
+        st.help_at = nil
+        -- tabs: the support rows (abilities) instead of the help box, which still
+        -- shows the last row's text there
+        local h = st.extra_say
+        if not h and not sig:match("^C") then h = M.ml_help() end
+        st.extra_say = nil
+        -- a locked skill's help is just "???"
+        if h and h ~= st.help_said and not h:match("^[%?%s]+$") then
+            st.help_said = h
+            speak(h, false)
+        end
+    end
+end
+-- From the async loop: while a menu is up, the list reader on the game thread, 10x/s.
+M.menu_lists_tick = function()
+    if not M.menu_now or M.ev_now or M.battle_now then
+        if M.ml.said then M.ml.said, M.ml.help_said = nil, nil end
+        M.ml.first_at = nil
+        if next(M.ml_cache) then M.ml_cache = {} end
+        return
+    end
+    local now = os.clock()
+    if M.ml.queued and now - M.ml.queued < 2.0 then return end
+    if now - (M.ml.t or 0) < 0.1 then return end
+    M.ml.t, M.ml.queued = now, now
+    M.in_gt(function()
+        M.ml.queued = nil
+        pcall(M.poll_menu_list)
+    end)
+end
 
 -- BATTLE READER, on the game thread from M.poll_event_menus while a battle runs.
 -- Command menus: the open BattleCommandMenu_C with the highest FloorIndex (1 = Angriff,
@@ -2552,12 +2966,23 @@ poll_dialog = function()
             local okr, r = pcall(M.fc_result_text, inst)
             if okr then desc = r end
         end
-        log(string.format("DLG open: caption=%s detail=%s buttons=[%s] focus=%s default=%s ef=%s desc=%s",
+        -- the learn-skill dialog's LBP lines, attached under its caption (main menu only:
+        -- the search walks every object, too slow for the game-thread event reader)
+        local extra
+        M.dlg_extra_at = nil
+        if M.menu_now and not M.evm_active and M.dlg_parts_text then
+            local okx, x = pcall(M.dlg_parts_text)
+            if okx then extra = x end
+            -- the game may fill them a moment after the dialog shows: one more look
+            if not extra then M.dlg_extra_at = os.clock() + 0.3 end
+        end
+        log(string.format("DLG open: caption=%s detail=%s buttons=[%s] focus=%s default=%s ef=%s desc=%s extra=%s",
             tostring(caption), tostring(detail), table.concat(buttons, "|"),
-            tostring(focus), tostring(default), tostring(ef), tostring(desc)))
+            tostring(focus), tostring(default), tostring(ef), tostring(desc), tostring(extra)))
         local parts = {}
         if desc and desc ~= "" then parts[#parts + 1] = desc end
         if caption ~= "" then parts[#parts + 1] = caption end
+        if extra and extra ~= "" then parts[#parts + 1] = extra end
         if detail  ~= "" then parts[#parts + 1] = detail end
         if focused and focused ~= "" then parts[#parts + 1] = focused end  -- only the selected answer
         if #parts > 0 then speak(M.join_sentences(parts)) end
@@ -2565,6 +2990,10 @@ poll_dialog = function()
         dlg_last_focus = focus
         log(string.format("DLG focus -> %s = %s", tostring(focus), tostring(focused)))
         if focused and focused ~= "" then speak(focused) end
+    elseif M.dlg_extra_at and os.clock() >= M.dlg_extra_at then
+        M.dlg_extra_at = nil
+        local okx, x = pcall(M.dlg_parts_text)
+        if okx and x then speak(x, false) end
     end
     return true
 end
@@ -6268,12 +6697,31 @@ end
 
 -- Join spoken parts into sentences without doubling punctuation ("gewonnen!." /
 -- "Akademie.."): a part that already ends in . ! ? : is followed by a space only.
-M.join_sentences = function(parts)
-    local out = ""
-    for i, p in ipairs(parts) do
-        if i > 1 then out = out .. (out:match("[%.!?:]%s*$") and " " or ". ") end
-        out = out .. p
+M.join_sentences = function(parts) return M.join_text(parts) end
+
+-- The learn-skill dialog (2026-11-14) attaches JobAbilityConfirmParts_C under its
+-- caption: "LBP-Kosten: 30" / "Aktuelle LBP: 48". The dialog keeps no reference to it,
+-- so it is searched for when the dialog opens; only one hanging in a widget tree
+-- (GetParent) counts -- a detached one from an earlier dialog keeps its old texts.
+M.dlg_parts_text = function()
+    local out, seen = nil, {}
+    for _, w in ipairs(FindAllOf("JobAbilityConfirmParts_C") or {}) do
+        local ok, par = false, false
+        pcall(function() ok = w:IsValid() end)
+        if ok then pcall(function() local p = w:GetParent(); par = p ~= nil and p:IsValid() end) end
+        if ok then
+            local a, an = M.wtext(w.TextAbilityJP), M.wtext(w.NumAbilityJP)
+            local h, hn = M.wtext(w.TextHaveJP), M.wtext(w.NumHaveJP)
+            seen[#seen + 1] = string.format("%s|%s|%s|%s par=%s", tostring(a), tostring(an), tostring(h), tostring(hn),
+                tostring(par))
+            -- unfilled copies keep the design texts "1234" (labels too)
+            if not out and par and a and a:find("%a") and an and an:match("^%d+$") then
+                out = a .. " " .. an
+                if h and h:find("%a") and hn and hn:match("^%d+$") then out = out .. ", " .. h .. " " .. hn end
+            end
+        end
     end
+    if not out and #seen > 0 then log("DLG parts (none filled): " .. table.concat(seen, " ; ")) end
     return out
 end
 
