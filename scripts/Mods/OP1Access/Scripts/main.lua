@@ -1484,6 +1484,44 @@ M.wm_dir = function(dx, dy)
     if ns ~= "" and ew ~= "" then return ns .. "-" .. ew end
     return ns ~= "" and ns or ew
 end
+-- Send the map's cursor to a place, so Enter there fast travels to a visited town (user
+-- request 2026-11-14). WorldMap_C moves its cursor to MoveTargetPos when
+-- MoveTargetPosRequest is set (object dump); poll_worldmap checks it moved, else sets
+-- CursorPosition itself. The area label then announces the same place: that one is
+-- skipped (WM.skip).
+M.wm_jump = function(wm, e)
+    if not (e.x and e.y) then return end
+    local cx, cy
+    pcall(function() cx, cy = wm.CursorPosition.X, wm.CursorPosition.Y end)
+    local ok = pcall(function()
+        if cx then wm.MoveStartPos.X = cx; wm.MoveStartPos.Y = cy end
+        wm.MoveTargetPos.X = e.x
+        wm.MoveTargetPos.Y = e.y
+        wm.MoveTargetPosMoveNowTime = 0.0
+        wm.MoveTargetPosRequest = true
+    end)
+    M.WM.jump = { t = os.clock(), x = e.x, y = e.y, tries = 1 }
+    M.WM.skip = e.name
+    log(string.format("WORLDMAP jump to %s (%.0f,%.0f) from cursor (%s,%s): request set=%s", tostring(e.name), e.x, e.y,
+        tostring(cx), tostring(cy), tostring(ok)))
+end
+M.wm_jump_check = function(wm)
+    local j = M.WM.jump
+    if not j or os.clock() - j.t < 0.8 then return end
+    local cx, cy
+    pcall(function() cx, cy = wm.CursorPosition.X, wm.CursorPosition.Y end)
+    local d = (cx and cy) and math.sqrt((cx - j.x) ^ 2 + (cy - j.y) ^ 2) or -1
+    log(string.format("WORLDMAP jump try %d: cursor now (%s,%s), %.0f from the target", j.tries, tostring(cx),
+        tostring(cy), d))
+    if d >= 0 and d < 15 then M.WM.jump = nil; return end
+    if j.tries >= 2 then M.WM.jump, M.WM.skip = nil, nil; return end
+    j.tries, j.t = 2, os.clock()
+    local ok = pcall(function()
+        wm.CursorPosition.X = j.x
+        wm.CursorPosition.Y = j.y
+    end)
+    log("WORLDMAP jump: set CursorPosition itself: " .. tostring(ok))
+end
 M.wm_cycle = function(delta)
     local WM = M.WM
     if not WM.open then return false end
@@ -1500,6 +1538,7 @@ M.wm_cycle = function(delta)
         where = string.format("%s, %d", M.wm_dir(e.x - WM.here.x, e.y - WM.here.y), math.floor(e.d + 0.5))
     end
     speak(string.format("%d of %d: %s", WM.idx, n, M.wm_describe(e, where)), true)
+    pcall(M.wm_jump, wm, e)
     return true
 end
 nav_keys = nav_keys or {}
@@ -1529,16 +1568,21 @@ M.poll_worldmap = function()
     pcall(function() area = lbl.TextAreaName:GetText():ToString() end)
     pcall(function() region = lbl.TextRegionName:GetText():ToString() end)
     if not WM.open then
-        WM.open, WM.list, WM.idx = true, nil, 0
-        log("WORLDMAP opened")
+        WM.open, WM.list, WM.idx, WM.jump, WM.skip = true, nil, 0, nil, nil
+        local cx, cy
+        pcall(function() cx, cy = wm.CursorPosition.X, wm.CursorPosition.Y end)
+        log(string.format("WORLDMAP opened, cursor (%s,%s)", tostring(cx), tostring(cy)))
         local _, here = M.wm_build_list(wm)
         WM.here = here
         speak("World map" .. (here and here.name and (". You are at " .. here.name) or ""), true)
         M.await_first_item = true   -- the place under the cursor goes after it
     end
+    pcall(M.wm_jump_check, wm)
     local key = tostring(area) .. "|" .. tostring(region)
     if key == WM.area or not area or area == "" then return end
     WM.area = key
+    -- the place Page Up/Down just sent the cursor to: already said
+    if WM.skip and area == WM.skip then WM.skip = nil; return end
     -- the place under the cursor: its icon (recommendations, you are here) and table row
     local info
     pcall(function()
