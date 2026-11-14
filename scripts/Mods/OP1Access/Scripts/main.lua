@@ -3825,10 +3825,19 @@ poll_dialog = function()
         end
         -- a path-action result panel under the dialog (Scrutinize: the NPC's age,
         -- statement and the information gained) -- the dialog itself only says "OK"
-        -- (not inside an event: that reader runs FindAllOf)
-        if not desc and M.fc_result_text and not M.evm_active then
+        -- (not inside an event: that reader runs FindAllOf). Only that one-button
+        -- dialog: the question before the action ("Erfolgschance: 90 %", Ja/Nein) has the
+        -- panel's design texts under it -- it says whom the action is aimed at instead
+        if not desc and M.fc_result_text and not M.evm_active and #buttons == 1 then
             local okr, r = pcall(M.fc_result_text, inst)
             if okr then desc = r end
+        end
+        if not desc and #buttons >= 2 and M.fc_busy and M.fc_target_name then
+            local okf, busy = pcall(M.fc_busy)
+            if okf and busy then
+                local okn, nm = pcall(M.fc_target_name)
+                if okn and nm then desc = nm end
+            end
         end
         -- the learn-skill dialog's LBP lines, attached under its caption (main menu only:
         -- the search walks every object, too slow for the game-thread event reader)
@@ -7791,6 +7800,28 @@ M.fc_busy = function()
     if st ~= M.fc_state then M.fc_state = st; log("FCSTATE " .. st) end
     return busy
 end
+-- the path action's target by name (the field-command manager's TargetCharacter), or nil
+M.fc_target_name = function()
+    local mgr = get_fcmd_mgr()
+    local nm
+    pcall(function()
+        local t = mgr and mgr.TargetCharacter
+        if t and t:IsValid() then nm = shim.NpcName(t:GetAddress()) end
+    end)
+    return (nm and nm ~= "" and nm ~= "???") and nm or nil
+end
+-- A widget's design text, not the game's: full-width digits only ("１２", "２") or the run
+-- "1234..." -- the Scrutinize panel before the action read "Alter: １２.
+-- １２３４５６７８９０... ２. ３." (2026-11-14), the learn dialog "1234". (A real age, "41",
+-- comes in plain digits.)
+M.is_placeholder = function(s)
+    if type(s) ~= "string" then return true end
+    local core = s:gsub("[%s%p]", "")
+    if core == "" then return true end
+    if core:gsub("\239\188[\144-\153]", "") == "" then return true end
+    if #core >= 4 and ("1234567890"):rep(4):sub(1, #core) == core then return true end
+    return false
+end
 
 -- Join spoken parts into sentences without doubling punctuation ("gewonnen!." /
 -- "Akademie.."): a part that already ends in . ! ? : is followed by a space only.
@@ -7865,13 +7896,15 @@ M.fc_result_text = function(dlg)
         return v ~= 1 and v ~= 2
     end
     local agecap, age = read_text_block(sd, "NPCAgeText"), read_text_block(sd, "NPCAge")
-    if age and shown("AgeRoot") then parts[#parts + 1] = (agecap and (agecap .. " ") or "") .. age end
+    if age and not M.is_placeholder(age) and shown("AgeRoot") then
+        parts[#parts + 1] = (agecap and (agecap .. " ") or "") .. age
+    end
     local hist = read_text_block(sd, "HistoryText")
-    if hist then parts[#parts + 1] = hist end
+    if hist and not M.is_placeholder(hist) then parts[#parts + 1] = hist end
     local infos = {}
     for i, f in ipairs({ "InformationText01", "InformationText02" }) do
         local t = read_text_block(sd, f)
-        if t and shown("Information0" .. i) then infos[#infos + 1] = t end
+        if t and not M.is_placeholder(t) and shown("Information0" .. i) then infos[#infos + 1] = t end
     end
     if #infos > 0 then
         local cap = read_text_block(sd, "InformationCaptionText")
