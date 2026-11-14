@@ -144,7 +144,15 @@ and the result reading are verified for that one action.
   - An item for several travelers or for all of them.
   - "Hilfsfertigkeiten ausrüsten" (still locked).
   - A secondary job's list (the "sub" path).
-  - Other screens built on the same list widget (equipment, shops).
+  - Other screens built on the same list widget (shops).
+- **Equipment: only browsed, nothing equipped.** Read since 2026-11-14 (ef1a374) with
+  Cyrus: slots with the worn piece and its bonuses, items with what they would change
+  ("Phys. Vert. 82 to 103 …") and "equipped" for the worn one. Not tried:
+  - Equipping (Enter on an item); the slot row should then name the new piece.
+  - "Optimieren" and "Alles ablegen".
+  - Accessories with a special effect.
+  - Several travelers (the tab should say "Olberic, tab 2 of 4").
+  - A greyed category's "can't equip": the cursor skips those rows.
 - **Menus inside events are only read for save/load and confirm dialogs.** The save
   point's screen is read since 2026-11-14 ("Save", "Slot 1, empty", "An ausgewähltem
   Speicherplatz abspeichern? Nein") by a reader that runs on the game thread while an
