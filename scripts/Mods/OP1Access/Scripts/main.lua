@@ -1287,6 +1287,8 @@ M.poll_event_menus = function()
         pcall(poll_dialog)      -- a dialog on top, or its close
     end
     if cls == "MenuSaveLoad_C" then pcall(M.poll_saveload, w) end
+    if M.battle_now and M.poll_battle then pcall(M.poll_battle) end
+    if cls == "BattleResultPanelWidget_C" and M.poll_battle_result then pcall(M.poll_battle_result, w) end
     M.evm_active = false
 end
 -- From the async loop: at most 10x a second, one call in flight, queue the reader onto
@@ -1303,6 +1305,453 @@ M.event_menus_tick = function()
     M.in_gt(function()
         M.evm_queued = nil
         pcall(M.poll_event_menus)
+    end)
+end
+
+-- ===== BATTLE UI (2026-11-14) =====
+-- A TextBlock's text (GetText, else its Text property), or nil.
+M.wtext = function(tb)
+    local s
+    pcall(function() s = tb:GetText():ToString() end)
+    if not s or s == "" then pcall(function() s = tb.Text:ToString() end) end
+    if s == "" then s = nil end
+    return s
+end
+M.wvis = function(w)   -- ESlateVisibility: 0 Visible, 1 Collapsed, 2 Hidden, 3/4 hit-test-less
+    local v
+    pcall(function() v = w:GetVisibility() end)
+    return v
+end
+-- Exploration dump of the battle widgets (Ctrl+F3, on the game thread): command
+-- menus with their items, help line, target cursor, enemy panels with shield and
+-- weakness icons, party status, the action name banner.
+M.battle_dump = function()
+    local function each(cls, fn)
+        local list
+        pcall(function() list = FindAllOf(cls) end)
+        if not list then log("BDUMP " .. cls .. ": none"); return end
+        for i, w in ipairs(list) do
+            local ok = false
+            pcall(function() ok = w:IsValid() end)
+            if ok then pcall(fn, w, i) end
+        end
+    end
+    each("BattleCommandMenu_C", function(w, i)
+        local items = {}
+        for k = 0, 7 do
+            local it
+            pcall(function() it = w["MenuItem0" .. k] end)
+            if it then
+                local u, dis, foc
+                pcall(function() u, dis, foc = it.CommandUseable, it.CommandDisable, it.IsCommandFocus end)
+                items[#items + 1] = string.format("%d:%s[%s]%s%s%s v%s", k, tostring(M.wtext(it.TextCommandFocus)),
+                    tostring(M.wtext(it.TextAddInfo)), u and "" or " nouse", dis and " dis" or "", foc and " FOCUS" or "",
+                    tostring(M.wvis(it)))
+            end
+        end
+        local ci, oi, mx, fl, open, sub
+        pcall(function() ci, oi, mx, fl, open = w.CursorIndex, w.OffsetIndex, w.MenuItemMax, w.FloorIndex, w.MenuOpen end)
+        pcall(function() sub = w.SubMenuName:ToString() end)
+        log(string.format("BDUMP menu#%d vis=%s open=%s cur=%s off=%s max=%s floor=%s sub=%s | %s", i,
+            tostring(M.wvis(w)), tostring(open), tostring(ci), tostring(oi), tostring(mx), tostring(fl), tostring(sub),
+            table.concat(items, " | ")))
+    end)
+    each("BattleCommandHelpWindow_C", function(w, i)
+        log(string.format("BDUMP help#%d vis=%s text=%s", i, tostring(M.wvis(w)), tostring(M.wtext(w.HelpText))))
+    end)
+    -- NEVER ask a battle character pointer for its name (GetFName/GetFullName): the
+    -- unused turn-order icons hold stale ones, and reading the name of one FROZE the
+    -- game (2026-11-14, like an out-of-range FName). Addresses only.
+    each("BattleTargetCursor_C", function(w, i)
+        local cv, tn
+        pcall(function() cv = w.CursorVisible end)
+        pcall(function() tn = string.format("%X", M.addr_of(w.TargetCharacter) or 0) end)
+        log(string.format("BDUMP cursor#%d vis=%s cv=%s target=%s", i, tostring(M.wvis(w)), tostring(cv), tostring(tn)))
+    end)
+    each("BattleEnemyStatus_C", function(w, i)
+        local sh, en, nweak
+        pcall(function() sh = M.wtext(w.BreakStatusIcon.Text_BreakGauge) end)
+        pcall(function() en = string.format("%X", M.addr_of(w.Enemy) or 0) end)
+        pcall(function() nweak = w.EnableWeakIconNum end)
+        local weaks = {}
+        for k = 0, 4 do
+            pcall(function()
+                local ic = w["WeakStatusIcon_0" .. k]
+                local res = "?"
+                pcall(function() res = ic.AttributeIcon.Brush.ResourceObject:GetFName():ToString() end)
+                weaks[#weaks + 1] = string.format("%d:a%s o%s l%s s%s v%s %s", k, tostring(ic.AttributeIndex),
+                    tostring(ic.IconOpened), tostring(ic.WeakLocked), tostring(ic.IsSetup), tostring(M.wvis(ic)), res)
+            end)
+        end
+        log(string.format("BDUMP enemy#%d vis=%s name=%s shield=%s weakN=%s enemy=%s | %s", i, tostring(M.wvis(w)),
+            tostring(M.wtext(w.characterName)), tostring(sh), tostring(nweak), tostring(en), table.concat(weaks, " | ")))
+    end)
+    each("BattleSelectPlayerStatus_C", function(w, i)
+        local dead
+        pcall(function() dead = w.IsDead end)
+        log(string.format("BDUMP player#%d vis=%s name=%s hp=%s/%s sp=%s/%s dead=%s", i, tostring(M.wvis(w)),
+            tostring(M.wtext(w.CharaName)), tostring(M.wtext(w.TextHPValue)), tostring(M.wtext(w.TextHPMaxValue)),
+            tostring(M.wtext(w.TextMPValue)), tostring(M.wtext(w.TextMPMaxValue)), tostring(dead)))
+    end)
+    each("BattleActionInfo_C", function(w, i)
+        log(string.format("BDUMP action#%d vis=%s name=%s", i, tostring(M.wvis(w)), tostring(M.wtext(w.CommandName))))
+    end)
+    each("ActionOrderTimeLine_C", function(w, i)
+        local icons = {}
+        for k = 0, 5 do
+            pcall(function()
+                local ic = w["InterceptIcon_0" .. k]
+                local ca, en, br, nx = 0, nil, nil, nil
+                pcall(function() ca = M.addr_of(ic.Character) or 0 end)
+                pcall(function() en, br, nx = ic.EnableActionOrder, ic.IsBreak, ic.IsNextOrder end)
+                icons[#icons + 1] = string.format("%d:%X e%s b%s n%s v%s", k, ca, tostring(en), tostring(br), tostring(nx),
+                    tostring(M.wvis(ic)))
+            end)
+        end
+        log(string.format("BDUMP order#%d vis=%s | %s", i, tostring(M.wvis(w)), table.concat(icons, " | ")))
+    end)
+    each("ActionOrderIcon_C", function(w, i)
+        local ca, en, nx = 0, nil, nil
+        pcall(function() ca = M.addr_of(w.Character) or 0 end)
+        pcall(function() en, nx = w.EnableActionOrder, w.IsNextOrder end)
+        if ca ~= 0 then
+            log(string.format("BDUMP orderIcon#%d vis=%s char=%X e%s n%s", i, tostring(M.wvis(w)), ca, tostring(en), tostring(nx)))
+        end
+    end)
+    each("BattleResultPanelWidget_C", function(w, i)
+        local ro, st, ex, jp, mo
+        pcall(function() ro, st, ex, jp, mo = w.ResultOpen, w.State, w.GetTotalExp, w.GetTotalJobPoint, w.GetTotalMoney end)
+        log(string.format("BDUMP result#%d vis=%s open=%s state=%s exp=%s jp=%s money=%s", i, tostring(M.wvis(w)),
+            tostring(ro), tostring(st), tostring(ex), tostring(jp), tostring(mo)))
+    end)
+    local _, cls = M.get_active_screen()
+    log("BDUMP active screen: " .. tostring(cls))
+end
+pcall(RegisterKeyBind, Key.F3, { ModifierKey.CONTROL }, function() M.in_gt(function() pcall(M.battle_dump) end) end)
+
+-- BATTLE READER, on the game thread from M.poll_event_menus while a battle runs.
+-- Command menus: the open BattleCommandMenu_C with the highest FloorIndex (1 = Angriff,
+-- Fertigkeiten, Objekt..., 2 = a skill/item list) -- its item at CursorIndex -
+-- OffsetIndex: TextCommandFocus, TextAddInfo (the SP cost), CommandUseable. The help
+-- line (BattleCommandHelpWindow_C.HelpText) follows a moment later. While a target
+-- cursor shows (BattleTargetCursor_C, CursorVisible), the target instead: its enemy
+-- panel (BattleEnemyStatus_C.Enemy = the cursor's TargetCharacter) or party panel.
+-- Unused widget copies carry placeholder texts ("0123456", "0124", "ああ..."): skipped.
+-- Weaknesses: only REVEALED ones (WeakStatusIcon_0x.IconOpened) -- the icon textures
+-- under the "?" cover already show the real ones, a sighted player sees only "?".
+M.WEAK_DE = { sword = "Schwert", spear = "Speer", dagger = "Dolch", ax = "Axt", arrow = "Bogen",
+    cane = "Stab", Flame = "Feuer", FIre = "Feuer", Fire = "Feuer", Ice = "Eis", Thunder = "Blitz",
+    Wind = "Wind", Light = "Licht", Dark = "Dunkelheit" }
+M.bt = {}
+M.addr_of = function(o)
+    local a
+    pcall(function() a = o:GetAddress() end)
+    return a
+end
+M.placeholder = function(s)
+    return not s or s:match("^%d+$") ~= nil or s:find("\227\129\130", 1, true) ~= nil   -- digits / "あ"
+end
+-- FindAllOf for the battle widgets, kept 3 s (the copies live as long as the battle UI)
+M.bt_list = function(cls)
+    M.bt.lists = M.bt.lists or {}
+    local c, now = M.bt.lists[cls], os.clock()
+    if c and now - c.t < 3 then return c.l end
+    local l = {}
+    pcall(function()
+        local all = FindAllOf(cls)
+        if all then
+            for _, w in ipairs(all) do
+                local ok = false
+                pcall(function() ok = w:IsValid() end)
+                if ok then l[#l + 1] = w end
+            end
+        end
+    end)
+    M.bt.lists[cls] = { t = now, l = l }
+    return l
+end
+-- the enemies on the field, in the order of their panels. Only ADDRESSES of battle
+-- characters, never their names (GetFName on a stale one froze the game, 2026-11-14).
+M.bt_enemies = function()
+    local out = {}
+    for _, w in ipairs(M.bt_list("BattleEnemyStatus_C")) do
+        local ea, name = nil, M.wtext(w.characterName)
+        pcall(function() ea = M.addr_of(w.Enemy) end)
+        if ea and ea ~= 0 and not M.placeholder(name) then
+            out[#out + 1] = { w = w, addr = ea, name = name }
+        end
+    end
+    return out
+end
+M.bt_party = function()
+    local out = {}
+    for _, w in ipairs(M.bt_list("BattleSelectPlayerStatus_C")) do
+        local name = M.wtext(w.CharaName)
+        if not M.placeholder(name) then
+            local o
+            pcall(function() o = w.Owner end)
+            out[#out + 1] = { w = w, addr = o and M.addr_of(o), name = name }
+        end
+    end
+    return out
+end
+M.bt_enemy_text = function(en)
+    local w = en.w
+    local parts = { en.name }
+    local sh
+    pcall(function() sh = M.wtext(w.BreakStatusIcon.Text_BreakGauge) end)
+    if sh == "0" then parts[#parts + 1] = "broken"
+    elseif sh then parts[#parts + 1] = "shield " .. sh end
+    local known, unknown = {}, 0
+    for k = 0, 4 do
+        local ic
+        pcall(function() ic = w["WeakStatusIcon_0" .. k] end)
+        local setup, opened = false, false
+        if ic then pcall(function() setup, opened = ic.IsSetup, ic.IconOpened end) end
+        if setup then
+            if opened then
+                local res
+                pcall(function() res = ic.AttributeIcon.Brush.ResourceObject:GetFName():ToString() end)
+                local key = res and res:match("Icon_(%a+)$")
+                known[#known + 1] = (key and M.WEAK_DE[key]) or key or "?"
+            else
+                unknown = unknown + 1
+            end
+        end
+    end
+    if #known > 0 then parts[#parts + 1] = "weak to " .. table.concat(known, ", ") end
+    if unknown > 0 then parts[#parts + 1] = unknown .. " unknown" end
+    return table.concat(parts, ", ")
+end
+M.bt_party_text = function(pm)
+    local w = pm.w
+    local dead
+    pcall(function() dead = w.IsDead end)
+    local s = string.format("%s, HP %s of %s, SP %s of %s", pm.name, tostring(M.wtext(w.TextHPValue)),
+        tostring(M.wtext(w.TextHPMaxValue)), tostring(M.wtext(w.TextMPValue)), tostring(M.wtext(w.TextMPMaxValue)))
+    if dead then s = s .. ", down" end
+    return s
+end
+M.bt_describe = function(addr)   -- a battle character by address: enemy or party
+    for _, en in ipairs(M.bt_enemies()) do
+        if en.addr == addr then return M.bt_enemy_text(en) end
+    end
+    for _, pm in ipairs(M.bt_party()) do
+        if pm.addr == addr then return M.bt_party_text(pm) end
+    end
+    return nil
+end
+M.bt_targets = function()   -- addresses under a visible target cursor, sorted
+    local t = {}
+    for _, c in ipairs(M.bt_list("BattleTargetCursor_C")) do
+        local cv = false
+        pcall(function() cv = c.CursorVisible end)
+        if cv and M.wvis(c) == 0 then
+            local tc
+            pcall(function() tc = c.TargetCharacter end)
+            local a = tc and M.addr_of(tc)
+            if a and a ~= 0 then t[#t + 1] = a end
+        end
+    end
+    table.sort(t)
+    return t
+end
+M.bt_menu = function()   -- the focused command of the topmost open menu
+    local best, bf
+    for _, m in ipairs(M.bt_list("BattleCommandMenu_C")) do
+        local open, fl = false, 0
+        pcall(function() open, fl = m.MenuOpen, m.FloorIndex end)
+        if open and (not bf or fl > bf) then best, bf = m, fl end
+    end
+    if not best then return nil end
+    local ci, oi = 0, 0
+    pcall(function() ci, oi = best.CursorIndex, best.OffsetIndex end)
+    local slot = ci - oi
+    if slot < 0 or slot > 7 then slot = ci end
+    local it
+    pcall(function() it = best["MenuItem0" .. slot] end)
+    if not it then return nil end
+    local text = M.wtext(it.TextCommandFocus)
+    if M.placeholder(text) then return nil end
+    local usable = true
+    pcall(function() usable = it.CommandUseable end)
+    local who
+    pcall(function() who = M.addr_of(best.Player) end)
+    return { floor = bf, cur = ci, text = text, add = M.wtext(it.TextAddInfo), usable = usable, who = who }
+end
+M.bt_help = function()
+    for _, h in ipairs(M.bt_list("BattleCommandHelpWindow_C")) do
+        local v = M.wvis(h)
+        if v == 0 or v == 3 or v == 4 then
+            local s = M.wtext(h.HelpText)
+            if s and not M.placeholder(s) then return s end
+        end
+    end
+    return nil
+end
+M.poll_battle = function()
+    local bt, now = M.bt, os.clock()
+    -- the enemies, once at the start
+    if not bt.started then
+        local en = M.bt_enemies()
+        if #en > 0 then
+            bt.started = true
+            local names = {}
+            for _, e in ipairs(en) do names[#names + 1] = e.name end
+            speak("Battle: " .. table.concat(names, ", "))
+        end
+    end
+    -- an action's name banner (BattleActionInfo_C, "Feuerball", an enemy's "Angriff"):
+    -- spoken when its text CHANGES. The widget stays visible with the last text, also
+    -- into the next battle -- so the first look only notes it (the battle-start
+    -- passive "Gegner studieren" comes ~3 s later and is new). The same action twice
+    -- in a row is said once.
+    for _, a in ipairs(M.bt_list("BattleActionInfo_C")) do
+        if M.wvis(a) == 0 then
+            local s = M.wtext(a.CommandName)
+            if s and not M.placeholder(s) and s ~= bt.action then
+                if bt.action ~= nil or bt.primed then speak(s) end
+                bt.action = s
+            end
+        end
+    end
+    bt.primed = true
+    local tg = M.bt_targets()
+    if #tg > 0 then
+        local sig = "T" .. table.concat(tg, ",")
+        if sig ~= bt.said then
+            bt.said = sig
+            if #tg == 1 then speak(M.bt_describe(tg[1]) or "target")
+            else speak(#tg .. " targets") end
+        end
+        return
+    end
+    local m = M.bt_menu()
+    if m and m.text then
+        local sig = "M" .. m.floor .. ":" .. m.cur .. ":" .. m.text
+        if sig ~= bt.said then
+            local fresh = not (bt.said or ""):match("^M")   -- the menu (re)appeared
+            if fresh and sig == bt.last_sig and now - (bt.last_t or -10) < 2.0 then
+                bt.said = sig   -- it only flickered (opening the menu): nothing new
+            else
+                local s = m.text
+                if m.add and not M.placeholder(m.add) then s = s .. ", " .. m.add .. " SP"; bt.add_said = sig end
+                if not m.usable then s = s .. ", unavailable" end
+                -- a new turn (the top menu just opened): whose
+                if m.floor == 1 and fresh then
+                    local who
+                    for _, pm in ipairs(M.bt_party()) do if pm.addr == m.who then who = pm.name end end
+                    if who then s = who .. ". " .. s end
+                end
+                bt.said = sig
+                speak(s)
+                bt.help_at = now + 0.3
+            end
+        end
+        bt.last_sig, bt.last_t, bt.gone_t = sig, now, nil
+        if bt.help_at and now >= bt.help_at then
+            bt.help_at = nil
+            -- the cost (TextAddInfo) can fill in a frame after the name: say it now
+            if bt.add_said ~= sig and m.add and not M.placeholder(m.add) then
+                bt.add_said = sig
+                speak(m.add .. " SP", false)
+            end
+            local h = M.bt_help()
+            if h and h ~= bt.help_said then
+                bt.help_said = h
+                speak(h, false)
+            end
+        end
+    elseif bt.said and bt.said:match("^M") then
+        -- the menu closed: an action runs. Gone for 0.6 s, so a flicker isn't a new turn
+        bt.gone_t = bt.gone_t or now
+        if now - bt.gone_t > 0.6 then bt.said, bt.gone_t = nil, nil end
+    end
+end
+-- The result screen ("Sieg!"): the panel's own totals (GetTotalMoney / Exp / JobPoint
+-- ints: 25, 6 = 5 + break bonus, 5 in the first test), said 1.5 s after it opens so
+-- the level-ups (BattleResultPlayerWidget_C.PlayLevelUp / PlayerLevel) are set; a
+-- level-up that shows later is said on its own. Drops: BattleDropItemWidget_C texts.
+M.poll_battle_result = function(w)
+    local bt, now = M.bt, os.clock()
+    local open = false
+    pcall(function() open = w.ResultOpen end)
+    if not open then return end
+    bt.result_t = bt.result_t or now
+    if now - bt.result_t < 1.5 then return end
+    bt.lv_said = bt.lv_said or {}
+    local ups = {}
+    for _, pw in ipairs(M.bt_list("BattleResultPlayerWidget_C")) do
+        local name = M.wtext(pw.CharaName)
+        local lv, up = nil, false
+        pcall(function() lv, up = pw.PlayerLevel, pw.PlayLevelUp end)
+        if up and not M.placeholder(name) and not bt.lv_said[name] then
+            bt.lv_said[name] = true
+            ups[#ups + 1] = string.format("%s reaches level %s", name, tostring(lv))
+        end
+    end
+    if not bt.result_said then
+        bt.result_said = true
+        local ex, jp, mo
+        pcall(function() ex, jp, mo = w.GetTotalExp, w.GetTotalJobPoint, w.GetTotalMoney end)
+        local parts = { string.format("Victory. %s leaves, %s EXP, %s JP", tostring(mo), tostring(ex), tostring(jp)) }
+        for _, u in ipairs(ups) do parts[#parts + 1] = u end
+        local drops = {}
+        for _, d in ipairs(M.bt_list("BattleDropItemWidget_C")) do
+            local n, c = M.wtext(d.Text_Name), M.wtext(d.Text_Num)
+            if n and not M.placeholder(n) and M.wvis(d) == 0 then drops[#drops + 1] = c and (n .. " " .. c) or n end
+        end
+        if #drops > 0 then parts[#parts + 1] = "Items: " .. table.concat(drops, ", ") end
+        speak(table.concat(parts, ". "))
+    elseif #ups > 0 then
+        speak(table.concat(ups, ". "), false)
+    end
+end
+-- 1-5: enemy N, 6-9: party member N-5, 0: turn order. Battle only.
+M.bt_key = function(n)
+    if not M.battle_now then return end
+    if n >= 1 and n <= 5 then
+        local en = M.bt_enemies()
+        if en[n] then speak(string.format("Enemy %d of %d: %s", n, #en, M.bt_enemy_text(en[n])))
+        else speak(#en == 0 and "No enemies" or string.format("Only %d enemies", #en)) end
+    elseif n >= 6 and n <= 9 then
+        local pa = M.bt_party()
+        if pa[n - 5] then speak(M.bt_party_text(pa[n - 5])) else speak("No party member " .. (n - 5)) end
+    elseif n == 0 then
+        pcall(M.bt_order)
+    end
+end
+-- Turn order: the timeline's ActionOrderIcon_C widgets (visible, EnableActionOrder),
+-- one per character and round; IsNextOrder marks the next round's row. (The
+-- timeline's own InterceptIcon_0x slots stayed empty in tests.) Listed in widget
+-- order -- the on-screen order of a bigger fight is still to be checked.
+M.bt_order = function()
+    local names = {}
+    for _, en in ipairs(M.bt_enemies()) do names[en.addr] = en.name end
+    for _, pm in ipairs(M.bt_party()) do if pm.addr then names[pm.addr] = pm.name end end
+    local now_l, next_l = {}, {}
+    for _, ic in ipairs(M.bt_list("ActionOrderIcon_C")) do
+        local en, a = false, nil
+        pcall(function() en = ic.EnableActionOrder end)
+        pcall(function() a = M.addr_of(ic.Character) end)
+        if en and a and names[a] and M.wvis(ic) == 0 then
+            local nx, brk = false, false
+            pcall(function() nx, brk = ic.IsNextOrder, ic.IsBreak end)
+            local s = names[a] .. (brk and " (broken)" or "")
+            if nx then next_l[#next_l + 1] = s else now_l[#now_l + 1] = s end
+        end
+    end
+    if #now_l == 0 and #next_l == 0 then speak("Turn order unknown"); return end
+    local s = "This round: " .. (#now_l > 0 and table.concat(now_l, ", ") or "none")
+    if #next_l > 0 then s = s .. ". Next: " .. table.concat(next_l, ", ") end
+    speak(s)
+end
+for n = 0, 9 do
+    local kn = ({ "ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE" })[n + 1]
+    pcall(function()
+        RegisterKeyBind(Key[kn], function()
+            if M.battle_now then M.in_gt(function() pcall(M.bt_key, n) end) end
+        end)
     end)
 end
 
@@ -5791,6 +6240,7 @@ radar_pump = function(src)
         end)
         if battle ~= (M.battle_now or false) then
             M.battle_now = battle
+            M.bt = {}   -- the battle reader starts afresh (enemy list, menus, widget lists)
             log("BATTLE " .. (battle and "started" or "ended"))
         end
         if battle then ev = true end
