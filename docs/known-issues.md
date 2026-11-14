@@ -21,8 +21,13 @@ against one Eissentinel in the study dungeon. Not yet seen or checked:
   caused with a level-1 Cyrus (Verteidigen sets none), so only "no phantom effects" is
   checked. Unused icon copies first gave a false "elemental attack up, 8 turns"; now
   only icons with `IconIN` count.
-- **Not read at all:** damage numbers, item drops on the result screen (the reader
-  exists, no drop yet), what a boosted command does, and the boost help.
+- **Damage numbers** are read since 2026-11-14 (8aad812), together with healing and
+  shield changes: "Eissentinel 55 weak, Eissentinel broken", "Cyrus 26", "Cyrus +500
+  HP", "Eissentinel recovers, shield 1". Checked against one enemy. Not yet heard: SP
+  and BP recovery, misses ("miss"), criticals (their DamageType is unknown: only
+  0/3/4/5 were seen, 3 and 5 say "weak").
+- **Not read at all:** item drops on the result screen (the reader exists, no drop
+  yet), what a boosted command does, and the boost help.
 - **The same action twice in a row is said once** (the banner text did not change);
   the actor of an action is not named.
 - **Lowering the boost** (the game's key for it is unknown) and whether keys 0-9 do
