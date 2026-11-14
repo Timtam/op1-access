@@ -3830,14 +3830,16 @@ poll_dialog = function()
         end
         -- a path-action result panel under the dialog (Scrutinize: the NPC's age,
         -- statement and the information gained) -- the dialog itself only says "OK"
-        -- (not inside an event: that reader runs FindAllOf). Only that one-button
-        -- dialog: the question before the action ("Erfolgschance: 90 %", Ja/Nein) has the
-        -- panel's design texts under it -- it says whom the action is aimed at instead
-        if not desc and M.fc_result_text and not M.evm_active and #buttons == 1 then
+        -- (not inside an event: that reader runs FindAllOf). Only that result dialog:
+        -- it has no text of its own (its buttons read "In Ordnung|Nein", a leftover of the
+        -- question). The question before the action ("Erfolgschance: 90 %", Ja/Nein) has
+        -- the panel's design texts under it -- it says whom the action is aimed at instead
+        local result_dlg = (detail == "" and caption == "")
+        if not desc and M.fc_result_text and not M.evm_active and result_dlg then
             local okr, r = pcall(M.fc_result_text, inst)
             if okr then desc = r end
         end
-        if not desc and #buttons >= 2 and M.fc_busy and M.fc_target_name then
+        if not desc and not result_dlg and #buttons >= 2 and M.fc_busy and M.fc_target_name then
             local okf, busy = pcall(M.fc_busy)
             if okf and busy then
                 local okn, nm = pcall(M.fc_target_name)
