@@ -3,6 +3,26 @@
 Problems noticed in existing features that are not fixed yet. Newest first. When one
 gets fixed, delete its entry (the commit message keeps the history).
 
+## Installer and updates
+
+Since 2026-11-14 (92e6dc0 and the installer commits): the release ZIP, the installer and
+the update check with F5 (see docs/build-and-release.md). Not yet checked:
+
+- **No GitHub repository yet**, so no release exists: the CI and release workflows have
+  never run, and the installer never downloaded a real package. `build-release.ps1`
+  built the ZIP and the installer locally. The mod's side (check, announcement, F5
+  twice, installer command line, fallback to the release page, 404 and network errors)
+  passed outside the game with a stand-in repository and a stand-in installer. Against a
+  fake game folder, the silent install, update (own sounds, `mods.txt` lines and other
+  mods stay), another UE4SS build, a running game, detect and both uninstalls passed, as
+  did the relaunch from `%TEMP%`. The window opened and closed; `--update --zip`
+  installed and asked to start the game.
+- **Not tried in the game:** the check at load, F5 and the close after 1.5 s
+  (`shim.CloseGame` posts `WM_CLOSE` to the game window; quitting via
+  `CloseMainWindow` in tests worked the same way).
+- **The installer window** (focus, live region, message boxes) wasn't tried with a
+  screen reader.
+
 ## Battles
 
 Read since 2026-11-14 (84bfbf6, ece7854): command menus, skill and item lists with
@@ -122,6 +142,10 @@ and the result reading are verified for that one action.
   UI-manager search at boot, and one search when the load dialog opened. Work another
   thread still takes is logged as "GT: queued work on a foreign thread"; none happened
   after the polls moved.
+  **Opening the main menu stalls the game once for 75-86 ms** (`[mainmenu=76]`): 7 of
+  the 10 slow runs in a 20-minute session on 2026-11-14 came from it, one per opening;
+  another was a single 159 ms `[active]` run. Not looked into yet; probably a search the
+  main-menu poll does when the menu appears.
 - **Q says "No objective" until the menu was opened once.** The objective comes from
   the menu's party panel (`PartyCharacterList_C.NowPlayingStoryPanel`), which is filled
   when the menu opens. After a load, Q in the field had nothing to read; after opening

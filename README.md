@@ -7,9 +7,9 @@ through [Prism](https://github.com/ethindp/prism), so it works with NVDA, JAWS,
 ZoomText and other screen readers, and falls back to Windows' own voices
 (OneCore / SAPI) when none is running.
 
-> **Status:** early but functional. The title-screen flow, menu/screen
-> announcements, system dialogs, and the character-select screen are spoken.
-> Battle and overworld support are still in progress. Expect rough edges.
+> **Status:** early but functional. Menus, dialogue, exploration (a 3D radar,
+> a navigator and a walker) and battles are spoken; `CHANGELOG.md` lists what
+> is there. Expect rough edges.
 
 ## How it works
 
@@ -28,31 +28,67 @@ to `UE4SS.log` (lines prefixed `[OP1Access]`) — useful for development.
 
 ## Install
 
-1. Install **UE4SS** into
-   `…/OCTOPATH TRAVELER/Octopath_Traveler/Binaries/Win64/`. The stock v3.0.1
-   release attaches to the 4.18 Shipping build with no patching.
-2. Add `OP1Access : 1` to `Win64/Mods/mods.txt`.
-3. Build and deploy the speech shim:
-   ```
-   scripts\build-shim.cmd
-   ```
-   This builds Prism as a static library (CMake + Ninja, both ship with Visual
-   Studio; Prism needs a C++23 compiler) and `OP1AccessShim.dll`, then copies
-   the shim into `Win64/Mods/OP1Access/Scripts/` and Prism's license notices
-   into `Win64/Mods/OP1Access/licenses/prism/`. No other speech DLLs are
-   needed. The script tells you how to fetch any missing dependency into
-   `tools\` (Prism goes to `tools\prism-src`, pinned to a commit). Players
-   need the current Microsoft Visual C++ Redistributable (x64).
-4. Copy the Lua mod into place — it is **not** auto-deployed by the build
-   script:
-   ```
-   copy scripts\Mods\OP1Access\Scripts\main.lua "…\Win64\Mods\OP1Access\Scripts\main.lua"
-   ```
-5. Launch the game with your screen reader running. You should hear
+You need Octopath Traveler from Steam on Windows 10 or 11, and a screen reader
+(NVDA, JAWS and others) or Windows' own voices. The Microsoft Visual C++
+Redistributable (x64) is needed too; Steam installs it with the game.
+
+### With the installer
+
+1. Download `OP1AccessInstaller.exe` from the
+   [latest release](../../releases/latest).
+2. Start it. Windows may warn that the file is not signed: choose *More info*,
+   then *Run anyway*.
+3. The installer finds Octopath Traveler in your Steam libraries. If it cannot,
+   choose *Choose folder* and select `Octopath_Traveler.exe` in the game folder. The
+   window shows the installed and the latest version.
+4. Choose *Install*. The installer downloads the latest release and installs
+   UE4SS 3.0.1 (unless it is there already) and the mod. It also turns off
+   UE4SS's console window, which would take the focus away from the game.
+5. Start the game with your screen reader running. You hear
    **“OP1 Access loaded.”**
 
-See `docs/install-state.md` for the exact deployed layout and how to reverse the
-install.
+The installer is a plain Windows dialog that works with screen readers:
+progress is announced, and questions and results come as message boxes. It adds
+OP1 Access to *Installed apps* in the Windows settings and puts a copy of itself
+into the mod folder, which the mod uses for updates.
+
+### Manual installation
+
+1. Find the game folder: in Steam, open the context menu of Octopath Traveler
+   and choose *Manage*, then *Browse local files*. The folder contains
+   `Octopath_Traveler.exe`.
+2. Download `OP1Access-<version>.zip` from the
+   [latest release](../../releases/latest) and extract it into the game folder.
+   Everything lands in `Octopath_Traveler\Binaries\Win64`: UE4SS 3.0.1
+   (`dwmapi.dll`, `UE4SS.dll`, `UE4SS-settings.ini` and the `Mods` folder),
+   `phonon.dll` and the mod in `Mods\OP1Access`.
+   If UE4SS 3.0.1 is installed already, `Mods\OP1Access` and `phonon.dll` are
+   enough; then add the line `OP1Access : 1` to `Mods\mods.txt` and set
+   `GuiConsoleEnabled = 0` in `UE4SS-settings.ini`.
+3. Start the game with your screen reader running.
+
+See `docs/install-state.md` for the exact deployed layout.
+
+## Updates
+
+When the game starts, the mod asks GitHub whether a newer version is out and
+tells you if there is one. **F5** checks again at any time. To install an
+update, press **F5 twice**: the mod closes the game (without saving), and the
+installer downloads and installs the new version and starts the game again.
+This needs `OP1AccessInstaller.exe` in `Mods\OP1Access`, where the installer and
+the ZIP put it; without it, F5 opens the download page instead. You can also run
+the installer again at any time; it updates the mod and itself. The check sends
+one request to the GitHub API and nothing else.
+
+## Uninstalling
+
+Open *Installed apps* in the Windows settings and uninstall *OP1 Access*, or
+start the installer and choose *Uninstall*. You are asked whether to remove
+UE4SS as well; keep it if you use other UE4SS mods for Octopath Traveler.
+
+By hand: in `Octopath_Traveler\Binaries\Win64`, delete the folder
+`Mods\OP1Access` and `phonon.dll`. To remove UE4SS as well, delete
+`dwmapi.dll`, `UE4SS.dll`, `UE4SS-settings.ini` and the folder `Mods`.
 
 ## Hotkeys
 
@@ -60,6 +96,7 @@ install.
 
 | Key | Action |
 |-----|--------|
+| **F5** | Check for an update; press twice to install a newer version |
 | **Ctrl + F10** | Announce the menu / screen you are currently on |
 | **Ctrl + F11** | *(dev)* Dump UHT-compatible headers to `UHTHeaderDump/` |
 | **Ctrl + F12** | *(dev)* Dump all live objects to `UE4SS_ObjectDump.txt` |
@@ -129,6 +166,56 @@ use this.
   and self-corrects as you move; if a direction ever comes out reversed, it will
   fix itself after you move that way once.
 
+## Building from source
+
+Requirements: Visual Studio 2022 or newer with the C++ workload (it brings
+CMake and Ninja; Prism needs a C++23 compiler), Git, PowerShell 7, and the
+.NET 8 SDK for the installer.
+
+1. Fetch the pinned dependencies into `tools\`:
+   ```
+   pwsh scripts\fetch-deps.ps1
+   ```
+2. Install UE4SS 3.0.1 into the game (the installer does it, or extract
+   `tools\UE4SS_v3.0.1.zip` into `Octopath_Traveler\Binaries\Win64`) and add
+   `OP1Access : 1` to `Win64\Mods\mods.txt`.
+3. Build the shim and copy it into the game. The game must be closed:
+   ```
+   scripts\build-shim.cmd
+   ```
+   This builds Prism as a static library and `OP1AccessShim.dll`, checks that
+   `main.lua` compiles, and copies the shim, `phonon.dll` and Prism's license
+   notices into the game.
+4. Copy the Lua mod into place; the build script does **not** deploy it:
+   ```
+   copy scripts\Mods\OP1Access\Scripts\main.lua "…\Win64\Mods\OP1Access\Scripts\main.lua"
+   ```
+
+A copy built like this has no `buildinfo.lua`, so it doesn't check for updates.
+To build a release the way the CI does, run `pwsh scripts\build-release.ps1`.
+It writes `dist\OP1Access-<version>.zip`, `dist\OP1AccessInstaller.exe` and
+`dist\SHA256SUMS.txt`. More about the build, the installer and the packages is
+in [docs/build-and-release.md](docs/build-and-release.md).
+
+## Releasing
+
+1. While you work, add your changes under `## [Unreleased]` in `CHANGELOG.md`.
+2. On GitHub, open *Actions*, choose *Release* and *Run workflow* on the default
+   branch. Choose the part of the version to raise (patch, minor or major) or
+   type an exact version. A version in `Directory.Build.props` that has not been
+   released yet, like 0.1.0 for the first release, is used as it is.
+3. The workflow moves the "Unreleased" entries into a section for the new
+   version, sets the version in `Directory.Build.props`, builds everything,
+   commits "Release vX.Y.Z", tags it and publishes a GitHub release. The
+   changelog section becomes the release notes; the ZIP, the installer and
+   `SHA256SUMS.txt` become its downloads.
+
+The mod and the installer look for updates in the latest release of the
+repository they were built from. The *CI* workflow builds every push to the
+default branch and every pull request and keeps the ZIP and the installer as
+artifacts of the run. If the default branch is protected, the release workflow
+needs permission to push to it.
+
 ## Development notes
 
 - The Lua mod currently emits **verbose diagnostic logging** to `UE4SS.log`
@@ -138,17 +225,21 @@ use this.
 - `docs/sdk-dump-procedure.md` covers capturing hook targets; the flat object
   dump (`UE4SS_ObjectDump.txt`) is the source of truth for Blueprint property
   names, offsets, and types.
-- There is no standalone Lua interpreter in the repo, but a `luac` can be built
-  from the bundled Lua 5.4.7 sources to syntax-check `main.lua` before
-  deploying (`luac -p main.lua`).
+- `build-shim.cmd` links a `luac.exe` (`build\shim\luac.exe`) from UE4SS's
+  Lua sources and checks `main.lua` with it; run it again by hand after editing
+  (`build\shim\luac.exe -p scripts\Mods\OP1Access\Scripts\main.lua`).
 
 ## Repo layout
 
 ```
-docs/         design docs, investigation reports, install state
+docs/         design docs, investigation reports, install state, build and release
 src/          C++ shim source (statically links Lua 5.4 and Prism; Speech.cpp)
-scripts/      the Lua mod (Mods/OP1Access/) + build-shim.cmd
-tools/        UE4SS distribution and build inputs, incl. prism-src (gitignored)
+scripts/      the Lua mod (Mods/OP1Access/), build-shim.cmd and the release scripts
+installer/    OP1AccessInstaller (.NET Framework 4.8, WinForms)
+packaging/    README and third-party notices of the release ZIP
+.github/      CI and release workflows
+tools/        build dependencies from fetch-deps.ps1 (gitignored)
+dist/         release builds (gitignored)
 ```
 
 ## License
