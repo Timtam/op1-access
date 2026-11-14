@@ -1554,15 +1554,20 @@ M.poll_worldmap = function()
     pcall(function() state = wm.WorldMapState end)
     local sig = string.format("%s/%s/%s", tostring(vis), tostring(focus), tostring(state))
     if sig ~= WM.sig then WM.sig = sig; log("WORLDMAP state vis/focus/state = " .. sig) end
-    -- After a fast travel the map keeps IsFocus (state 3 after "Ja"), though you are back
-    -- in the field: Page Up/Down still read the map's places (user report 2026-11-14).
-    -- Exploring (the radar pump's M.explore_now) means the map is closed.
-    local open = vis and (focus == nil or focus == true) and M.explore_now ~= true
+    -- After a fast travel the map keeps IsVisible and IsFocus, WorldMapState 3 (1 is the
+    -- travel question), until the main menu opens again: Page Up/Down read the map's places
+    -- in the town, and every scene or path action "opened" it ("World map. You are at ...,
+    -- Atlasdamm", user reports 2026-11-14). So: never in state 3 or while exploring, and it
+    -- only OPENS while the main menu is the focused screen (the map is part of it); once
+    -- open, a dialog over it (the travel question) keeps it open.
+    local _, acls = M.get_active_screen()
+    local ctx = (acls == "MainMenuWidget_C") or (WM.open and (acls == nil or acls == "UICommonDialogBP_C"))
+    local open = vis and (focus == nil or focus == true) and state ~= 3 and M.explore_now ~= true and ctx
     if not open then
         if WM.open then
             log("WORLDMAP closed")
             -- back in the main menu: say where (not after a fast travel: in the field)
-            if M.explore_now ~= true then pcall(M.mainmenu_reannounce) end
+            if M.explore_now ~= true and acls == "MainMenuWidget_C" then pcall(M.mainmenu_reannounce) end
         end
         WM.open, WM.list, WM.area = false, nil, nil
         return
