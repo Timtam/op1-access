@@ -3626,6 +3626,21 @@ local function nav_route_finish(goalnode)
             NV.goal = { x = door.x, y = door.y, z = door.z, cat = "door", key = NV.goal and NV.goal.key }
         end
     end
+    -- the cells right at the target are no use: the walk arrives within 110 of it, and
+    -- they can lie in its own collision -- the last two steps into a chest were "soft"
+    -- (the Pawn trace hit the chest) and the walker pushed into it until the stuck
+    -- check (study, 2026-11-14). Drop the tail within 110 on the target's floor.
+    if R.mode == "walk" and not door then
+        while #raw > 2 do
+            local q = raw[#raw - 1]
+            if math.sqrt((q.x - R.ox) ^ 2 + (q.y - R.oy) ^ 2) < 110
+                and (not q.z or math.abs(q.z - R.oz) < 150) then
+                table.remove(raw, #raw - 1)
+            else
+                break
+            end
+        end
+    end
     local pts = { raw[1] }
     for i = 2, #raw - 1 do
         local a, b, c = pts[#pts], raw[i], raw[i + 1]
@@ -4470,18 +4485,23 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
         NV.wp = NV.wp + 1
         wp = NV.path[NV.wp]
     end
-    if wp and NV.wp < #NV.path then
-        if not wp.nudged and NV.nudge_wp then pcall(NV.nudge_wp, wp) end
-        -- a waypoint the body still can't get near (a wall right beside it): within 75
-        -- and no closer for 0.35 s -> take the next one, instead of pushing the wall
-        -- for 1.2 s until the stuck check re-routes
-        local dd = math.sqrt((wp.x - px) ^ 2 + (wp.y - py) ^ 2)
+    if wp then
+        -- a new leg: push its waypoint off walls first (not the target itself), and
+        -- remember where the leg starts (the steering below follows the line from there)
         local wb = NV.wpbest
+        local dd = math.sqrt((wp.x - px) ^ 2 + (wp.y - py) ^ 2)
         if not wb or wb.i ~= NV.wp or wb.path ~= NV.path then
-            NV.wpbest = { i = NV.wp, path = NV.path, d = dd, t = now }
+            if NV.wp < #NV.path and not wp.nudged and NV.nudge_wp then
+                pcall(NV.nudge_wp, wp)
+                dd = math.sqrt((wp.x - px) ^ 2 + (wp.y - py) ^ 2)
+            end
+            NV.wpbest = { i = NV.wp, path = NV.path, d = dd, t = now, ax = px, ay = py }
         elseif dd < wb.d - 3 then
             wb.d, wb.t = dd, now
-        elseif dd < 75 and now - wb.t > 0.35 then
+        elseif NV.wp < #NV.path and dd < 75 and now - wb.t > 0.35 then
+            -- a waypoint the body still can't get near (a wall right beside it): within
+            -- 75 and no closer for 0.35 s -> take the next one, instead of pushing the
+            -- wall for 1.2 s until the stuck check re-routes
             log(string.format("NAVWALK wp %d skipped at %.0f (no closer)", NV.wp, dd))
             NV.wp = NV.wp + 1
             wp = NV.path[NV.wp]
@@ -4544,6 +4564,20 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
         dx, dy = NV.push.x, NV.push.y
     else
         dx, dy = wp.x - px, wp.y - py
+        -- follow the LEG, not just its end point: aim 70 ahead of us along the line from
+        -- where this leg began. Chasing the point with 8 keys let a slanted leg drift
+        -- sideways until the diagonal key came on (108 off a 415 leg, into a wall the
+        -- route went round: study, 2026-11-14); now the drift stays under ~30.
+        local wb = NV.wpbest
+        if wb and wb.i == NV.wp and wb.path == NV.path and wb.ax then
+            local sx, sy = wp.x - wb.ax, wp.y - wb.ay
+            local sl = math.sqrt(sx * sx + sy * sy)
+            if sl > 1 then
+                local ux, uy = sx / sl, sy / sl
+                local t = math.max(0, (px - wb.ax) * ux + (py - wb.ay) * uy) + 70
+                if t < sl then dx, dy = wb.ax + ux * t - px, wb.ay + uy * t - py end
+            end
+        end
     end
     local d = math.sqrt(dx * dx + dy * dy)
     if d < 1 then return end
