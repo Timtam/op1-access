@@ -5,19 +5,25 @@ gets fixed, delete its entry (the commit message keeps the history).
 
 ## Shops and inns
 
-Read since 2026-11-14 (9d527b9, d5c749f, 0b87f8e). Heard in the game: the title and the
-money, "Kaufen" and "Verkaufen", the goods, and the radar stays quiet. Changed after
-that and **not tried yet**:
+Read since 2026-11-14 (9d527b9, d5c749f, 0b87f8e, 31b89bf). Heard in the game: the title
+and the money, the goods ("Heiltraube, 50 Blätter, Zur Hand 0"), the amount picker
+("Anzahl: 1, Gesamtkosten: 50 Blätter", then "11, 550 Blätter"), the buy dialog, the
+shop names in the navigator, and the radar stays quiet. Open:
 
-- The amount picker ("Anzahl: 1, Gesamtkosten: 50 Blätter", then "2, 100 Blätter"). Its
-  labels come from the widget; when selling they should say "Gesamtwert:". The
-  "SHOP picker:" log line shows them.
-- The goods as name, price, count ("Heiltraube, 50 Blätter, Zur Hand 0").
-- The top menu from the shop's own command list. An inn said "Kaufen" for its
-  "Bleiben". The "SHOP open: ... commands=[...]" log line shows the list.
-- The shop names in the navigator ("Gasthaus", "Händler"; log line "SHOPNAME").
-- The currency word for the ⑳ sign. The game has no word for it, so the mod picks one by
-  the game's text language. Where the words come from:
+- When selling, the picker's label should say "Gesamtwert:"; the "SHOP picker:" log
+  line shows it.
+- The top menu by the shop's command list, mapped to the texts (31b89bf): the tavern
+  said "Verlassen" twice before. Checked against the log and a screenshot, not heard.
+  The "SHOP open" line also logs TopMenuItemList's panels.
+- The tavern counter in the navigator says "Wirtshaus" (the game's table calls it
+  "Gasthaus").
+- Screens opened from the tavern, which runs inside the talk event:
+  - The equipment screen is read since 2f44879 (the list reader stood down during
+    events); not heard yet.
+  - **"Gruppe wechseln" (ListCharacterWidget_C) and "Geschichte lauschen"
+    (BarMenuStorySelect_C) are not read at all.**
+- The currency word for the ⑳ sign ("3.246 Blätter" heard). The game has no word for
+  it, so the mod picks one by the game's text language. Where the words come from:
   - German "Blätter": the user's choice.
   - French: the game's own text.
   - Japanese and Korean: Tressa's skill name.
@@ -27,8 +33,6 @@ Not seen at all:
 
 - Selling.
 - Weapon and armor shops, which offer to equip what you buy.
-- Taverns ("Geschichte lauschen", "Ruf wiederherstellen").
-- "Gruppe wechseln".
 - What the inn says after "Bleiben".
 
 ## Game over
