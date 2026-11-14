@@ -38,10 +38,21 @@ gets fixed, delete its entry (the commit message keeps the history).
   - Long walks: random battles stopped every one of them after 10-15 s.
   - Towns and other dungeons.
 
-  Long routes still take ~5 s to plan, and the background check took up to 14 s per
-  far chest. The next speed-up would be a walkability grid traced once per area and
-  kept; a search is then instant, and one Dijkstra flood from the player answers the
-  whole list at once.
+  Planning is fast since 2026-11-14: the shim fires the traces natively (0.010 ms each
+  instead of 0.087 through UE4SS). The study's long chest route took 0.8 s instead of
+  5.6 s, and a town search that failed took 1.5 s instead of up to 16. A grid kept per
+  area is no longer needed for speed.
+- **Bigger search boxes are cheap now, but not done.** "Not reachable" still means no
+  way inside the start/goal box plus 20 cells. From the Atlasdam library a building
+  "3230, above" failed after 11675 traces. A third, bigger box would cost about 2 s
+  more and might find long detours.
+- **The library door from inside: no "Öffnen, E".** Walking out of the Atlasdam
+  library to a target outside, the walker reached the door, but the game showed the
+  Wachmann's path action ("Path action, Wachmann"; he stands outside), not the
+  door's prompt. So the auto door did nothing, and the walk ended with "At the door.
+  Open it, then backspace again" (2026-11-14). Walking in from outside worked.
+  Not checked: whether pressing E there opens the door or starts something with the
+  Wachmann.
 
 ## Path actions
 

@@ -1254,6 +1254,103 @@ int l_actor_loc(lua_State* L) {
     return 1;
 }
 
+// --- Native line traces (the walker's router) --------------------------------
+// A long route fires ~6000 traces. Through UE4SS's reflection call each one built
+// Lua tables for the vectors and converted the whole FHitResult back to Lua; here
+// the same UFunctions (KismetSystemLibrary LineTraceSingle / ...ByProfile) are
+// called straight through ProcessEvent with one reused parameter buffer.
+// Offsets from the object dump (UE 4.18):
+//   LineTraceSingle: Start 0x08, End 0x14, TraceChannel 0x20, bTraceComplex 0x21,
+//     ActorsToIgnore 0x28, DrawDebugType 0x38, OutHit 0x40, bIgnoreSelf 0xC8,
+//     ReturnValue 0xF0
+//   LineTraceSingleByProfile: ProfileName 0x20, bTraceComplex 0x28, ActorsToIgnore
+//     0x30, DrawDebugType 0x40, OutHit 0x48, bIgnoreSelf 0xD0, ReturnValue 0xF8
+//   FHitResult: Distance +0x08
+// The buffer is shared: Lua calls into the shim one at a time (the Lua lock).
+static void*          g_tr_ksl   = nullptr;                // KismetSystemLibrary CDO
+static void*          g_tr_fn[2] = { nullptr, nullptr };   // by channel, by profile
+static FnProcessEvent g_tr_pe    = nullptr;                // the CDO's ProcessEvent
+alignas(16) static unsigned char g_tr_buf[0x180];
+
+static bool tr_call(void* fn) {
+    bool ok = false;
+    __try { g_tr_pe(g_tr_ksl, fn, g_tr_buf); ok = true; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { ok = false; }
+    return ok;
+}
+
+// TraceSetup(kslCDO, fnLineTraceSingle, fnLineTraceSingleByProfile, actor,
+//            fnK2_GetActorLocation) -> bool
+// ProcessEvent is vtable slot 63 in this build (location-validated 2026-06-12). It is
+// checked once more here: slot 63 of a live actor must return the actor's real
+// location through K2_GetActorLocation. Then the CDO's own slot 63 is used. Nothing
+// else is ever called.
+int l_trace_setup(lua_State* L) {
+    void* ksl   = reinterpret_cast<void*>(static_cast<uintptr_t>(luaL_checkinteger(L, 1)));
+    void* f1    = reinterpret_cast<void*>(static_cast<uintptr_t>(luaL_checkinteger(L, 2)));
+    void* f2    = reinterpret_cast<void*>(static_cast<uintptr_t>(luaL_checkinteger(L, 3)));
+    void* actor = reinterpret_cast<void*>(static_cast<uintptr_t>(luaL_checkinteger(L, 4)));
+    void* locfn = reinterpret_cast<void*>(static_cast<uintptr_t>(luaL_checkinteger(L, 5)));
+    g_tr_pe = nullptr;
+    bool ok = false;
+    if (ksl && f1 && f2 && actor && locfn) {
+        __try {
+            void** avt = *reinterpret_cast<void***>(actor);
+            if (pe_loc_ok(avt[63], actor, locfn)) {
+                void** kvt = *reinterpret_cast<void***>(ksl);
+                g_tr_ksl   = ksl;
+                g_tr_fn[0] = f1;
+                g_tr_fn[1] = f2;
+                g_tr_pe    = reinterpret_cast<FnProcessEvent>(kvt[63]);
+                ok = true;
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) { ok = false; g_tr_pe = nullptr; }
+    }
+    lua_pushboolean(L, ok ? 1 : 0);
+    return 1;
+}
+
+// Trace(ctx, sx, sy, sz, ex, ey, ez, chan [, profile]) -> ok, hit, distance
+// chan >= 0: LineTraceSingle on that trace channel. chan < 0: LineTraceSingleByProfile,
+// profile = the profile FName's ComparisonIndex (Number 0). ctx = the player: it gives
+// the world and is ignored by the trace (bIgnoreSelf). ok = false if not set up or
+// the call faulted (SEH) -- then Lua falls back to its own call.
+int l_trace(lua_State* L) {
+    uintptr_t ctx = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
+    float v[6];
+    for (int i = 0; i < 6; i++) v[i] = static_cast<float>(luaL_checknumber(L, 2 + i));
+    int  chan   = static_cast<int>(luaL_checkinteger(L, 8));
+    int  prof   = static_cast<int>(luaL_optinteger(L, 9, 0));
+    bool byProf = chan < 0;
+    void* fn = g_tr_fn[byProf ? 1 : 0];
+    if (!g_tr_pe || !fn || ctx < 0x10000 || (byProf && prof <= 0)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    unsigned char* b = g_tr_buf;
+    memset(b, 0, 0x100);
+    *reinterpret_cast<uintptr_t*>(b) = ctx;              // WorldContextObject
+    memcpy(b + 0x08, v, sizeof(v));                       // Start, End
+    int hitOff, retOff;
+    if (byProf) {
+        *reinterpret_cast<int32_t*>(b + 0x20) = prof;     // ProfileName (Number 0)
+        b[0xD0] = 1;                                      // bIgnoreSelf
+        hitOff = 0x48; retOff = 0xF8;
+    } else {
+        b[0x20] = static_cast<unsigned char>(chan);       // TraceChannel
+        b[0xC8] = 1;                                      // bIgnoreSelf
+        hitOff = 0x40; retOff = 0xF0;
+    }
+    if (!tr_call(fn)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    lua_pushboolean(L, 1);
+    lua_pushboolean(L, b[retOff] ? 1 : 0);
+    lua_pushnumber(L, *reinterpret_cast<float*>(b + hitOff + 0x08));
+    return 3;
+}
+
 // IsForeground() -> bool. True iff the foreground window belongs to our (the game's)
 // process. When the game loses focus its main thread stops ticking, so calling game
 // UFunctions (line traces, position reads, IsVisible...) from our async poll/pump
@@ -1304,6 +1401,8 @@ const luaL_Reg op1access_funcs[] = {
     {"PeekFName",            l_peek_fname},
     {"GameTextFName",        l_gametext_fname},
     {"ActorLoc",             l_actor_loc},
+    {"TraceSetup",           l_trace_setup},
+    {"Trace",                l_trace},
     {"IsForeground",         l_is_foreground},
     {nullptr, nullptr},
 };
