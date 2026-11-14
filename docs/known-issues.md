@@ -28,10 +28,12 @@ against one Eissentinel in the study dungeon. Not yet seen or checked:
   0/3/4/5 were seen, 3 and 5 say "weak").
 - **Not read at all:** item drops on the result screen (the reader exists, no drop
   yet), what a boosted command does, and the boost help.
-- **The same action twice in a row is said once** (the banner text did not change);
-  the actor of an action is not named.
-- **Lowering the boost** (the game's key for it is unknown) and whether keys 0-9 do
-  anything in OT's own controls were not checked; no side effect was seen in 5 fights.
+- **Who acts is guessed for several enemies** (0e0e5d7). An action right after your
+  own input is your character's; otherwise it is the only enemy's, or the one whose
+  turn-order icon fades (IsFade, seen once). Not tried with two or more enemies or
+  with more party members. Battle-start messages get no name.
+- **Keys 0-9** in OT's own controls were not checked; no side effect showed in about
+  10 fights. Q (lower the boost) no longer reads the objective in battle.
 
 ## Walker (user report 2026-11-14)
 
