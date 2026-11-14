@@ -1046,7 +1046,8 @@ M.read_objective = function(queue)
     if txt then speak("Objective: " .. txt, not queue)
     elseif not queue then speak("No objective") end
 end
-pcall(RegisterKeyBind, Key.Q, function() M.read_objective(false) end)
+-- (not in battle: there Q is the game's "lower the boost" key -- it said "No objective")
+pcall(RegisterKeyBind, Key.Q, function() if M.battle_now then return end M.read_objective(false) end)
 
 -- Main (pause) menu category-list reader. The Escape menu's left list (Weltkarte /
 -- Journal / Inventar / Ausruestung / ... / Status / Verschiedenes) lives in
@@ -1425,12 +1426,20 @@ M.battle_dump = function()
         log(string.format("BDUMP order#%d vis=%s | %s", i, tostring(M.wvis(w)), table.concat(icons, " | ")))
     end)
     each("ActionOrderIcon_C", function(w, i)
-        local ca, en, nx = 0, nil, nil
+        local ca, en, nx, fade = 0, nil, nil, nil
         pcall(function() ca = M.peekp(w, 0x288) or 0 end)   -- Character
-        pcall(function() en, nx = w.EnableActionOrder, w.IsNextOrder end)
+        pcall(function() en, nx, fade = w.EnableActionOrder, w.IsNextOrder, w.IsFade end)
         if ca ~= 0 then
-            log(string.format("BDUMP orderIcon#%d vis=%s char=%X e%s n%s", i, tostring(M.wvis(w)), ca, tostring(en), tostring(nx)))
+            local ol, sel
+            pcall(function() ol = M.wvis(w.ThisTurnOutline) end)
+            pcall(function() sel = M.wvis(w.SelecterEffect) end)
+            log(string.format("BDUMP orderIcon#%d vis=%s char=%X e%s n%s fade%s outline=%s sel=%s", i, tostring(M.wvis(w)),
+                ca, tostring(en), tostring(nx), tostring(fade), tostring(ol), tostring(sel)))
         end
+    end)
+    each("BattleCommandBoostHelp_C", function(w, i)
+        log(string.format("BDUMP boosthelp#%d vis=%s boost=%s L=%s R=%s", i, tostring(M.wvis(w)),
+            tostring(M.wtext(w.BoostText)), tostring(M.wtext(w.BtL_Text)), tostring(M.wtext(w.BtR_Enable_Text))))
     end)
     each("BattleResultPanelWidget_C", function(w, i)
         local ro, st, ex, jp, mo
@@ -1754,6 +1763,11 @@ end
 M.poll_battle = function()
     local bt, now = M.bt, os.clock()
     if not M.dmg_armed and M.arm_dmg_hooks then pcall(M.arm_dmg_hooks) end
+    if not M.act_armed and M.arm_act_hook then pcall(M.arm_act_hook) end
+    if bt.act_pending then   -- an action banner just opened (M.act_hook)
+        speak(bt.act_pending)
+        bt.act_pending = nil
+    end
     -- shield changes go with the damage line: "shield 2", "broken" (PlayBreak is not
     -- called for a shield break), "recovers, shield 1" when its turn comes
     bt.shields = bt.shields or {}
@@ -1788,8 +1802,8 @@ M.poll_battle = function()
     -- spoken when its text CHANGES. The widget stays visible with the last text, also
     -- into the next battle -- so the first look only notes it (the battle-start
     -- passive "Gegner studieren" comes ~3 s later and is new). The same action twice
-    -- in a row is said once.
-    for _, a in ipairs(M.bt_list("BattleActionInfo_C")) do
+    -- in a row is said once. Only while the ActionInfoOpen hook (M.act_hook) isn't armed.
+    for _, a in ipairs(M.act_armed and {} or M.bt_list("BattleActionInfo_C")) do
         if M.wvis(a) == 0 then
             local s = M.wtext(a.CommandName)
             if s and not M.placeholder(s) and s ~= bt.action then
@@ -1800,6 +1814,15 @@ M.poll_battle = function()
     end
     bt.primed = true
     local tg = M.bt_targets()
+    -- our own input (menu or target cursor): the next action is that character's
+    local mm = (#tg == 0) and M.bt_menu() or nil
+    local input = (#tg > 0) or (mm ~= nil)
+    if input then
+        bt.menu_seen = true
+        if mm and mm.who then bt.menu_who = mm.who end
+    end
+    if bt.input_was and not input then bt.menu_closed_t = now end
+    bt.input_was = input
     if #tg > 0 then
         local sig = "T" .. table.concat(tg, ",")
         if sig ~= bt.said then
@@ -1809,7 +1832,7 @@ M.poll_battle = function()
         end
         return
     end
-    local m = M.bt_menu()
+    local m = mm   -- (read above, with the target check)
     if m and m.text then
         local sig = "M" .. m.floor .. ":" .. m.cur .. ":" .. m.text
         if sig ~= bt.said then
@@ -1832,9 +1855,24 @@ M.poll_battle = function()
             end
         end
         bt.last_sig, bt.last_t, bt.gone_t = sig, now, nil
-        -- the boost level (O raises it): say each change while the menu is up
+        -- the boost level: say each change while the menu is up; the first time, also
+        -- the keys from the boost help (BtR_Enable_Text "Ⓞ" raises, BtL_Text "Ⓠ" lowers)
         if bt.boost ~= nil and m.boost ~= bt.boost then
-            speak(m.boost > 0 and ("Boost " .. m.boost) or "No boost")
+            local s = m.boost > 0 and ("Boost " .. m.boost) or "No boost"
+            if not M.boost_keys_said then
+                M.boost_keys_said = true
+                local function key_of(g)
+                    local cp
+                    pcall(function() cp = utf8.codepoint(g or "", 1) end)
+                    if cp and cp >= 0x24B6 and cp <= 0x24CF then return string.char(cp - 0x24B6 + 65) end
+                    return nil
+                end
+                for _, h in ipairs(M.bt_list("BattleCommandBoostHelp_C")) do
+                    local up, down = key_of(M.wtext(h.BtR_Enable_Text)), key_of(M.wtext(h.BtL_Text))
+                    if up and down then s = s .. ". " .. up .. " raises, " .. down .. " lowers"; break end
+                end
+            end
+            speak(s)
         end
         bt.boost = m.boost
         -- the cost/count (TextAddInfo) may fill in a moment after the name: in a list
@@ -1942,6 +1980,53 @@ M.dmg_hook = function(kind)
             end
         end)
     end
+end
+-- ACTIONS: BattleActionInfo_C:ActionInfoOpen (no params) opens the name banner; its
+-- text was set just before (SetCommandName). Hooked, every action is said -- the same
+-- one twice in a row too, which the text-change poll could not tell apart. With it:
+-- Who acts. The order icons' ThisTurnOutline marks the whole round (both icons showed
+-- it), and only an ENEMY's icon was IsFade when it acted (2026-11-14). So: an action
+-- within 4 s after our own input (command menu or target cursor) is that menu's
+-- character; otherwise an enemy -- the only one, or the one whose icon fades. Before
+-- the battle's first menu (passives like "Gegner studieren", "Ihr habt Euren Feind ...
+-- überrascht!") no name.
+M.bt_actor = function()
+    local bt = M.bt
+    if not bt.menu_seen then return nil end
+    -- (input_was: the last poll, <= 0.1 s ago, still saw our menu or target cursor --
+    -- the action can start before the poll notices the input ended: Feuerball once
+    -- came out as the enemy's)
+    if bt.menu_who and (bt.input_was or (bt.menu_closed_t and os.clock() - bt.menu_closed_t < 4)) then
+        bt.menu_closed_t, bt.input_was = nil, false
+        for _, pm in ipairs(M.bt_party()) do if pm.addr == bt.menu_who then return pm.name end end
+    end
+    local en = M.bt_enemies()
+    if #en == 1 then return en[1].name end
+    local names = {}
+    for _, e in ipairs(en) do names[e.addr] = e.name end
+    for _, ic in ipairs(M.bt_list("ActionOrderIcon_C")) do
+        local a, nx, fade = M.peekp(ic, 0x288), true, false   -- Character
+        pcall(function() nx, fade = ic.IsNextOrder, ic.IsFade end)
+        if a and names[a] and fade and not nx then return names[a] end
+    end
+    return nil
+end
+M.act_hook = function(ctx)
+    pcall(function()
+        local s = M.wtext(ctx:get().CommandName)
+        if not s or M.placeholder(s) then return end
+        M.act_hook_ok = true
+        local who = M.bt_actor()
+        M.bt.act_pending = (who and (who .. ": ") or "") .. s
+        M.bt.action = s
+        log("ACTION " .. M.bt.act_pending)
+    end)
+end
+M.arm_act_hook = function()
+    if M.act_armed then return end
+    local ok, id = pcall(RegisterHook, "/Game/UI/Battle/BP/BattleActionInfo.BattleActionInfo_C:ActionInfoOpen",
+        M.fg_guard(M.act_hook))
+    if ok and id ~= nil then M.act_armed = true; log("Action hook ARMED") end
 end
 M.arm_dmg_hooks = function()
     if M.dmg_armed then return end
