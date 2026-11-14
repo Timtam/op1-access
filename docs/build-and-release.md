@@ -32,6 +32,15 @@ Prism's notices into the game; `--no-deploy` only builds. `OP1_TOOLS` points it 
 `BuildInfo` class with `Version` and `RepositorySlug` for the installer. The CI passes
 `-p:RepositorySlug=<owner/name>`; local builds have none.
 
+## Game data the mod ships
+
+`Scripts/worldlinks.lua` holds which area leads where, for the world map's route finder:
+level name -> the level IDs its exits lead to. The game has no such table; every exit is a
+LevelTrigger in its level with `m_nNextMapID`. `scripts/level-links.py` reads them from the
+cooked area levels after extracting `Octopath_Traveler/Content/Level/Area` with repak (the
+script's header has both commands). Only numbers and level names, no game text. Run it
+again if a game update changes the levels.
+
 ## Release packages
 
 `scripts\build-release.ps1 [-RepositorySlug owner/name] [-Tools <folder>]` runs `fetch-deps.ps1`,

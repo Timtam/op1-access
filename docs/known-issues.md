@@ -3,14 +3,25 @@
 Problems noticed in existing features that are not fixed yet. Newest first. When one
 gets fixed, delete its entry (the commit message keeps the history).
 
-## World map and danger levels
+## Game over
 
-Since 2026-11-14 (ac9584a, a053db5), tested from the user's save in the Östliche
-Atlasdamm-Ebenen after Cyrus' chapter 1 (11 places). Open:
+Read since 2026-11-14 (8e180e2) from the object dump and a screenshot of the screen
+("Weiter ab letztem Speicherpunkt", "Zum Titelbildschirm"), but **not heard in the game
+yet**: there was no second defeat in the test. The "GAMEOVER items=[...]" log line shows
+what it found.
 
-- **The cursor can't be sent to a place.** Page Up/Down only reads the places; to fast
-  travel you still steer the cursor yourself (the area under it is announced).
-  `WorldMap_C` has MoveTargetPos/MoveTargetPosRequest, not tried yet.
+## World map, route finder and danger levels
+
+Since 2026-11-14 (ac9584a, a053db5, e6b92ef, 0442d86), tested from the user's save in the
+Östliche Atlasdamm-Ebenen after Cyrus' chapter 1 (11 places): Page Up/Down moved the
+cursor to Atlasdamm and Enter offered the fast travel; the route to Kammbruch (9 areas) and
+"on the way to Kammbruch" at the right exit. Open:
+
+- **The route ignores story locks.** It is the fewest exits by the level files
+  (`Scripts/worldlinks.lua`); an exit the story still keeps shut (LevelTriggerTable flags)
+  counts as open, and an exit whose destination the level file doesn't store wasn't
+  found. Only one route was checked, and not walked.
+- **The route goal is forgotten** when the game restarts (pick it again on the map).
 - **Distances are map units** (Kammbruch "west, 947" from the flats by Atlasdam).
 - **Which number is "the" level.** Exits, the banner and the map say DangerLevel of the
   encounter entry for the story progress (1/4/7/11 in the flats by Atlasdam over

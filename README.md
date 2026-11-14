@@ -97,7 +97,8 @@ By hand: in `Octopath_Traveler\Binaries\Win64`, delete the folder
 | Key | Action |
 |-----|--------|
 | **F5** | Check for an update; press twice to install a newer version |
-| **Page Up / Page Down** | On the world map (main menu, Weltkarte): every place, nearest first, with its direction |
+| **Page Up / Page Down** | On the world map (main menu, Weltkarte): every place, nearest first, with its direction; the map's cursor goes there, so Enter fast travels to a visited town |
+| **Ctrl + Backspace** | On the world map: the route to the place picked with Page Up/Down, area by area; in the field the exit on that route then says "on the way to …" |
 | **Ctrl + F10** | Announce the menu / screen you are currently on |
 | **Ctrl + F11** | *(dev)* Dump UHT-compatible headers to `UHTHeaderDump/` |
 | **Ctrl + F12** | *(dev)* Dump all live objects to `UE4SS_ObjectDump.txt` |

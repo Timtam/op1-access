@@ -21,7 +21,10 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   equipment (slots, items and what they would change) and the tutorials.
 - World map: the place under the cursor (town, path or dungeon, region, danger level, not
   visited) and the chapters recommended there; Page Up and Page Down go through every place,
-  nearest first, with its direction from where you are.
+  nearest first, with its direction from where you are, and move the cursor there for fast
+  travel. Ctrl+Backspace says the route to that place area by area; in the field the exit on
+  that route says "on the way to …".
+- The game over menu.
 
 ### Story and exploration
 
