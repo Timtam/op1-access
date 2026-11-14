@@ -1628,6 +1628,37 @@ M.menu_dump = function()
         pcall(function() tn = w.TargetCharacterName:ToString() end)
         log(string.format("MDUMP itemscreen#%d vis=%s use=%s target=%s", i, tostring(M.wvis(w)), tostring(un), tostring(tn)))
     end)
+    each("EquipmentMenuWidget_C", function(w, i)
+        local f = {}
+        for _, k in ipairs({ "IsActive", "IsPushedCenterList", "IsPushedRightList", "CurrentCursorEquipPart",
+            "SelectedEquipPart", "RightListState", "SelectedCharacterID", "IsBarMode" }) do
+            local v
+            pcall(function() v = w[k] end)
+            f[#f + 1] = k .. "=" .. tostring(v)
+        end
+        local ce, cl, rl = nil, nil, nil
+        pcall(function() ce = M.wtext(w.EqpCharacterList.TextEqp) end)
+        pcall(function() cl = M.addr_of(w.ListEqp_Center) end)
+        pcall(function() rl = M.addr_of(w.ListEqp_Right) end)
+        log(string.format("MDUMP equip#%d vis=%s %s char=%s center=%X right=%X", i, tostring(M.wvis(w)),
+            table.concat(f, " "), tostring(ce), cl or 0, rl or 0))
+        local ps = {}
+        pcall(function()
+            local pl = w.EqpParamList
+            for n = 1, 10 do
+                local p
+                pcall(function() p = pl[(n == 10) and "param_10" or string.format("Param_%02d", n)] end)
+                if p then
+                    local vb, va
+                    pcall(function() vb, va = p.ValueBefore, p.ValueAfter end)
+                    ps[#ps + 1] = string.format("%s:%s>%s(%s>%s) v%s", tostring(M.wtext(p.ParamName)),
+                        tostring(M.wtext(p.ParamBefore)), tostring(M.wtext(p.ParamAfter)), tostring(vb), tostring(va),
+                        tostring(M.wvis(p)))
+                end
+            end
+        end)
+        log("MDUMP equip params: " .. table.concat(ps, " ; "))
+    end)
     each("PartyCharacterList_C", function(w, i)
         local cp, open, valid
         pcall(function() cp, open, valid = w.CursorPosition, w.IsOpen, w.ValidListNum end)
@@ -1656,7 +1687,8 @@ M.menu_dump = function()
                 if s and not M.placeholder(s) then
                     local full = ""
                     pcall(function() full = t:GetFullName() end)
-                    if (full:find("MainMenu") and not full:find("MainMenuList")) or full:find("HelpWindow") then
+                    if (full:find("MainMenu") and not full:find("MainMenuList")) or full:find("HelpWindow")
+                        or full:find("Equipment") then
                         local short = (full:gsub("^.-PersistentLevel%.", ""):gsub("WidgetTree%.", ""))
                         log(string.format("MDUMP text %s = %s", short, s))
                     end
@@ -1711,7 +1743,32 @@ M.ml_list = function(cls)
     M.ml_cache[cls] = { t = now, l = l }
     return l
 end
-M.ml_screen = function(addr)   -- "items" / "abilities" / nil, with the owner widget
+-- "items" / "abilities" / "equip" / nil, with the owner widget and which of its lists.
+-- The owner is the list's outer's outer (owner -> WidgetTree -> list), so no object
+-- search is needed; the FindAllOf search below is only the fallback.
+M.ml_screen = function(addr, w)
+    local owner, cls
+    if w then
+        pcall(function() owner = w:GetOuter():GetOuter() end)
+        if owner then pcall(function() cls = class_name_of(owner) end) end
+    end
+    if cls then
+        local function is(prop)
+            local a
+            pcall(function() a = M.addr_of(owner[prop]) end)
+            return a == addr
+        end
+        if cls == "MainMenuItemListWidget_C" and is("ListWidget") then return "items", owner end
+        if cls == "MainMenuAbilityWidget_C" then
+            if is("MainJobAbilityAcquisitionListWidget") then return "abilities", owner, "main" end
+            if is("SubJobAbilityAcquisitionListWidget") then return "abilities", owner, "sub" end
+        end
+        if cls == "EquipmentMenuWidget_C" then
+            if is("ListEqp_Center") then return "equip", owner, "center" end
+            if is("ListEqp_Right") then return "equip", owner, "right" end
+        end
+        return nil   -- another screen's list (read plainly)
+    end
     for _, o in ipairs(M.ml_list("MainMenuItemListWidget_C")) do
         local a
         pcall(function() a = M.addr_of(o.ListWidget) end)
@@ -1724,7 +1781,35 @@ M.ml_screen = function(addr)   -- "items" / "abilities" / nil, with the owner wi
         if a1 == addr then return "abilities", o, "main" end
         if a2 == addr then return "abilities", o, "sub" end
     end
+    for _, o in ipairs(M.ml_list("EquipmentMenuWidget_C")) do
+        local a1, a2
+        pcall(function() a1 = M.addr_of(o.ListEqp_Center) end)
+        pcall(function() a2 = M.addr_of(o.ListEqp_Right) end)
+        if a1 == addr then return "equip", o, "center" end
+        if a2 == addr then return "equip", o, "right" end
+    end
     return nil
+end
+-- The equipment screen's stat table (EqpParamList.Param_01..09 + param_10, each a
+-- ParamBeforeAfterWBP_C with ParamName and the ints ValueBefore/ValueAfter): what the
+-- focused item would change -- "Phys. Vert. 82 to 103, Tempo 77 to 99" -- or nil.
+M.eq_changes = function(owner)
+    local pl
+    pcall(function() pl = owner.EqpParamList end)
+    if not pl then return nil end
+    local out = {}
+    for n = 1, 10 do
+        local p, vb, va
+        pcall(function() p = pl[(n == 10) and "param_10" or string.format("Param_%02d", n)] end)
+        if p then pcall(function() vb, va = p.ValueBefore, p.ValueAfter end) end
+        if type(vb) == "number" and type(va) == "number" and vb ~= va then
+            local name = M.wtext(p.ParamName)
+            if name and not M.placeholder(name) then
+                out[#out + 1] = string.format("%s %d to %d", name, vb, va)
+            end
+        end
+    end
+    return #out > 0 and table.concat(out, ", ") or nil
 end
 M.ml_help = function()
     for _, h in ipairs(M.ml_list("HelpWindowWBP_C")) do
@@ -1794,7 +1879,7 @@ M.poll_menu_list = function()
     -- list below it), the party list on the right moves its CursorPosition
     -- (only right after an item row was chosen: backing out of the tabs also puts the
     -- item screen on top for a moment -- that once said "Cyrus, level 5, ..." in passing)
-    local _, top = M.get_active_screen()
+    local aw, top = M.get_active_screen()
     -- a tutorial pop-up over the list (first visit): its reader speaks it; the list
     -- waits, or its header cut the tutorial text off
     if top == "UITutorial_C" then return end
@@ -1820,10 +1905,15 @@ M.poll_menu_list = function()
         end
     end
     local w
-    for _, l in ipairs(M.ml_list("ListWidget_C")) do
-        local act = false
-        pcall(function() act = l.ActiveFlag end)
-        if act and M.wvis(l) == 0 then w = l; break end
+    -- the focused list itself, as GetActiveStack returns it: the equipment screen has two
+    -- lists active at once (slots, items) and the scan below took the wrong one
+    if top == "ListWidget_C" and aw then w = aw end
+    if not w then
+        for _, l in ipairs(M.ml_list("ListWidget_C")) do
+            local act = false
+            pcall(function() act = l.ActiveFlag end)
+            if act and M.wvis(l) == 0 then w = l; break end
+        end
     end
     if not w then
         -- the abilities screen's little sub menu ("Fertigkeiten erlernen" / "Hilfs-
@@ -1847,7 +1937,7 @@ M.poll_menu_list = function()
         return
     end
     local addr = M.addr_of(w)
-    local scr, owner, which = M.ml_screen(addr)
+    local scr, owner, which = M.ml_screen(addr, w)
     local usecat, catsel, ccur, cur = false, false, 0, 0
     pcall(function() usecat, catsel, ccur, cur = w.UseCategory, w.CategorySelect, w.CategoryCursorPos, w.CursorPosition end)
     local sig, say, extra
@@ -1902,6 +1992,11 @@ M.poll_menu_list = function()
             if c1 == "???" then say = "Locked skill"
             elseif stv == 1 then say = say .. ", learned" end
         end
+        -- equipment: a greyed category is one this traveler can't use (swords for
+        -- Cyrus); in an item list the greyed row is the piece worn now
+        if scr == "equip" and stv == 1 then
+            say = say .. ((which == "right") and ", equipped" or ", can't equip")
+        end
         sig = string.format("R%X:%s:%s", addr or 0, tostring(idx), say)
     end
     if sig ~= st.said then
@@ -1924,11 +2019,22 @@ M.poll_menu_list = function()
         st.help_at = nil
         -- tabs: the support rows (abilities) instead of the help box, which still
         -- shows the last row's text there
-        local h = st.extra_say
-        if not h and not sig:match("^C") then h = M.ml_help() end
+        local parts = {}
+        if st.extra_say then parts[#parts + 1] = st.extra_say end
+        if not st.extra_say and not sig:match("^C") then
+            -- equipment items: what the piece would change first, read now (the table
+            -- follows the cursor a frame late)
+            if scr == "equip" and which == "right" then
+                local okc, c = pcall(M.eq_changes, owner)
+                if okc and c then parts[#parts + 1] = c end
+            end
+            local hh = M.ml_help()
+            -- a locked skill's help is just "???"
+            if hh and not hh:match("^[%?%s]+$") then parts[#parts + 1] = hh end
+        end
         st.extra_say = nil
-        -- a locked skill's help is just "???"
-        if h and h ~= st.help_said and not h:match("^[%?%s]+$") then
+        local h = #parts > 0 and M.join_text(parts) or nil
+        if h and h ~= st.help_said then
             st.help_said = h
             speak(h, false)
         end
