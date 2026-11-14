@@ -105,7 +105,9 @@ By hand: in `Octopath_Traveler\Binaries\Win64`, delete the folder
 
 Everything else is automatic: screens and menus are announced as they open, the
 highlighted entry is read as you move through title menus, and system dialogs
-are read out (caption, body, and button labels).
+are read out (caption, body, and button labels). Shops and inns are read too.
+Money is spoken as a word in the game's language ("50 Blätter"). The game itself
+only shows a ⑳ sign, which screen readers can't read.
 
 ## Main menu (pause menu)
 

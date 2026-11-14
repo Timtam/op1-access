@@ -11,6 +11,8 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
 
 - Speech and braille through Prism: NVDA, JAWS and other screen readers, or Windows' own voices
   (OneCore, SAPI) when none runs. Restarting the screen reader while the game runs is fine.
+- Money is said as a word in the game's language ("50 Blätter", "50 leaves"). The game only
+  shows its own ⑳ sign, which screen readers can't read.
 
 ### Menus
 
@@ -25,6 +27,8 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   travel. Ctrl+Backspace says the route to that place area by area; in the field the exit on
   that route says "on the way to …".
 - The game over menu.
+- Shops and inns: the shop's name and your money, its commands, the goods with price and how
+  many you have, and the amount to buy or sell with the total.
 
 ### Story and exploration
 
@@ -33,7 +37,7 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   bump sounds.
 - A navigator: categories with Home and End, targets with Page Up and Page Down, Ctrl+Backspace
   for directions. It says which chests are opened, which targets can't be reached, where exits
-  lead and how dangerous the area behind them is.
+  lead and how dangerous the area behind them is, and what kind of shop a shop is.
 - A walker: Backspace walks to the target over a computed route, opens doors on the way and
   frees itself when stuck.
 
