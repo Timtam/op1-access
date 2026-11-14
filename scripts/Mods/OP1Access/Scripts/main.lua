@@ -4991,8 +4991,8 @@ local function nav_announce(prefix)
     end
     -- an exit says where it leads (M.exit_dest: the game's level tables), per focus
     if t.cat == "exit" and t.name == nil and t.actor then
-        local okd, dest = pcall(M.exit_dest, t.actor)
-        t.name = (okd and dest) and ("to " .. dest) or false
+        local okd, dest, lv = pcall(M.exit_dest, t.actor)
+        t.name = (okd and dest) and ("to " .. dest .. (lv and (", " .. lv) or "")) or false
     end
     local who = t.name and (t.name .. ", ") or ""
     -- a chest says whether it was opened already (emptied: OT chests hold one thing)
@@ -5071,7 +5071,8 @@ local function nav_obj_cycle(delta)
     end
     if #NV.list == 0 then nav_build_list() end
     if #NV.list == 0 then speak("No targets here, control left or right for categories"); return end
-    NV.idx = ((NV.idx - 1 + delta) % #NV.list) + 1
+    if NV.idx < 1 then NV.idx = (delta > 0) and 1 or #NV.list   -- none selected: first or last
+    else NV.idx = ((NV.idx - 1 + delta) % #NV.list) + 1 end
     nav_announce()
 end
 
@@ -7007,15 +7008,37 @@ M.poll_area_name = function()
     log("AREA: " .. key)
     -- the banner's GameText labels and the level ID, to compare with the EXIT lines
     -- (an exit's strNextAreaName / strNextMapName is the label the banner shows)
+    local id
     pcall(function()
-        local lm, id = FindFirstOf("LevelManagerBP_C"), nil
+        local lm = FindFirstOf("LevelManagerBP_C")
         if lm and lm:IsValid() then id = lm.CurrentLevelID end
         local ml, rl = "?", "?"
         pcall(function() ml = w.MapNameLabel:ToString() end)
         pcall(function() rl = w.RegionNameLabel:ToString() end)
         log(string.format("AREA level=%s labels=%s/%s", tostring(id), ml, rl))
     end)
-    speak((region and region ~= "") and (area .. ", " .. region) or area, false)
+    -- what the game itself computed for this area (EncountManagerBP_C: DangerLevel
+    -- @0x440, EncounterLevel @0x3DC, CurrentEncounter @0x3A8 = border/icons/danger), to
+    -- check M.level_danger against
+    pcall(function()
+        local em = M.encmgr
+        local okm = false
+        if em then pcall(function() okm = em:IsValid() end) end
+        if not okm then em = FindFirstOf("EncountManagerBP_C"); M.encmgr = em end
+        local a = 0
+        pcall(function() a = em:GetAddress() end)
+        if a ~= 0 then
+            log(string.format("AREA encounters: DangerLevel=%s EncounterLevel=%s current border/icons/danger=%s/%s/%s",
+                tostring(shim.Peek(a + 0x440, "i32")), tostring(shim.Peek(a + 0x3DC, "i32")),
+                tostring(shim.Peek(a + 0x3A8, "i32")), tostring(shim.Peek(a + 0x3AC, "i32")),
+                tostring(shim.Peek(a + 0x3B0, "i32"))))
+        end
+    end)
+    -- the area's level, as the banner's danger icons show it (fields and dungeons)
+    local okl, lv = pcall(M.danger_text, id)
+    local say = (region and region ~= "") and (area .. ", " .. region) or area
+    if okl and lv then say = say .. ", " .. lv end
+    speak(say, false)
 end
 
 -- ACTION PROMPT: standing right at a door (and similar) shows a prompt such as
@@ -7438,8 +7461,8 @@ M.minimap_markers = function(pz)
             if nm and nm ~= "" and nm ~= "???" then label = nm .. ", " .. kind end
         end
         if actor and (ic.type == 14 or ic.type == 15) and not npcs[aaddr] then
-            local okd, dest = pcall(M.exit_dest, actor)
-            if okd and dest then label = kind .. ", to " .. dest end
+            local okd, dest, lv = pcall(M.exit_dest, actor)
+            if okd and dest then label = kind .. ", to " .. dest .. (lv and (", " .. lv) or "") end
         end
         -- a story event's spot: the walker walks INTO it (walkcat "event")
         local walkcat = (ic.type == 14 or ic.type == 15) and "exit" or nil
@@ -7467,12 +7490,117 @@ M.dt_addr = function(name)
     M.dt_addrs = M.dt_addrs or {}
     local a = M.dt_addrs[name]
     if a then return a end
+    -- a bare name is in /Game/Level/Database; a path ("/Game/Battle/Database/X") as given
+    local path = name:find("/", 1, true) and (name .. "." .. name:match("([^/]+)$"))
+        or ("/Game/Level/Database/" .. name .. "." .. name)
     pcall(function()
-        local o = StaticFindObject("/Game/Level/Database/" .. name .. "." .. name)
+        local o = StaticFindObject(path)
         if o and o:IsValid() then a = o:GetAddress() end
     end)
     if a and a ~= 0 then M.dt_addrs[name] = a; return a end
     return nil
+end
+-- AN AREA'S LEVEL (user request 2026-11-14: say the recommended level at the exits). Not
+-- in the LevelTable (its RecommendMin/MaxLevel are 0 for every field), but in the
+-- encounters: LevelInfoData.EncountVolumeNameList (TArray<FName> @0x58) names rows of
+-- /Game/Battle/Database/EncountVolumeData (EncountVolume: StartFlag @0, EndFlag @4,
+-- EncounterList TArray<EncountData> @0x28), and an EncountData (0x18 each) has
+-- ProgressBorder @0, DisplayLevel @4, DangerLevel @8, EncounterName FName @0x10 (object
+-- dump). Seen in the flats by Atlasdam: borders 0/2/3/4 with DangerLevel 1/4/7/11 and
+-- DisplayLevel 1/1/1/2 (the banner's danger icons, MapDangerWidget_C). The game's
+-- CalcEncounterLevel takes the entry by the story progress (KSSaveGame's
+-- MainProgressPoint): the last one whose ProgressBorder is not above it.
+-- The story progress: the active save game is KSSaveDataManager.SaveGame (object dump),
+-- the manager found once (FindAllOf, ~50 ms; the class default object skipped).
+M.main_progress = function()
+    local m = M.savemgr
+    local ok = false
+    if m then pcall(function() ok = m:IsValid() end) end
+    if not ok then
+        M.savemgr = nil
+        local now = os.clock()
+        if now - (M.savemgr_t or -99) < 5 then return nil end
+        M.savemgr_t = now
+        pcall(function()
+            for _, o in pairs(FindAllOf("KSSaveDataManagerBP_C") or {}) do
+                local fn = ""
+                pcall(function() fn = o:GetFullName() end)
+                if o:IsValid() and not fn:find("Default__", 1, true) then M.savemgr = o; break end
+            end
+        end)
+        m = M.savemgr
+    end
+    local p
+    if m then pcall(function() p = m.SaveGame.MainProgressPoint end) end
+    return type(p) == "number" and p or nil
+end
+-- Level ID -> { display, danger, border, progress } for the story progress now, or nil
+-- (no encounters, as in towns). The entries per level are read once (all logged).
+M.danger_cache = {}
+M.level_danger = function(id)
+    if type(id) ~= "number" or id <= 0 or not (shim and shim.DtFind) then return nil end
+    local ents = M.danger_cache[id]
+    if ents == nil then
+        ents = M.level_encounters(id) or false
+        M.danger_cache[id] = ents
+    end
+    if not ents or #ents == 0 then return nil end
+    local p = M.main_progress()
+    local pick = ents[1]
+    for _, e in ipairs(ents) do
+        if p and e.border <= p and e.border >= pick.border then pick = e end
+    end
+    return { display = pick.display, danger = pick.danger, border = pick.border, progress = p }
+end
+-- the encounter entries of a level's first volume that has any: { {border, display, danger} }
+M.level_encounters = function(id)
+    local res = false
+    pcall(function()
+        local lt = M.dt_addr("LevelTable")
+        local ev = M.dt_addr("/Game/Battle/Database/EncountVolumeData")
+        local kc, kn = M.fname_of(tostring(id))
+        local row = lt and kc and shim.DtFind(lt, kc, kn)
+        if not (row and ev) then
+            log(string.format("DANGER level %d: row=%s volumes table=%s", id, tostring(row), tostring(ev)))
+            return
+        end
+        local arr, cnt = shim.Peek(row + 0x58, "ptr"), shim.Peek(row + 0x60, "i32")
+        local seen = {}
+        if arr and arr ~= 0 and cnt and cnt > 0 and cnt < 64 then
+            for i = 0, cnt - 1 do
+                local vc, vn = shim.PeekFName(arr + i * 8)
+                local vrow = vc and vc > 0 and shim.DtFind(ev, vc, vn)
+                if vrow then
+                    local la, ln = shim.Peek(vrow + 0x28, "ptr"), shim.Peek(vrow + 0x30, "i32")
+                    local txt, list = {}, {}
+                    if la and la ~= 0 and ln and ln > 0 and ln < 64 then
+                        for j = 0, ln - 1 do
+                            local e = la + j * 0x18
+                            local b, dl, dg = shim.Peek(e, "i32"), shim.Peek(e + 4, "i32"), shim.Peek(e + 8, "i32")
+                            txt[#txt + 1] = string.format("%s:%s/%s", tostring(b), tostring(dl), tostring(dg))
+                            if type(b) == "number" and type(dg) == "number" and dg > 0 and dg < 200 then
+                                list[#list + 1] = { border = b, display = dl, danger = dg }
+                            end
+                        end
+                    end
+                    if not res and #list > 0 then res = list end
+                    seen[#seen + 1] = string.format("%s[%s-%s] %s", M.fname_str(vc, vn),
+                        tostring(shim.Peek(vrow, "i32")), tostring(shim.Peek(vrow + 4, "i32")), table.concat(txt, " "))
+                end
+            end
+        end
+        log(string.format("DANGER level %d: %d volumes: %s", id, #seen, table.concat(seen, " | ")))
+    end)
+    return res or nil
+end
+-- "danger level 4" from an area's encounters for the story so far (nil: no fights
+-- there, as in towns)
+M.danger_text = function(id)
+    local d = M.level_danger(id)
+    if not d then return nil end
+    log(string.format("DANGER level %d now: danger %d, icons %s (border %d, progress %s)", id, d.danger,
+        tostring(d.display), d.border, tostring(d.progress)))
+    return string.format("danger level %d", d.danger)
 end
 -- FName(s) as (cmp, num). UE splits a trailing "_<digits>" off into the Number (not when
 -- the digits start with 0, unless just "0"); GetComparisonIndex names the rest.
@@ -7541,6 +7669,8 @@ M.level_dest = function(id)
         local lc, ln = shim.PeekFName(row + 0x08)
         local kind, area = shim.Peek(row + 0x10, "u8"), shim.Peek(row + 0x11, "u8")
         local town, sub = shim.Peek(row + 0x14, "i32"), shim.Peek(row + 0x18, "i32")
+        -- (RecommendMinLevel @0x20 / RecommendMaxLevel @0x24 are 0 in every field's row:
+        -- the levels come from the encounters, M.level_danger)
         local tn = town and M.town_names()[town]
         local tname = tn and M.gametext(tn[1], tn[2])
         res = { name = tname, level = M.fname_str(lc, ln) }
@@ -7567,16 +7697,19 @@ M.exit_dest = function(actor)
         local d = M.level_dest(id)
         name = d and d.name
     end
+    -- the destination's level (its encounters: fields and dungeons; towns have none)
+    local lv = M.danger_text(id)
     local addr = 0
     pcall(function() addr = actor:GetAddress() end)
     if not M.exit_logged[addr] then
         M.exit_logged[addr] = true
         local on = "?"
         pcall(function() on = actor:GetFName():ToString() end)
-        log(string.format("EXIT %s my=%s next=%s map=%s strMap='%s'(%s) strArea='%s'(%s) -> %s", on, tostring(my),
-            tostring(nx), tostring(id), tostring(smap), tostring(nmap), tostring(sarea), tostring(narea), tostring(name)))
+        log(string.format("EXIT %s my=%s next=%s map=%s strMap='%s'(%s) strArea='%s'(%s) -> %s (%s)", on, tostring(my),
+            tostring(nx), tostring(id), tostring(smap), tostring(nmap), tostring(sarea), tostring(narea), tostring(name),
+            tostring(lv)))
     end
-    return name
+    return name, lv
 end
 
 radar_pump = function(src)
