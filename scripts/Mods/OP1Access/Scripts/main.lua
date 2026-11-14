@@ -4997,6 +4997,10 @@ local function nav_route_finish(goalnode)
     if not R then return end
     if not goalnode then
         log(string.format("ROUTE fail traces=%d pops=%d %.1fs", R.traces, R.pops, os.clock() - R.started))
+        -- after a search on the shifted grid (NV.route_shift) the fallbacks below start
+        -- from where you stand, and "boxed in" needs both searches to have died at once
+        local boxed = (R.pops or 0) <= 3 and (R.pops0 or 0) <= 3
+        if R.shifted then R.px, R.py, R.pz = R.shifted.x, R.shifted.y, R.shifted.z end
         if R.mode == "walk" then
             -- NO blind straight-line fallback (it marched endlessly into walls):
             -- walk direct only if a body-width corridor is genuinely clear
@@ -5041,7 +5045,7 @@ local function nav_route_finish(goalnode)
                     speak("The door is shut. Open it with E, then backspace again")
                     return
                 end
-                if (NV.retries or 0) > 0 or (R.pops or 0) <= 3 then
+                if (NV.retries or 0) > 0 or boxed then
                     -- a RE-route after getting stuck: the target was reachable a moment
                     -- ago, this spot is just wedged -- not a "not reachable" target.
                     -- Or the search died at the start (<= 3 cells): we stand boxed in
@@ -5049,6 +5053,7 @@ local function nav_route_finish(goalnode)
                     -- says nothing about the target either.
                     -- Free ourselves first: up to 3 steps into open directions, each
                     -- with a new route (that was the player's job, user 2026-11-14)
+                    if boxed and NV.start_diag then pcall(NV.start_diag, R) end
                     if (NV.escapes or 0) < 3 and NV.escape_step and NV.escape_step(R.px, R.py, R.pz, R.ox, R.oy) then
                         NV.escapes = (NV.escapes or 0) + 1
                         return
@@ -5097,6 +5102,8 @@ local function nav_route_finish(goalnode)
         log(string.format("ROUTE cells from (%.0f,%.0f): %s", R.px, R.py, table.concat(parts, " ")))
     end
     local raw = { { x = R.px, y = R.py } }
+    -- on the shifted grid the walk starts where you stand, then goes to its start cell
+    if R.shifted then raw = { { x = R.shifted.x, y = R.shifted.y }, { x = R.px, y = R.py, z = R.pz } } end
     for i = #chain, 1, -1 do   -- (z = the cell's floor, for NV.nudge_wp)
         raw[#raw + 1] = { x = R.px + chain[i].x * NV.STEP, y = R.py + chain[i].y * NV.STEP, z = chain[i].z }
     end
@@ -5339,9 +5346,88 @@ NV.route_widen = function(R)
     W.gcache, W.ecache = R.gcache, R.ecache
     W.traces, W.pops, W.started, W.saidlong = R.traces, R.pops, R.started, R.saidlong
     W.cpu, W.ticks = R.cpu, R.ticks
+    W.shifted, W.pops0, W.shift_i = R.shifted, R.pops0, R.shift_i
     W.maxtr, W.maxt = R.traces + (pad == 40 and 20000 or 6000), R.maxt + 8
     log(string.format("ROUTE widen: box +%d cells after %d traces", pad, R.traces))
     return W
+end
+-- A last try on a grid shifted by half a cell (2026-11-14). The grid is anchored where
+-- you stand, and every step needs a body-wide corridor (centre +-42 at knee height), so
+-- a passage about 150-210 wide is open on some alignments only: from the study's chest 3
+-- the search found a pocket of 6 cells, and one small step aside the whole way
+-- (97 cells). Shifted by half a cell, one of the two grids fits every passage 150 or
+-- wider. The new start must be reachable: a floor within 100 of yours, a clear line to
+-- it. Diagonal shifts first (they move both axes). A shifted search that dies at its own
+-- start (<= 3 cells; at the study's chest 3 the first one had no open step) tries the
+-- next shift -- cheap; one that explored an area ends the route's tries.
+NV.SHIFTS = { { 1, 1 }, { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
+NV.route_shift = function(R)
+    if R.shifted and (R.pops or 0) > 3 then return nil end
+    local base = R.shifted or { x = R.px, y = R.py, z = R.pz }
+    local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+    local p = get_player_obj()
+    if not (ksl and p) then return nil end
+    local h = NV.STEP / 2
+    for i = (R.shift_i or 0) + 1, #NV.SHIFTS do
+        local d = NV.SHIFTS[i]
+        local ax, ay = base.x + d[1] * h, base.y + d[2] * h
+        local okf, hitf, ohf = line_blocked(ksl, p, ax, ay, base.z + 160, ax, ay, base.z - 240)
+        if okf and hitf then
+            local dist
+            pcall(function() if type(ohf.Distance) == "number" then dist = ohf.Distance end end)
+            local az = dist and (base.z + 160 - dist) or base.z
+            local okl, hitl = line_blocked(ksl, p, base.x, base.y, base.z + 55, ax, ay, az + 55)
+            if math.abs(az - base.z) <= 100 and okl and not hitl then
+                local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, ax, ay, az, R.pad)
+                W.shifted, W.shift_i = base, i
+                W.pops0 = R.shifted and R.pops0 or R.pops
+                W.traces, W.started, W.saidlong = R.traces, R.started, R.saidlong
+                W.cpu, W.ticks = R.cpu, R.ticks
+                W.maxtr = R.traces + (R.pad >= 40 and 20000 or 7000)
+                W.maxt = R.maxt + (R.shifted and 2 or 8)
+                log(string.format("ROUTE shifted grid #%d (%d,%d) after %d traces, %d cells", i, d[1] * h, d[2] * h,
+                    R.traces, R.pops))
+                return W
+            end
+        end
+    end
+    log("ROUTE no (further) shifted grid start")
+    return nil
+end
+-- Why a route died at its start (2026-11-14: next to a chest, "pops=3"): for each of the
+-- 8 first steps the floor (dz to the neighbour, "nofloor") and the knee-high lines
+-- (c = center, + / - = the +-42 side lines, p = pawn profile; "x" = hit). One log line.
+NV.start_diag = function(R)
+    local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+    local p = get_player_obj()
+    if not (ksl and p) then return end
+    local parts = {}
+    for _, d in ipairs(NV.DIRS8) do
+        local diag = d[1] ~= 0 and d[2] ~= 0
+        local bx, by = R.px + d[1] * NV.STEP, R.py + d[2] * NV.STEP
+        local ok, hit, oh = line_blocked(ksl, p, bx, by, R.pz + 160, bx, by, R.pz - 240)
+        local s
+        if not (ok and hit) then
+            s = "nofloor"
+        else
+            local dist
+            pcall(function() if type(oh.Distance) == "number" then dist = oh.Distance end end)
+            local zb = dist and (R.pz + 160 - dist) or R.pz
+            local dl = diag and 1.41421 or 1
+            local pox, poy = d[2] * 42 / dl, -d[1] * 42 / dl
+            local marks = {}
+            for _, off in ipairs({ 0, 1, -1 }) do
+                local ok2, hit2 = line_blocked(ksl, p, R.px + pox * off, R.py + poy * off, R.pz + 55,
+                    bx + pox * off, by + poy * off, zb + 55)
+                marks[#marks + 1] = ((off == 0) and "c" or (off == 1 and "+" or "-")) .. ((ok2 and not hit2) and "" or "x")
+            end
+            local okp, hitp = line_blocked(ksl, p, R.px, R.py, R.pz + 55, bx, by, zb + 55, NV_TRACE)
+            marks[#marks + 1] = "p" .. ((okp and not hitp) and "" or "x")
+            s = string.format("dz%d %s", math.floor(zb - R.pz + 0.5), table.concat(marks))
+        end
+        parts[#parts + 1] = string.format("(%d,%d) %s", d[1], d[2], s)
+    end
+    log(string.format("ROUTE start diag at (%.0f,%.0f,%.0f): %s", R.px, R.py, R.pz, table.concat(parts, " | ")))
 end
 -- A body-wide straight corridor (3 knee-high lines, center and +-42) is clear.
 NV.corridor_clear = function(ksl, p, px, py, pz, ox, oy)
@@ -5518,7 +5604,10 @@ local function nav_route_step()
     R.cpu, R.ticks = (R.cpu or 0) + (os.clock() - t0), (R.ticks or 0) + 1
     if res == "found" then nav_route_finish(node); return end
     if res == "fail" then
-        local W = (node == "box") and NV.route_widen(R)
+        -- out of cells in the box, or out of traces ("cap": 7000 ran out after 788 cells
+        -- on the way back to the study's chest 3): a bigger box with more traces, then
+        -- the shifted grid
+        local W = (node == "box" or node == "cap") and (NV.route_widen(R) or NV.route_shift(R))
         if W then NV.route = W; return end
         nav_route_finish(nil); return
     end
@@ -5683,13 +5772,14 @@ NV.bg_step = function()      -- nav_tick, only while no walk or route runs
     end
     -- quiet background work: traces for at most 4 ms per tick
     local res, why = NV.route_slice(job.R, 800, 3000, os.clock() + 0.004)
-    if res == "fail" and why == "box" then
-        local W = NV.route_widen(job.R)
+    if res == "fail" and (why == "box" or why == "cap") then
+        -- the same tries as a walk: wider boxes, then the half-shifted grid
+        local W = NV.route_widen(job.R) or NV.route_shift(job.R)
         if W then job.R = W; return end
     end
     if res then
         NV.bg = nil
-        if res == "fail" and (job.R.pops or 0) <= 3 then
+        if res == "fail" and (job.R.pops or 0) <= 3 and (job.R.pops0 or 0) <= 3 then
             -- the search died where we stand (a corner): nothing about the target. Not
             -- "not reachable" -- queue it again and wait until we stand elsewhere
             log(string.format("REACH %s %s: boxed in here (pops=%d), later", tostring(job.cat), tostring(job.name),
@@ -5700,6 +5790,7 @@ NV.bg_step = function()      -- nav_tick, only while no walk or route runs
         end
         local door = (res == "found") and NV.route_first_door(job.R, why) or nil
         NV.bg_record(job, res == "found", (job.R.pad > 9 and "wide route" or "route")
+            .. (job.R.shifted and ", shifted grid" or "")
             .. (door and (", door " .. tostring(door.name)) or ""), door ~= nil)
     end
 end
