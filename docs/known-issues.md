@@ -16,9 +16,13 @@ against one Eissentinel in the study dungeon. Not yet seen or checked:
   6-9 were only tried with one traveler.
 - **"N targets" for an all-enemies skill** was not heard: Feuerball against one enemy
   showed a single target.
-- **Not read at all:** buffs and debuffs and other status icons (`BuffIcon_C`, the
-  enemy's `DiseaseIconList`), damage numbers, item drops on the result screen (the
-  reader exists, no drop yet), what a boosted command does, and the boost help.
+- **Status effects are read but untested** (3ad2bc9). Keys 1-9 add buffs, debuffs
+  and ailments with turns left, from the `BuffIcon_C` textures. No real effect could be
+  caused with a level-1 Cyrus (Verteidigen sets none), so only "no phantom effects" is
+  checked. Unused icon copies first gave a false "elemental attack up, 8 turns"; now
+  only icons with `IconIN` count.
+- **Not read at all:** damage numbers, item drops on the result screen (the reader
+  exists, no drop yet), what a boosted command does, and the boost help.
 - **The same action twice in a row is said once** (the banner text did not change);
   the actor of an action is not named.
 - **Lowering the boost** (the game's key for it is unknown) and whether keys 0-9 do
