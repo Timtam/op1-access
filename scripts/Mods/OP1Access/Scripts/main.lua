@@ -4376,9 +4376,12 @@ local function nav_route_finish(goalnode)
                     speak("The door is shut. Open it with E, then backspace again")
                     return
                 end
-                if (NV.retries or 0) > 0 then
+                if (NV.retries or 0) > 0 or (R.pops or 0) <= 3 then
                     -- a RE-route after getting stuck: the target was reachable a moment
                     -- ago, this spot is just wedged -- not a "not reachable" target.
+                    -- Or the search died at the start (<= 3 cells): we stand boxed in
+                    -- (a corner -- every body-wide step from here grazes a wall), which
+                    -- says nothing about the target either.
                     -- Free ourselves first: up to 3 steps into open directions, each
                     -- with a new route (that was the player's job, user 2026-11-14)
                     if (NV.escapes or 0) < 3 and NV.escape_step and NV.escape_step(R.px, R.py, R.pz, R.ox, R.oy) then
@@ -4957,7 +4960,7 @@ NV.bg_new = function(t, p, px, py, pz)
     local key = NV.tkey(t)
     if not key or NV.bg_valid(key, px, py) ~= nil or NV.is_noroute(key, px, py) then return nil end
     local job = { key = key, cat = t.cat, name = t.name, tx = tx, ty = ty, tz = tz,
-                  px = px, py = py, pz = pz, area = M.area_said }
+                  px = px, py = py, pz = pz, area = M.area_said, t = t }
     if t.cat ~= "building" then
         -- behind a door: the walk leads there via the door. Standing just outside the
         -- target's door, its shut door failed the search: Russell "not reachable" at the
@@ -4999,6 +5002,11 @@ NV.bg_step = function()      -- nav_tick, only while no walk or route runs
         if #NV.bgq == 0 then return end
         local p = get_player_obj(); if not p then return end
         local px, py, pz = read_actor_pos(p); if not px then return end
+        local bx = NV.bg_boxed   -- boxed in here: no checks until we stand elsewhere
+        if bx then
+            if math.sqrt((px - bx.x) ^ 2 + (py - bx.y) ^ 2) < 40 then return end
+            NV.bg_boxed = nil
+        end
         for _ = 1, 3 do      -- a few set-ups per tick (each costs a house test + 3 traces)
             local t = table.remove(NV.bgq, 1)
             if not t then return end
@@ -5016,6 +5024,15 @@ NV.bg_step = function()      -- nav_tick, only while no walk or route runs
     end
     if res then
         NV.bg = nil
+        if res == "fail" and (job.R.pops or 0) <= 3 then
+            -- the search died where we stand (a corner): nothing about the target. Not
+            -- "not reachable" -- queue it again and wait until we stand elsewhere
+            log(string.format("REACH %s %s: boxed in here (pops=%d), later", tostring(job.cat), tostring(job.name),
+                job.R.pops or 0))
+            if job.t then NV.bgq[#NV.bgq + 1] = job.t end
+            NV.bg_boxed = { x = job.px, y = job.py }
+            return
+        end
         local door = (res == "found") and NV.route_first_door(job.R, why) or nil
         NV.bg_record(job, res == "found", (job.R.pad > 9 and "wide route" or "route")
             .. (door and (", door " .. tostring(door.name)) or ""), door ~= nil)
