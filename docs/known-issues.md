@@ -110,20 +110,19 @@ and the result reading are verified for that one action.
 
 ## Threads
 
-- **The title and menu polls still call game functions off the game thread.** Since
-  2026-11-14, work queued for the game thread never runs anywhere else (11c8ce1); UE4SS
-  3.0.1 ran it inside whichever thread called a UFunction next, and that crashed the game
-  once in the learn-skill dialog. The key binds run on the game thread too (8cda17b).
-  Still off it:
-  - **The fast async loop's screen polls.** Each FindFirstOf of a screen that isn't
-    open walks every object, 45-80 ms. Moved to the game thread, they froze the start.
-  - **A few ExecuteWithDelay callbacks** (title screen, talk-hook install).
+- **A few ExecuteWithDelay callbacks still call game functions off the game thread**
+  (title screen: the char-select anchors and announce, the talk-hook install). Since
+  2026-11-14, everything else runs on the game thread:
+  - work queued for it (11c8ce1); UE4SS 3.0.1 ran that inside whichever thread called a
+    UFunction next, and it crashed the game once in the learn-skill dialog;
+  - the key binds (8cda17b);
+  - the screen polls (8ed1351), now that they no longer walk every object each tick.
 
-  Moving the polls needs cheaper lookups first (cached screen widgets, GetActiveStack).
-  Their UFunction calls still take some queued work, which then waits for the next
-  game-thread run: about 50 times a minute in the field, logged every 100th ("GT: queued
-  work on a foreign thread (#n), deferred"). The crash was a race, so one clean
-  screenshot in the same dialog proves little.
+  On the game thread a slow run stalls the game, so a run over 20 ms is logged ("FAST
+  polls slow: 55 ms [active=55]"). From boot to a loaded save there were 3: the
+  UI-manager search at boot, and one search when the load dialog opened. Work another
+  thread still takes is logged as "GT: queued work on a foreign thread"; none happened
+  after the polls moved.
 - **Q says "No objective" until the menu was opened once.** The objective comes from
   the menu's party panel (`PartyCharacterList_C.NowPlayingStoryPanel`), which is filled
   when the menu opens. After a load, Q in the field had nothing to read; after opening
