@@ -159,6 +159,13 @@ and the result reading are verified for that one action.
 
 ## Navigation
 
+- **Chests: opened or not is said, the purple ones are not told apart.** Since
+  2026-11-14 (252661f) the list says "opened" and the category counts them, from the
+  chest's own IsOpenFlag; checked in the study, with Slot 1 (all open), the older
+  autosave (none) and one chest opened in between. Opened chests still sort by
+  distance and still ring in the radar. Purple (thief) chests, which need a certain
+  traveler, aren't named: the chest's ObjectType was 1 or 2 in the study, meaning
+  unknown (logged as "CHESTS opened/type").
 - **"Not reachable" can still be wrong for very long detours.** The router searches
   the start/goal rectangle plus 9 cells. When that runs out of cells (or, since
   bc28ced, of traces) it searches once more with 20 cells (~2600 units) and 6000 more
