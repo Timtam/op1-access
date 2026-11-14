@@ -22,6 +22,8 @@ cursor to Atlasdamm and Enter offered the fast travel; the route to Kammbruch (9
   counts as open, and an exit whose destination the level file doesn't store wasn't
   found. Only one route was checked, and not walked.
 - **The route goal is forgotten** when the game restarts (pick it again on the map).
+- **After a fast travel the map counted as still open** (Page Up/Down read its places in
+  the town). Fixed in 6024f99 by "exploring = map closed", not yet tried in the game.
 - **Distances are map units** (Kammbruch "west, 947" from the flats by Atlasdam).
 - **Which number is "the" level.** Exits, the banner and the map say DangerLevel of the
   encounter entry for the story progress (1/4/7/11 in the flats by Atlasdam over
@@ -136,6 +138,11 @@ against one Eissentinel in the study dungeon. Not yet seen or checked:
 
 Tested 2026-11-11 with Cyrus' Scrutinize ("Studieren") only. The hint, the radar gate
 and the result reading are verified for that one action.
+
+- **The question before Scrutinize read design texts** ("Alter: １２. １２３４５６７８９０...",
+  user report 2026-11-14): the result panel under it isn't filled yet. Fixed in 6cf2fb0
+  (panel only for the one-button result dialog, the question names the target, digit
+  placeholders dropped), not yet heard in the game.
 
 - **Other path actions' result screens are not read.** Only Scrutinize's panel
   (`FieldCommandSearch_C` → `SearchDetailPartsWidget_C`) is read when its dialog opens.
