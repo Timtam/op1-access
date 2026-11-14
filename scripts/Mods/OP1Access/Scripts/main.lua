@@ -1389,9 +1389,16 @@ M.battle_dump = function()
     each("BattleSelectPlayerStatus_C", function(w, i)
         local dead
         pcall(function() dead = w.IsDead end)
-        log(string.format("BDUMP player#%d vis=%s name=%s hp=%s/%s sp=%s/%s dead=%s", i, tostring(M.wvis(w)),
+        local g = {}
+        for k = 0, 5 do
+            pcall(function()
+                local gp = w["Gauge0" .. k]
+                g[#g + 1] = string.format("%d:e%s m%s v%s", k, tostring(gp.BoostEnable), tostring(gp.BoostMax), tostring(M.wvis(gp)))
+            end)
+        end
+        log(string.format("BDUMP player#%d vis=%s name=%s hp=%s/%s sp=%s/%s dead=%s | %s", i, tostring(M.wvis(w)),
             tostring(M.wtext(w.CharaName)), tostring(M.wtext(w.TextHPValue)), tostring(M.wtext(w.TextHPMaxValue)),
-            tostring(M.wtext(w.TextMPValue)), tostring(M.wtext(w.TextMPMaxValue)), tostring(dead)))
+            tostring(M.wtext(w.TextMPValue)), tostring(M.wtext(w.TextMPMaxValue)), tostring(dead), table.concat(g, " ")))
     end)
     each("BattleActionInfo_C", function(w, i)
         log(string.format("BDUMP action#%d vis=%s name=%s", i, tostring(M.wvis(w)), tostring(M.wtext(w.CommandName))))
@@ -1448,8 +1455,17 @@ M.addr_of = function(o)
     pcall(function() a = o:GetAddress() end)
     return a
 end
+-- the unused copies' filler: "0123456", "0124", "0123" and Japanese "ああ...". Only
+-- digit runs that START "012" -- a real "8" (an SP cost) is no placeholder.
 M.placeholder = function(s)
-    return not s or s:match("^%d+$") ~= nil or s:find("\227\129\130", 1, true) ~= nil   -- digits / "あ"
+    return not s or s:match("^012%d*$") ~= nil or s:find("\227\129\130", 1, true) ~= nil
+end
+-- a command's extra text: a skill's SP cost ("8") or an item's count ("x 4")
+M.bt_addinfo = function(a)
+    if a:match("^%d+$") then return a .. " SP" end
+    local n = a:match("^x%s*(%d+)$")
+    if n then return n .. " left" end
+    return a
 end
 -- FindAllOf for the battle widgets, kept 3 s (the copies live as long as the battle UI)
 M.bt_list = function(cls)
@@ -1523,12 +1539,23 @@ M.bt_enemy_text = function(en)
     if unknown > 0 then parts[#parts + 1] = unknown .. " unknown" end
     return table.concat(parts, ", ")
 end
+-- boost points: the filled ones of the 5 gauge points (BattleBoostGaugePoint_C)
+M.bt_bp = function(w)
+    local n = 0
+    for k = 0, 4 do
+        local e = false
+        pcall(function() e = w["Gauge0" .. k].BoostEnable end)
+        if e then n = n + 1 end
+    end
+    return n
+end
 M.bt_party_text = function(pm)
     local w = pm.w
     local dead
     pcall(function() dead = w.IsDead end)
-    local s = string.format("%s, HP %s of %s, SP %s of %s", pm.name, tostring(M.wtext(w.TextHPValue)),
-        tostring(M.wtext(w.TextHPMaxValue)), tostring(M.wtext(w.TextMPValue)), tostring(M.wtext(w.TextMPMaxValue)))
+    local s = string.format("%s, HP %s of %s, SP %s of %s, BP %d", pm.name, tostring(M.wtext(w.TextHPValue)),
+        tostring(M.wtext(w.TextHPMaxValue)), tostring(M.wtext(w.TextMPValue)), tostring(M.wtext(w.TextMPMaxValue)),
+        M.bt_bp(w))
     if dead then s = s .. ", down" end
     return s
 end
@@ -1577,7 +1604,14 @@ M.bt_menu = function()   -- the focused command of the topmost open menu
     pcall(function() usable = it.CommandUseable end)
     local who
     pcall(function() who = M.addr_of(best.Player) end)
-    return { floor = bf, cur = ci, text = text, add = M.wtext(it.TextAddInfo), usable = usable, who = who }
+    local boost = 0   -- the boost level chosen with O (BoostLevel; the highest of the open menus)
+    for _, mm in ipairs(M.bt_list("BattleCommandMenu_C")) do
+        local open, b = false, 0
+        pcall(function() open, b = mm.MenuOpen, mm.BoostLevel end)
+        if open and type(b) == "number" and b > boost then boost = b end
+    end
+    return { floor = bf, cur = ci, text = text, add = M.wtext(it.TextAddInfo), usable = usable, who = who,
+        boost = boost }
 end
 M.bt_help = function()
     for _, h in ipairs(M.bt_list("BattleCommandHelpWindow_C")) do
@@ -1635,7 +1669,7 @@ M.poll_battle = function()
                 bt.said = sig   -- it only flickered (opening the menu): nothing new
             else
                 local s = m.text
-                if m.add and not M.placeholder(m.add) then s = s .. ", " .. m.add .. " SP"; bt.add_said = sig end
+                if m.add and not M.placeholder(m.add) then s = s .. ", " .. M.bt_addinfo(m.add); bt.add_said = sig end
                 if not m.usable then s = s .. ", unavailable" end
                 -- a new turn (the top menu just opened): whose
                 if m.floor == 1 and fresh then
@@ -1649,12 +1683,20 @@ M.poll_battle = function()
             end
         end
         bt.last_sig, bt.last_t, bt.gone_t = sig, now, nil
-        if bt.help_at and now >= bt.help_at then
+        -- the boost level (O raises it): say each change while the menu is up
+        if bt.boost ~= nil and m.boost ~= bt.boost then
+            speak(m.boost > 0 and ("Boost " .. m.boost) or "No boost")
+        end
+        bt.boost = m.boost
+        -- the cost/count (TextAddInfo) may fill in a moment after the name: in a list
+        -- (floor 2+) wait for it, at most 1.1 s, then say it before the help line
+        local hasadd = m.add and not M.placeholder(m.add)
+        if bt.help_at and now >= bt.help_at and (hasadd or bt.add_said == sig or m.floor < 2
+            or now >= bt.help_at + 0.8) then
             bt.help_at = nil
-            -- the cost (TextAddInfo) can fill in a frame after the name: say it now
-            if bt.add_said ~= sig and m.add and not M.placeholder(m.add) then
+            if bt.add_said ~= sig and hasadd then
                 bt.add_said = sig
-                speak(m.add .. " SP", false)
+                speak(M.bt_addinfo(m.add), false)
             end
             local h = M.bt_help()
             if h and h ~= bt.help_said then
@@ -1665,7 +1707,7 @@ M.poll_battle = function()
     elseif bt.said and bt.said:match("^M") then
         -- the menu closed: an action runs. Gone for 0.6 s, so a flicker isn't a new turn
         bt.gone_t = bt.gone_t or now
-        if now - bt.gone_t > 0.6 then bt.said, bt.gone_t = nil, nil end
+        if now - bt.gone_t > 0.6 then bt.said, bt.gone_t, bt.boost = nil, nil, nil end
     end
 end
 -- The result screen ("Sieg!"): the panel's own totals (GetTotalMoney / Exp / JobPoint
