@@ -2335,6 +2335,10 @@ local function bump_fire(now, why)
     bump_lastfire = now
     log("BUMP fire (" .. why .. ")")
     pcall(function() shim.AudioPlayCue(BUMP_CUE) end)
+    if M.chan_probe and now - (M.chprobe_t or 0) > 2.0 then   -- which trace sees this wall?
+        M.chprobe_t = now
+        pcall(M.chan_probe, "bump")
+    end
 end
 local function bump_step()
     local p = get_player_obj()
@@ -2871,14 +2875,64 @@ local TRACE_COL = { R = 0, G = 0, B = 0, A = 1 }
 -- pathfinder for ground/clearance). The wall radar passes 1+ because OT's invisible
 -- collision walls (non-enterable archways, map fences) IGNORE channel 0 but BLOCK
 -- channels 1-5 -- channel 0 literally cannot see them (confirmed via CHPROBE).
+-- ch = "pawn": a trace by the player capsule's collision profile ("Pawn") instead of a
+-- channel. It blocks what the character collides with: the invisible walls channel 0
+-- misses (the study's ledge the walker kept running into: ch0 miss, ch1 and Pawn hit at
+-- 28, 2026-11-14) but not channel 1's camera-only decoration.
 local function line_blocked(ksl, p, sx, sy, sz, ex, ey, ez, ch)
     local outHit = {}
-    local ok, hit = pcall(function()
-        return ksl:LineTraceSingle(p, { X = sx, Y = sy, Z = sz }, { X = ex, Y = ey, Z = ez },
-            ch or 0, false, {}, 0, outHit, true, TRACE_COL, TRACE_COL, 0.0)
-    end)
+    local ok, hit
+    if ch == "pawn" then
+        if not M.pawn_fname then M.pawn_fname = FName(M.pawn_profile or "Pawn") end
+        ok, hit = pcall(function()
+            return ksl:LineTraceSingleByProfile(p, { X = sx, Y = sy, Z = sz }, { X = ex, Y = ey, Z = ez },
+                M.pawn_fname, false, {}, 0, outHit, true, TRACE_COL, TRACE_COL, 0.0)
+        end)
+    else
+        ok, hit = pcall(function()
+            return ksl:LineTraceSingle(p, { X = sx, Y = sy, Z = sz }, { X = ex, Y = ey, Z = ez },
+                ch or 0, false, {}, 0, outHit, true, TRACE_COL, TRACE_COL, 0.0)
+        end)
+    end
     return ok, hit, outHit
 end
+NV_TRACE = "pawn"   -- the router's clearance trace (a global: the main chunk is at 200 locals)
+-- Which trace sees what the player bumps into? ch0 (the router's), ch1 (the wall
+-- radar's: also invisible walls, but decoration too -- the router on ch1 found no
+-- routes, 2026-06-27) and a trace by the player capsule's OWN collision profile, which
+-- should block exactly what the character collides with. Logged on every wall bump
+-- (bump_fire, at most every 2 s) and on Ctrl+F6, to pick the router's trace.
+M.chan_probe = function(tag)
+    local p = get_player_obj(); if not p then return end
+    local px, py, pz = read_actor_pos(p); if not px then return end
+    local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary"); if not ksl then return end
+    if not M.pawn_profile then
+        local prof
+        pcall(function() prof = p.CapsuleComponent:GetCollisionProfileName():ToString() end)
+        M.pawn_profile = (prof and prof ~= "" and prof ~= "None") and prof or "Pawn"
+    end
+    local prof = M.pawn_profile
+    local function dist_of(fn)
+        local oh = {}
+        local ok, hit = pcall(fn, oh)
+        if not ok then return "err" end
+        if not hit then return "-" end
+        local dd
+        pcall(function() dd = oh.Distance end)
+        return type(dd) == "number" and string.format("%.0f", dd) or "hit"
+    end
+    local parts = {}
+    for _, d in ipairs(WALL_DIRS) do
+        local s = { X = px + d.dx * 12, Y = py + d.dy * 12, Z = pz + 30 }
+        local e = { X = px + d.dx * 200, Y = py + d.dy * 200, Z = pz + 30 }
+        local c0 = dist_of(function(oh) return ksl:LineTraceSingle(p, s, e, 0, false, {}, 0, oh, true, TRACE_COL, TRACE_COL, 0.0) end)
+        local c1 = dist_of(function(oh) return ksl:LineTraceSingle(p, s, e, 1, false, {}, 0, oh, true, TRACE_COL, TRACE_COL, 0.0) end)
+        local cp = dist_of(function(oh) return ksl:LineTraceSingleByProfile(p, s, e, FName(prof), false, {}, 0, oh, true, TRACE_COL, TRACE_COL, 0.0) end)
+        parts[#parts + 1] = string.format("%s ch0=%s ch1=%s prof=%s", d.name, c0, c1, cp)
+    end
+    log(string.format("CHPROBE %s at (%.0f,%.0f) profile=%s: %s", tag, px, py, prof, table.concat(parts, " | ")))
+end
+pcall(RegisterKeyBind, Key.F6, { ModifierKey.CONTROL }, function() M.in_gt(function() pcall(M.chan_probe, "key") end) end)
 local function wall_probe()
     if world_susp then speak(M.battle_now and "In battle" or "Scene running"); return end
     local p = get_player_obj()
@@ -3391,6 +3445,15 @@ local function nav_describe_path(pts)
 end
 
 local function nav_walk_begin_path(pts, label)
+    -- how close to come to each waypoint before turning to the next: 40 on a straight
+    -- run, 22 at a real turn -- turning 40 early cut the inside corner into the wall
+    for i = 2, #pts - 1 do
+        local ax, ay = pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y
+        local bx, by = pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y
+        local la, lb = math.sqrt(ax * ax + ay * ay), math.sqrt(bx * bx + by * by)
+        local turn = (la > 1 and lb > 1) and ((ax * bx + ay * by) / (la * lb) < 0.85)
+        pts[i].reach = turn and 22 or 40
+    end
     NV.path = pts
     NV.wp = 2
     nav_walking = true
@@ -3463,7 +3526,7 @@ local function nav_route_finish(goalnode)
                 for _, off in ipairs({ 0, 1, -1 }) do
                     local ok, hit = line_blocked(ksl, p,
                         R.px + pox * off, R.py + poy * off, R.pz + 30,
-                        R.ox + pox * off, R.oy + poy * off, R.pz + 30)
+                        R.ox + pox * off, R.oy + poy * off, R.pz + 30, NV_TRACE)
                     if not (ok and not hit) then clear = false; break end
                 end
             end
@@ -3532,9 +3595,21 @@ local function nav_route_finish(goalnode)
         chain[#chain + 1] = n
         n = R.came[n.k]
     end
+    if R.mode == "walk" then   -- debug: the cells and their edge kinds (s soft, D door, x diagonal)
+        local parts = {}
+        for i = #chain, 1, -1 do
+            local nd = chain[i]
+            local par = R.came[nd.k]
+            local w = par and (R.ecache[par.k .. ">" .. nd.k] or R.ecache[nd.k .. ">" .. par.k])
+            local t = (w == "soft") and "s" or (type(w) == "number" and "D" or "")
+            if par and par.x ~= nd.x and par.y ~= nd.y then t = t .. "x" end
+            parts[#parts + 1] = nd.x .. "," .. nd.y .. t
+        end
+        log(string.format("ROUTE cells from (%.0f,%.0f): %s", R.px, R.py, table.concat(parts, " ")))
+    end
     local raw = { { x = R.px, y = R.py } }
-    for i = #chain, 1, -1 do
-        raw[#raw + 1] = { x = R.px + chain[i].x * NV.STEP, y = R.py + chain[i].y * NV.STEP }
+    for i = #chain, 1, -1 do   -- (z = the cell's floor, for NV.nudge_wp)
+        raw[#raw + 1] = { x = R.px + chain[i].x * NV.STEP, y = R.py + chain[i].y * NV.STEP, z = chain[i].z }
     end
     raw[#raw + 1] = { x = R.ox, y = R.oy }
     -- a SHUT DOOR on the way: walk to the first one only. There the door leg's usual
@@ -3630,6 +3705,44 @@ NV.through_door = function(px, py, pz, ox, oy)
              door = best }
 end
 
+-- The router's steps: the 4 straight ones first (NV.route_slice needs them before the
+-- diagonals), then the 4 diagonals.
+NV.DIRS8 = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 } }
+-- Move a waypoint off a wall before the walker heads for it. The grid can put a cell
+-- center 10 units from an invisible wall the router's channel can't see (study, x
+-- -3420, 2026-11-14): the body can't get there, so the walker pushed into the wall
+-- until the stuck check re-routed. 8 short knee-high pawn-profile rays; each hit
+-- closer than 50 pushes the point away by the difference (at most 60 in all), and
+-- only if the way from the old spot to the new one is clear.
+NV.nudge_wp = function(wp)
+    wp.nudged = true
+    if not wp.z then return end
+    local p = get_player_obj(); if not p then return end
+    local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary"); if not ksl then return end
+    local CLR, z = 50, wp.z + 60
+    local sx, sy = 0, 0
+    for _, d in ipairs(NV.DIRS8) do
+        local l = (d[1] ~= 0 and d[2] ~= 0) and 1.41421 or 1
+        local ux, uy = d[1] / l, d[2] / l
+        local ok, hit, oh = line_blocked(ksl, p, wp.x, wp.y, z, wp.x + ux * 70, wp.y + uy * 70, z, NV_TRACE)
+        if ok and hit then
+            local dist
+            pcall(function() dist = oh.Distance end)
+            if type(dist) == "number" and dist < CLR then
+                sx, sy = sx - ux * (CLR - dist), sy - uy * (CLR - dist)
+            end
+        end
+    end
+    local m = math.sqrt(sx * sx + sy * sy)
+    if m < 4 then return end
+    if m > 60 then sx, sy = sx * 60 / m, sy * 60 / m end
+    local ok, hit = line_blocked(ksl, p, wp.x, wp.y, z, wp.x + sx, wp.y + sy, z, NV_TRACE)
+    if ok and not hit then
+        log(string.format("NAVWALK wp nudged (%.0f,%.0f) by (%.0f,%.0f)", wp.x, wp.y, sx, sy))
+        wp.x, wp.y = wp.x + sx, wp.y + sy
+    end
+end
+
 -- A routing job (the walk router's NV.route, or a background check's NV.bg.R): the
 -- search box is the start/goal rectangle plus `pad` cells (9); it fails after maxtr
 -- traces or maxt seconds. doors / via: see the door edges in NV.route_slice.
@@ -3646,7 +3759,7 @@ NV.route_job = function(mode, ox, oy, oz, px, py, pz, pad)
         came = {}, gbest = { [startk] = 0 }, closed = {}, via = {},
         doors = (okd and type(doors) == "table") and doors or {},
         ecache = {}, gcache = {}, traces = 0, pops = 0, started = os.clock(),
-        maxtr = 5200, maxt = 8,
+        maxtr = 7000, maxt = 8,   -- (5200 before the diagonals: more traces per cell now)
         minx = math.min(0, gx) - pad, maxx = math.max(0, gx) + pad,
         miny = math.min(0, gy) - pad, maxy = math.max(0, gy) + pad,
     }
@@ -3685,7 +3798,7 @@ NV.corridor_clear = function(ksl, p, px, py, pz, ox, oy)
     for _, off in ipairs({ 0, 1, -1 }) do
         local ok, hit = line_blocked(ksl, p,
             px + pox * off, py + poy * off, pz + 30,
-            ox + pox * off, oy + poy * off, pz + 30)
+            ox + pox * off, oy + poy * off, pz + 30, NV_TRACE)
         if not (ok and not hit) then return false end
     end
     return true
@@ -3725,74 +3838,114 @@ NV.route_slice = function(R, budget, itercap)
                 and math.abs(best.z - R.oz) <= 300 then
                 return "found", best
             end
-            for _, d in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
+            -- 8 neighbours (2026-11-14, user: too many wall bumps and re-routes): the 4
+            -- straight steps first -- they also decide the diagonals and how close this
+            -- cell is to a wall -- then the diagonals. A diagonal needs both straight
+            -- steps beside it open (no corner cutting); the walker moves in the same 8
+            -- directions, so the old staircases (every cell a corner) become straight
+            -- runs. Closed neighbours are checked too (cached, mostly as the reverse
+            -- step), to count the walls.
+            local open4, blocked, cand = {}, 0, {}
+            for _, d in ipairs(NV.DIRS8) do
                 local nx, ny = best.x + d[1], best.y + d[2]
-                if nx >= R.minx and nx <= R.maxx and ny >= R.miny and ny <= R.maxy then
+                local diag = d[1] ~= 0 and d[2] ~= 0
+                local inbox = nx >= R.minx and nx <= R.maxx and ny >= R.miny and ny <= R.maxy
+                if inbox and diag and not (open4[d[1] .. ",0"] and open4["0," .. d[2]]) then inbox = false end
+                if inbox then
                     local zb, used = nav_ground(R, ksl, p, nx, ny, best.z)
                     budget = budget - used
                     if zb and math.abs(zb - best.z) <= 200 then
                         local nk = key3(nx, ny, zlayer(R, zb))
-                        if not R.closed[nk] then
-                            -- wall check at knee height between the two ground points
-                            local ekey = best.k .. ">" .. nk
-                            local w = R.ecache[ekey]
-                            if w == nil then
-                                -- CAPSULE-WIDTH clearance: 3 parallel knee-height
-                                -- lines (center and +-42 units). A single ray can
-                                -- thread banister gaps the character cannot fit
-                                -- through -- that wedged the stair walks.
-                                local pox, poy = d[2] * 42, -d[1] * 42
-                                local ax0, ay0 = R.px + best.x * NV.STEP, R.py + best.y * NV.STEP
-                                local bx0, by0 = R.px + nx * NV.STEP, R.py + ny * NV.STEP
-                                w = true
-                                for _, off in ipairs({ 0, 1, -1 }) do
-                                    R.traces = R.traces + 1
-                                    budget = budget - 1
-                                    local ok2, hit2 = line_blocked(ksl, p,
-                                        ax0 + pox * off, ay0 + poy * off, best.z + 55,
-                                        bx0 + pox * off, by0 + poy * off, zb + 55)
-                                    if not (ok2 and not hit2) then w = false; break end
-                                end
-                                -- blocked: maybe by a SHUT DOOR -- the step crosses a
-                                -- doorway plane within its width. Then it is a door edge
-                                -- (w = the door's index): passable, but dearer, and the
-                                -- walk stops there for E (nav_route_finish).
-                                if not w and R.doors then
-                                    local mx, my = (ax0 + bx0) / 2, (ay0 + by0) / 2
-                                    for di, dd in ipairs(R.doors) do
-                                        local sa = (ax0 - dd.cx) * dd.nx + (ay0 - dd.cy) * dd.ny
-                                        local sb = (bx0 - dd.cx) * dd.nx + (by0 - dd.cy) * dd.ny
-                                        local tm = math.abs((mx - dd.cx) * dd.ny - (my - dd.cy) * dd.nx)
-                                        if sa * sb <= 0 and tm < 100 and math.abs(best.z - dd.cz) < 300 then
-                                            w = di
-                                            break
-                                        end
+                        -- wall check at knee height between the two ground points
+                        local ekey = best.k .. ">" .. nk
+                        local w = R.ecache[ekey]
+                        if w == nil then w = R.ecache[nk .. ">" .. best.k] end   -- traced from there
+                        if w == nil then
+                            -- CAPSULE-WIDTH clearance: 3 parallel knee-height
+                            -- lines (center and +-42 units). A single ray can
+                            -- thread banister gaps the character cannot fit
+                            -- through -- that wedged the stair walks.
+                            local dl = diag and 1.41421 or 1
+                            local pox, poy = d[2] * 42 / dl, -d[1] * 42 / dl
+                            local ax0, ay0 = R.px + best.x * NV.STEP, R.py + best.y * NV.STEP
+                            local bx0, by0 = R.px + nx * NV.STEP, R.py + ny * NV.STEP
+                            w = true
+                            for _, off in ipairs({ 0, 1, -1 }) do
+                                R.traces = R.traces + 1
+                                budget = budget - 1
+                                local ok2, hit2 = line_blocked(ksl, p,
+                                    ax0 + pox * off, ay0 + poy * off, best.z + 55,
+                                    bx0 + pox * off, by0 + poy * off, zb + 55)
+                                if not (ok2 and not hit2) then w = false; break end
+                            end
+                            -- open on channel 0, but the character may still run into an
+                            -- INVISIBLE wall there (the study's ledge: ch0 blind, the pawn
+                            -- profile hit at 28). The pawn-profile trace as a high COST,
+                            -- not a wall: as a wall it also shut a way the character can
+                            -- walk (the chest in the study became "not reachable").
+                            if w and not diag then
+                                R.traces = R.traces + 1
+                                budget = budget - 1
+                                local okp, hitp = line_blocked(ksl, p, ax0, ay0, best.z + 55, bx0, by0, zb + 55, NV_TRACE)
+                                if okp and hitp then w = "soft" end
+                            end
+                            -- blocked: maybe by a SHUT DOOR -- the step crosses a
+                            -- doorway plane within its width. Then it is a door edge
+                            -- (w = the door's index): passable, but dearer, and the
+                            -- walk stops there for E (nav_route_finish). Straight only.
+                            if not w and R.doors and not diag then
+                                local mx, my = (ax0 + bx0) / 2, (ay0 + by0) / 2
+                                for di, dd in ipairs(R.doors) do
+                                    local sa = (ax0 - dd.cx) * dd.nx + (ay0 - dd.cy) * dd.ny
+                                    local sb = (bx0 - dd.cx) * dd.nx + (by0 - dd.cy) * dd.ny
+                                    local tm = math.abs((mx - dd.cx) * dd.ny - (my - dd.cy) * dd.nx)
+                                    if sa * sb <= 0 and tm < 100 and math.abs(best.z - dd.cz) < 300 then
+                                        w = di
+                                        break
                                     end
                                 end
-                                R.ecache[ekey] = w
                             end
-                            -- never through the TARGET's own door: a door is reached in
-                            -- front of it ("through Room4" to Room4 made no sense). Per
-                            -- job, so not in the (shared) cache.
-                            if type(w) == "number" then
-                                local dd = R.doors[w]
-                                if not dd or math.sqrt((dd.x - R.ox) ^ 2 + (dd.y - R.oy) ^ 2) <= 100 then w = false end
-                            end
-                            if w then
-                                local isdoor = type(w) == "number"
-                                -- a door costs a stop and an E press: open ways up to
-                                -- 25 cells longer win (at +6 the router took a door to a
-                                -- target it also reached in the open)
-                                local ng = best.g + (isdoor and 25 or 1)
-                                if ng < (R.gbest[nk] or 1e9) then
-                                    R.gbest[nk] = ng
-                                    R.came[nk] = best
-                                    R.via[nk] = isdoor and w or nil
-                                    R.open[#R.open + 1] = { x = nx, y = ny, z = zb, k = nk, g = ng,
-                                        f = ng + math.abs(R.gx - nx) + math.abs(R.gy - ny) }
-                                end
-                            end
+                            R.ecache[ekey] = w
                         end
+                        -- never through the TARGET's own door: a door is reached in
+                        -- front of it ("through Room4" to Room4 made no sense). Per
+                        -- job, so not in the (shared) cache.
+                        if type(w) == "number" then
+                            local dd = R.doors[w]
+                            if not dd or math.sqrt((dd.x - R.ox) ^ 2 + (dd.y - R.oy) ^ 2) <= 100 then w = false end
+                        end
+                        if w then
+                            if w == true and not diag then open4[d[1] .. "," .. d[2]] = true end
+                            cand[#cand + 1] = { nx, ny, zb, nk, w, diag }
+                        elseif not diag then
+                            blocked = blocked + 1
+                        end
+                    elseif not diag then
+                        blocked = blocked + 1          -- a drop or no floor: also a "wall"
+                    end
+                end
+            end
+            -- leaving a cell next to walls costs more: open ways keep off the walls
+            -- (the routes hugged them, and the walker clipped the corners)
+            local pen = 0.4 * blocked
+            for _, c in ipairs(cand) do
+                local nk = c[4]
+                if not R.closed[nk] then
+                    local isdoor = type(c[5]) == "number"
+                    -- a door costs a stop and an E press: open ways up to 25 cells longer
+                    -- win (at +6 the router took a door to a target it also reached openly);
+                    -- a step the pawn trace calls blocked ("soft") costs 8
+                    local step = isdoor and 25 or (c[5] == "soft" and 8 or (c[6] and 1.41421 or 1))
+                    local ng = best.g + step + pen
+                    if ng < (R.gbest[nk] or 1e9) then
+                        R.gbest[nk] = ng
+                        R.came[nk] = best
+                        R.via[nk] = isdoor and c[5] or nil
+                        -- octile distance, weighted a little: keeps the search focused now
+                        -- that steps near walls cost more than 1
+                        local hx, hy = math.abs(R.gx - c[1]), math.abs(R.gy - c[2])
+                        local h = math.max(hx, hy) + 0.41421 * math.min(hx, hy)
+                        R.open[#R.open + 1] = { x = c[1], y = c[2], z = c[3], k = nk, g = ng, f = ng + 1.2 * h }
                     end
                 end
             end
@@ -4312,10 +4465,28 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
     local wp = NV.path[NV.wp]
     while wp do
         local dx, dy = wp.x - px, wp.y - py
-        local reach = (NV.wp == #NV.path) and 110 or 40   -- small turn radius: no corner cutting
+        local reach = (NV.wp == #NV.path) and 110 or (wp.reach or 40)   -- tight at turns (nav_walk_begin_path)
         if math.sqrt(dx * dx + dy * dy) >= reach then break end
         NV.wp = NV.wp + 1
         wp = NV.path[NV.wp]
+    end
+    if wp and NV.wp < #NV.path then
+        if not wp.nudged and NV.nudge_wp then pcall(NV.nudge_wp, wp) end
+        -- a waypoint the body still can't get near (a wall right beside it): within 75
+        -- and no closer for 0.35 s -> take the next one, instead of pushing the wall
+        -- for 1.2 s until the stuck check re-routes
+        local dd = math.sqrt((wp.x - px) ^ 2 + (wp.y - py) ^ 2)
+        local wb = NV.wpbest
+        if not wb or wb.i ~= NV.wp or wb.path ~= NV.path then
+            NV.wpbest = { i = NV.wp, path = NV.path, d = dd, t = now }
+        elseif dd < wb.d - 3 then
+            wb.d, wb.t = dd, now
+        elseif dd < 75 and now - wb.t > 0.35 then
+            log(string.format("NAVWALK wp %d skipped at %.0f (no closer)", NV.wp, dd))
+            NV.wp = NV.wp + 1
+            wp = NV.path[NV.wp]
+            NV.wpbest = nil
+        end
     end
     local dx, dy
     if not wp then
@@ -4476,7 +4647,7 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
     end
     if jump > 40 then
         NV.prog = { t = now, x = px, y = py }
-    elseif now - NV.prog.t > 2.0 and not NV.unwedge then
+    elseif now - NV.prog.t > 1.2 and not NV.unwedge then   -- (was 2 s of pushing a wall)
         -- stuck: wedged on geometry, a blocker, a battle, or a cutscene.
         -- If we hold keys but the pawn reports no movement input, the game has
         -- taken input away (cutscene/battle): stop quietly, never fight it.
@@ -4503,7 +4674,7 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
             if ksl then
                 for _, c in ipairs(cands) do
                     local ok, hit = line_blocked(ksl, p, px, py, pz + 30,
-                        px + c[1] * 170, py + c[2] * 170, pz + 30)
+                        px + c[1] * 170, py + c[2] * 170, pz + 30, NV_TRACE)
                     if ok and not hit then pick = c; break end
                 end
             end
