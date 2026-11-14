@@ -3972,6 +3972,7 @@ local function bump_step()
         log(string.format("DOOR jump=%.0f dt=%.2f rate=%.0f", moved, dt, rate))
         pcall(function() shim.AudioPlayCue(DOOR_CUE) end)
         if beacon_on then beacon_rescan_at = now + 0.7 end
+        M.jump_t = now   -- the navigator's list is stale now (NV.list_stale)
         bump_snap = nil
         return
     end
@@ -4702,6 +4703,7 @@ end
 
 local function nav_build_list()
     NV.list = {}
+    NV.list_t = os.clock()
     local c = NAV_CLASSES[NV.cat]
     if not c then return end
     local p = get_player_obj()
@@ -5029,9 +5031,44 @@ local function nav_cat_cycle(delta)
     speak("No targets in any category")
 end
 
+-- AFTER A TELEPORT (a door, or an exit between two parts of one level: M.jump_t from the
+-- bump watch) the list still holds the old part's targets -- their actors stay valid in
+-- the same level. In the academy the markers still said "exit toward objective, 14743"
+-- and "save point, 16459", and the walk found no route (user report 2026-11-14). The
+-- minimap's icons follow a few seconds after the jump (2026-11-13: the headmaster's
+-- marker was there 4 s after it), so a list built within 4 s of a jump is stale too.
+NV.list_stale = function()
+    local j = M.jump_t
+    return j ~= nil and (NV.list_t or -1) < j + 4.0
+end
+-- Rebuild a stale list. Returns true if its targets changed (then the first one is
+-- selected), false if they're the same (the selection stays).
+NV.list_refresh = function()
+    local old = {}
+    for _, t in ipairs(NV.list) do old[#old + 1] = tostring(NV.tkey(t)) end
+    local sel = NV.list[NV.idx] and NV.tkey(NV.list[NV.idx])
+    nav_build_list()
+    local new = {}
+    for _, t in ipairs(NV.list) do new[#new + 1] = tostring(NV.tkey(t)) end
+    table.sort(old); table.sort(new)
+    if table.concat(old, "|") == table.concat(new, "|") then
+        NV.idx = 0
+        for i, t in ipairs(NV.list) do if NV.tkey(t) == sel then NV.idx = i end end
+        return false
+    end
+    NV.idx = (#NV.list > 0) and 1 or 0
+    log(string.format("NAV list refreshed after a jump: %d -> %d targets", #old, #NV.list))
+    return true
+end
+
 local function nav_obj_cycle(delta)
     NV.ctrlkey_t = os.clock()
     if world_susp then speak(M.battle_now and "In battle" or "Scene running"); return end
+    if #NV.list > 0 and NV.list_stale() and NV.list_refresh() then
+        if #NV.list == 0 then speak("No targets here, control left or right for categories"); return end
+        nav_announce(string.format("%s, %d targets. ", NAV_CLASSES[NV.cat].name, #NV.list))
+        return
+    end
     if #NV.list == 0 then nav_build_list() end
     if #NV.list == 0 then speak("No targets here, control left or right for categories"); return end
     NV.idx = ((NV.idx - 1 + delta) % #NV.list) + 1
@@ -5956,6 +5993,11 @@ end
 
 local function nav_info()
     NV.ctrlkey_t = os.clock()
+    if #NV.list > 0 and NV.list_stale() and NV.list_refresh() then   -- after a teleport
+        if #NV.list == 0 then speak("Targets changed, none here"); return end
+        nav_announce(string.format("Targets changed. %s, %d targets. ", NAV_CLASSES[NV.cat].name, #NV.list))
+        return
+    end
     local t = nav_target()
     if not t then speak("No target selected. Home and end pick a category, page up and down a target."); return end
     local p = get_player_obj(); if not p then speak("No player"); return end
@@ -6155,6 +6197,12 @@ local function nav_walk_start(quiet)
         return
     end
     if world_susp then speak(M.battle_now and "In battle" or "Scene running, try again after"); return end
+    -- after a teleport: never walk to a target of the part we left (NV.list_stale)
+    if #NV.list > 0 and NV.list_stale() and NV.list_refresh() then
+        if #NV.list == 0 then speak("Targets changed, none here"); return end
+        nav_announce(string.format("Targets changed. %s, %d targets. ", NAV_CLASSES[NV.cat].name, #NV.list))
+        return
+    end
     local t = nav_target()
     if not t then speak("No target selected"); return end
     local p = get_player_obj(); if not p then speak("No player"); return end
@@ -6655,7 +6703,9 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
         end
     end
     pcall(NV.door_auto_step)          -- opening a door on the route (E, wait, walk on)
-    if not NV.route and not nav_walking then
+    -- (not for a list from before a teleport: its far targets cost thousands of traces
+    -- each for nothing; the next navigator key rebuilds it)
+    if not NV.route and not nav_walking and not NV.list_stale() then
         local ok, err = pcall(NV.bg_step)   -- quiet reachability check of the list
         if not ok and tostring(err) ~= NV.bgerr then
             NV.bgerr = tostring(err)
