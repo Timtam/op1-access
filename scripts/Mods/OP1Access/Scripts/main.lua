@@ -1524,6 +1524,7 @@ M.wm_jump_check = function(wm)
 end
 M.wm_cycle = function(delta)
     local WM = M.WM
+    if M.explore_now == true then WM.open = false end   -- back in the field (fast travel)
     if not WM.open then return false end
     local wm = M.wm_find()
     if not wm then return false end
@@ -1553,11 +1554,15 @@ M.poll_worldmap = function()
     pcall(function() state = wm.WorldMapState end)
     local sig = string.format("%s/%s/%s", tostring(vis), tostring(focus), tostring(state))
     if sig ~= WM.sig then WM.sig = sig; log("WORLDMAP state vis/focus/state = " .. sig) end
-    local open = vis and (focus == nil or focus == true)
+    -- After a fast travel the map keeps IsFocus (state 3 after "Ja"), though you are back
+    -- in the field: Page Up/Down still read the map's places (user report 2026-11-14).
+    -- Exploring (the radar pump's M.explore_now) means the map is closed.
+    local open = vis and (focus == nil or focus == true) and M.explore_now ~= true
     if not open then
         if WM.open then
             log("WORLDMAP closed")
-            pcall(M.mainmenu_reannounce)   -- back in the main menu: say where
+            -- back in the main menu: say where (not after a fast travel: in the field)
+            if M.explore_now ~= true then pcall(M.mainmenu_reannounce) end
         end
         WM.open, WM.list, WM.area = false, nil, nil
         return
@@ -6575,7 +6580,7 @@ end
 local function nav_info()
     NV.ctrlkey_t = os.clock()
     -- on the world map: the route to the place Page Up/Down picked (M.wm_route_say)
-    if M.WM and M.WM.open then pcall(M.wm_route_say); return end
+    if M.WM and M.WM.open and M.explore_now ~= true then pcall(M.wm_route_say); return end
     if #NV.list > 0 and NV.list_stale() and NV.list_refresh() then   -- after a teleport
         if #NV.list == 0 then speak("Targets changed, none here"); return end
         nav_announce(string.format("Targets changed. %s, %d targets. ", NAV_CLASSES[NV.cat].name, #NV.list))
