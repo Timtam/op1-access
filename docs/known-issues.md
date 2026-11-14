@@ -37,13 +37,12 @@ against one Eissentinel in the study dungeon. Not yet seen or checked:
 
 ## Walker (user report 2026-11-14)
 
-- **Standing right at a chest, the next route can die at once with no way out.** On
-  2026-11-14, after "Arrived" at chest 3 in the study (4033 from the Slot-1 save point,
-  downstairs), the route to chest 4 stopped after 3 cells ("ROUTE fail traces=11
-  pops=3"). The escape found no body-wide 160-unit corridor in any of the 8 directions,
-  so it said "Stuck, no way on from here" without a step. A manual step up freed it.
-  Probably a narrow alcove plus the chest. From the save point, chest 1 is "not
-  reachable" even with the +40 box.
+- **The first step of a route on the shifted grid can bump.** Since 2026-11-14
+  (bc28ced) a failed search runs again on a grid shifted by half a cell, and the walk
+  then goes from where you stand to that grid's start first. Twice that first waypoint
+  was skipped after a short bump ("wp 2 skipped at 52 (no closer)"); the walk went on
+  both times. The shifted start only needs a clear centre line, not the full body
+  width.
 - **Freeing itself works, but no real wedge was found to try it on.** When a re-route
   fails, or a first route dies at the start (<= 3 cells), the walker takes up to 3
   steps into open directions, each with a new route ("Trying another way"), before
@@ -161,9 +160,12 @@ and the result reading are verified for that one action.
 ## Navigation
 
 - **"Not reachable" can still be wrong for very long detours.** The router searches
-  the start/goal rectangle plus 9 cells. When that runs out of cells it searches once
-  more with 20 cells (~2600 units) and 6000 more traces. With native traces it then
-  tries a third time with 40 cells (~5200 units) and 20000 more (since 2026-11-14).
+  the start/goal rectangle plus 9 cells. When that runs out of cells (or, since
+  bc28ced, of traces) it searches once more with 20 cells (~2600 units) and 6000 more
+  traces. With native traces it then tries a third time with 40 cells (~5200 units) and
+  20000 more (since 2026-11-14), and last on a grid shifted by half a cell. A passage
+  150-210 wide is open on some grid alignments only; the shift made chest 1 in the
+  study reachable from the save point.
   The +20 box fixed the Palasttor cases (the study and the palace exits, a guard
   up-left: all reachable only via the stairs outside the small box). A way round that
   leaves the +40 box, or needs more traces, still fails. Atlasdam's buildings at
