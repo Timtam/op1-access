@@ -92,7 +92,7 @@ int    g_cueLen[NUM_CUES] = { 0 };
 constexpr int THUD_LEN  = (int)(0.15 * SR);  // generated fallback thud length (bump)
 constexpr int SWEEP_LEN = (int)(0.28 * SR);  // generated fallback chirp length (door)
 constexpr int CHIME_LEN = (int)(0.26 * SR);  // generated fallback chime length (path action available)
-constexpr int TALK_LEN  = (int)(0.12 * SR);  // generated fallback pop length (someone to talk to)
+constexpr int TALK_LEN  = (int)(0.15 * SR);  // generated fallback pop length (someone to talk to)
 int g_osCue = -1;
 int g_osPos = 0;
 
@@ -342,14 +342,16 @@ void render_block() {
                     if (buf) s = buf[g_osPos] * 0.85f;
                     else if (g_osCue == 9) {
                         // talk fallback: a soft "pop" -- one short note gliding 700 -> 500 Hz
-                        // with a touch of 2nd harmonic, quick decay. Lighter and lower than
-                        // the two-note path-action chime, so the two never sound alike.
+                        // with a touch of 2nd harmonic, quick decay. Lower than the two-note
+                        // path-action chime, so the two never sound alike. Level: it had
+                        // ~6.5 dB less energy than the chime (0.30, decay 30/s, 0.12 s) and
+                        // risked going unheard; now ~2.7 dB below it (0.42, 24/s, 0.15 s).
                         const double t = (double)g_osPos / (double)SR;
                         const double T = (double)TALK_LEN / (double)SR;
                         const double phs = TWO_PI * (700.0 * t - 0.5 * (200.0 / T) * t * t);
-                        float e = (float)std::exp(-t * 30.0);
+                        float e = (float)std::exp(-t * 24.0);
                         if (g_osPos < (int)(0.003 * SR)) e *= (float)g_osPos / (float)(0.003 * SR);
-                        s = (float)(std::sin(phs) + 0.25 * std::sin(2.0 * phs)) * 0.30f * e;
+                        s = (float)(std::sin(phs) + 0.25 * std::sin(2.0 * phs)) * 0.42f * e;
                     }
                     else if (g_osCue == 8) {
                         // path-action fallback: two-note chime G5 -> D6, each note with
