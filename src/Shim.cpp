@@ -935,6 +935,21 @@ int l_hold_keys(lua_State* L) {
     return 0;
 }
 
+// KeyEvent(vk, down): one synthesized key transition (SendInput), for keys other than
+// the arrows -- the walker presses E itself to open a door on its route. Not an
+// extended key (letters); the Lua side releases what it pressed.
+int l_key_event(lua_State* L) {
+    WORD vk = (WORD)luaL_checkinteger(L, 1);
+    bool down = lua_toboolean(L, 2) != 0;
+    INPUT in{};
+    in.type = INPUT_KEYBOARD;
+    in.ki.wVk = vk;
+    in.ki.wScan = (WORD)MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
+    in.ki.dwFlags = down ? 0 : KEYEVENTF_KEYUP;
+    lua_pushboolean(L, SendInput(1, &in, sizeof(INPUT)) == 1);
+    return 1;
+}
+
 // GuardCombo(id, vk, ctrl, shift, alt): register a combo to swallow + queue.
 int l_guard_combo(lua_State* L) {
     keyguard::ensure_started();
@@ -1274,6 +1289,7 @@ const luaL_Reg op1access_funcs[] = {
     {"AudioLoadCue",         l_audio_load_cue},
     {"AudioPlayCue",         l_audio_play_cue},
     {"HoldKeys",             l_hold_keys},
+    {"KeyEvent",             l_key_event},
     {"GuardCombo",           l_guard_combo},
     {"GuardPoll",            l_guard_poll},
     {"Screenshot",           l_screenshot},

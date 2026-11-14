@@ -2432,7 +2432,7 @@ end
 local nav_last_px, nav_last_py = nil, nil
 local LEVEL_THRESH = 250  -- |dz| beyond this = another floor (one floor measured ~502 units; 250 clears same-floor jitter)
 local function nav_probe()
-    if world_susp then speak("Scene running"); return end
+    if world_susp then speak(M.battle_now and "In battle" or "Scene running"); return end
     local p, phow = get_player_obj()
     if not p then log("NAV: no player object"); speak("No player position"); return end
     local px, py, pz, pposhow = read_actor_pos(p)
@@ -2880,7 +2880,7 @@ local function line_blocked(ksl, p, sx, sy, sz, ex, ey, ez, ch)
     return ok, hit, outHit
 end
 local function wall_probe()
-    if world_susp then speak("Scene running"); return end
+    if world_susp then speak(M.battle_now and "In battle" or "Scene running"); return end
     local p = get_player_obj()
     if not p then speak("No player"); return end
     local px, py, pz = read_actor_pos(p)
@@ -3317,7 +3317,7 @@ end
 
 local function nav_cat_cycle(delta)
     NV.ctrlkey_t = os.clock()
-    if world_susp then speak("Scene running"); return end
+    if world_susp then speak(M.battle_now and "In battle" or "Scene running"); return end
     for _ = 1, #NAV_CLASSES do
         NV.cat = ((NV.cat - 1 + delta) % #NAV_CLASSES) + 1
         nav_build_list()
@@ -3332,7 +3332,7 @@ end
 
 local function nav_obj_cycle(delta)
     NV.ctrlkey_t = os.clock()
-    if world_susp then speak("Scene running"); return end
+    if world_susp then speak(M.battle_now and "In battle" or "Scene running"); return end
     if #NV.list == 0 then nav_build_list() end
     if #NV.list == 0 then speak("No targets here, control left or right for categories"); return end
     NV.idx = ((NV.idx - 1 + delta) % #NV.list) + 1
@@ -3494,7 +3494,13 @@ local function nav_route_finish(goalnode)
                 end
                 if (NV.retries or 0) > 0 then
                     -- a RE-route after getting stuck: the target was reachable a moment
-                    -- ago, this spot is just wedged -- not a "not reachable" target
+                    -- ago, this spot is just wedged -- not a "not reachable" target.
+                    -- Free ourselves first: up to 3 steps into open directions, each
+                    -- with a new route (that was the player's job, user 2026-11-14)
+                    if (NV.escapes or 0) < 3 and NV.escape_step and NV.escape_step(R.px, R.py, R.pz, R.ox, R.oy) then
+                        NV.escapes = (NV.escapes or 0) + 1
+                        return
+                    end
                     speak("Stuck, no way on from here. Step aside, then backspace again")
                     return
                 end
@@ -4009,7 +4015,7 @@ end
 -- talking / the save point / a chest work with Enter right away. The walker stops
 -- facing its last step, which may point past the target, and up to 170 away -- the
 -- headmaster at 158 gave no talk hint; a 60 ms tap moved nothing. Not exits / doors.
-NV.face_goal = function()
+NV.face_goal = function(retry)
     local g = NV.goal
     if not g or g.cat == "exit" or g.cat == "door" or g.cat == "building" then return end
     local p = get_player_obj(); if not p then return end
@@ -4019,6 +4025,15 @@ NV.face_goal = function()
     if t and g.key and NV.tkey(t) == g.key then   -- a wandering NPC: where it is now
         local x, y = NV.tpos(t)
         if x then tx, ty = x, y end
+        -- a person (or the save point's book): keep stepping closer until the game
+        -- picks them as the one to talk to (nav_tick, NV.approach). The walker stops
+        -- up to 170 away; the talk range is shorter -- the user had to hunt for an
+        -- NPC's hitbox after "Arrived" (2026-11-14)
+        if not retry and t.actor and class_name_of(t.actor) == "KSFieldNPCCharacter_C" then
+            local a = 0
+            pcall(function() a = t.actor:GetAddress() end)
+            if a ~= 0 then NV.approach = { addr = a, tries = 0, next = os.clock() + 0.7 } end
+        end
     end
     local dx, dy = tx - px, ty - py
     local dl = math.sqrt(dx * dx + dy * dy)
@@ -4034,6 +4049,96 @@ NV.face_goal = function()
         held = { UP_ARROW = u or nil, DOWN_ARROW = d or nil, LEFT_ARROW = l or nil, RIGHT_ARROW = r or nil } }
 end
 
+-- STUCK: free ourselves instead of asking the player to step aside (user 2026-11-14).
+-- Of 8 directions with a clear body-wide corridor 160 ahead, take the one nearest the
+-- goal's (not straight back along the last escape); a 0.45 s step that way, then a new
+-- route (nav_drive's unwedge phase). false: nothing clear around.
+NV.escape_step = function(px, py, pz, gx, gy)
+    local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+    local p = get_player_obj()
+    if not (ksl and p) then return false end
+    local gdx, gdy = gx - px, gy - py
+    local gl = math.sqrt(gdx * gdx + gdy * gdy)
+    if gl > 1 then gdx, gdy = gdx / gl, gdy / gl end
+    local best, bscore = nil, -9
+    for i = 0, 7 do
+        local ang = i * math.pi / 4
+        local dx, dy = math.cos(ang), math.sin(ang)
+        if NV.corridor_clear(ksl, p, px, py, pz, px + dx * 160, py + dy * 160) then
+            local score = dx * gdx + dy * gdy
+            local le = NV.last_escape
+            if le and dx * le[1] + dy * le[2] < -0.9 then score = score - 1 end
+            if score > bscore then best, bscore = { dx, dy }, score end
+        end
+    end
+    if not best then return false end
+    NV.last_escape = best
+    local u, d, r, l = best[1] > 0.38, best[1] < -0.38, best[2] > 0.38, best[2] < -0.38
+    log(string.format("NAVWALK escape step %d dir=(%.2f,%.2f)", (NV.escapes or 0) + 1, best[1], best[2]))
+    NV.unwedge = { till = os.clock() + 0.45, u = u, d = d, l = l, r = r, escape = true,
+        held = { UP_ARROW = u or nil, DOWN_ARROW = d or nil, LEFT_ARROW = l or nil, RIGHT_ARROW = r or nil } }
+    NV.path = nil
+    nav_walking = true
+    NV.started = os.clock()
+    NV.prog = { t = os.clock(), x = px, y = py }
+    return true
+end
+
+-- DOORS BY THEMSELVES (user request 2026-11-14): at a door on the route the walker
+-- presses E itself -- only if the shown prompt belongs to a door (a house/room door or
+-- a door exit), never at people -- waits for the prompt to go (the door opened) and
+-- walks on. Two tries; then it hands over.
+NV.AUTO_DOORS = true
+NV.door_auto_start = function()
+    if not (NV.AUTO_DOORS and shim and shim.KeyEvent) then return false end
+    local cls
+    pcall(function()
+        local ta = M.popup_widget.TargetActor
+        if ta and ta:IsValid() then cls = class_name_of(ta) end
+    end)
+    if cls ~= "HouseEnterTriggerBP_C" and cls ~= "LevelTrigger_C" then
+        log("DOORAUTO not a door prompt: " .. tostring(cls))
+        return false
+    end
+    NV.door_auto = { phase = "press", t = os.clock(), tries = 0 }
+    speak("Opening the door")
+    return true
+end
+NV.door_auto_step = function()
+    local d = NV.door_auto
+    if not d then return end
+    local now = os.clock()
+    if world_susp or M.menu_now then        -- a scene or menu came up: let go
+        pcall(function() shim.KeyEvent(0x45, false) end)
+        NV.door_auto = nil
+        return
+    end
+    if d.phase == "press" then
+        pcall(function() shim.KeyEvent(0x45, true) end)
+        d.phase, d.t = "release", now
+    elseif d.phase == "release" then
+        if now - d.t >= 0.08 then
+            pcall(function() shim.KeyEvent(0x45, false) end)
+            d.phase, d.t = "wait", now
+        end
+    elseif d.phase == "wait" then
+        if not M.popup_said then               -- the prompt went away: the door is open
+            log("DOORAUTO opened")
+            NV.door_auto = nil
+            NV.resume_walk = true
+        elseif now - d.t > 1.5 then
+            d.tries = d.tries + 1
+            if d.tries >= 2 then
+                log("DOORAUTO no luck")
+                NV.door_auto = nil
+                speak("The door doesn't open. Press E yourself, then backspace again")
+            else
+                d.phase = "press"
+            end
+        end
+    end
+end
+
 -- Standing "at a door": the walk's door leg is skipped within this distance of the door
 -- actor. The "Öffnen, E" prompt shows only ~35 in front of the door's center; with 250,
 -- someone 240 away (at the Wachmann, outside the library) was told to press E there.
@@ -4045,7 +4150,13 @@ local function nav_walk_start(quiet)
     if quiet and (world_susp or M.explore_now == false) then return end
     if nav_walking then nav_walk_stop("Walk stopped"); return end
     if NV.route then NV.route = nil; speak("Routing cancelled"); return end
-    if world_susp then speak("Scene running, try again after"); return end
+    if NV.door_auto then                -- the walker is opening a door: Backspace stops it
+        NV.door_auto, NV.resume_walk = nil, nil
+        pcall(function() shim.KeyEvent(0x45, false) end)
+        speak("Walk stopped")
+        return
+    end
+    if world_susp then speak(M.battle_now and "In battle" or "Scene running, try again after"); return end
     local t = nav_target()
     if not t then speak("No target selected"); return end
     local p = get_player_obj(); if not p then speak("No player"); return end
@@ -4059,6 +4170,7 @@ local function nav_walk_start(quiet)
     NV.retries = 0
     NV.bestgoal = nil
     NV.noimprove = 0
+    NV.escapes, NV.last_escape, NV.approach = 0, nil, nil
     -- INSIDE A BUILDING you're not in: walk to its door first (the closed door blocks
     -- every route). At the door the game says "Öffnen, E"; after E, Backspace again
     -- walks inside (then you stand at the door, so this leg is skipped).
@@ -4170,14 +4282,15 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
             pcall(function() shim.HoldKeys(NV.unwedge.u, NV.unwedge.d, NV.unwedge.l, NV.unwedge.r) end)
             return
         end
+        local esc = NV.unwedge.escape      -- a step to free ourselves (NV.escape_step)
         NV.unwedge = nil
         nav_walking = false
         NV.path = nil
         NV.held = nil
         pcall(function() shim.HoldKeys(false, false, false, false) end)
-        if NV.goal and (NV.retries or 0) < 4 then
-            NV.retries = (NV.retries or 0) + 1
-            speak("Rerouting")
+        if NV.goal and (esc or (NV.retries or 0) < 4) then
+            if not esc then NV.retries = (NV.retries or 0) + 1 end
+            speak(esc and "Trying another way" or "Rerouting")
             nav_route_begin("walk", NV.goal.x, NV.goal.y, NV.goal.z)
         else
             speak("Walk interrupted, backspace to resume")
@@ -4245,6 +4358,7 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
             -- poll_action_popup) and waits for the key -- stop at the door
             NV.push = nil
             nav_walk_stop()   -- silent: the prompt speech says what to do
+            if NV.door_auto_start() then return end   -- the walker opens it itself
             -- a prompt that was up before the walk wasn't spoken now: say it again
             if NV.prompt_at_start then speak("Still shut. " .. (M.popup_text or "press E") .. ", then backspace again")
             elseif gcat == "door" then speak("then backspace again", false) end
@@ -4307,19 +4421,17 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
         NV.lastgd = gd
         if NV.goal.cat == "exit" then
             -- exits are walked THROUGH (nav_drive pushes on past the last waypoint).
-            -- A seamless exit (same map, no fade) shows the new area banner instead:
-            -- that is the arrival -- stop quietly, the banner speaks for itself.
-            if (M.area_t or 0) > NV.started + 0.3 then
-                log("NAVWALK through exit (new area)")
-                nav_walk_stop()
-                return
-            end
+            -- The arrival is the transition: a fade (nav_drive ends the walk silently)
+            -- or a teleport jump (below). NOT the area banner: leaving the study the
+            -- banner "Palasttor Atlasdamm" came up in the passage BEFORE the exit and
+            -- the walk stopped short of it (2026-11-14).
             -- a DOOR exit: near it the game shows its prompt ("Öffnen, E", already
             -- spoken) and only the key opens it -- pushing on just wedges into the
             -- door and re-routes (seen 2026-11-11 at the academy door). Stop there.
             if M.popup_said and gd < 450 then
                 log("NAVWALK at door exit (prompt)")
                 nav_walk_stop()   -- silent: "Arrived" would cut off the prompt speech
+                if NV.door_auto_start() then return end   -- the walker opens it itself
                 -- ...unless the prompt was up already when the walk began: the door is
                 -- still shut (an E press that didn't take) -- the walk ended without a
                 -- word after "Walking, total 161" (2026-11-14). Say the prompt again.
@@ -4342,6 +4454,7 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
             if M.popup_said and gd < 450 then
                 log("NAVWALK at building door")
                 nav_walk_stop()
+                if NV.door_auto_start() then return end   -- the walker opens it itself
                 if NV.prompt_at_start then
                     speak("Still shut. " .. (M.popup_text or "press E") .. ", then backspace again")
                 else
@@ -4356,7 +4469,11 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
         end
     end
     local jump = math.sqrt((px - NV.prog.x) ^ 2 + (py - NV.prog.y) ^ 2)
-    if jump > 900 then nav_walk_stop("Walk ended, went through a door"); return end
+    if jump > 900 then
+        -- through an exit with a teleport (the academy door): the arrival, quietly
+        if NV.goal and NV.goal.cat == "exit" then log("NAVWALK through exit (jump)"); nav_walk_stop(); return end
+        nav_walk_stop("Walk ended, went through a door"); return
+    end
     if jump > 40 then
         NV.prog = { t = now, x = px, y = py }
     elseif now - NV.prog.t > 2.0 and not NV.unwedge then
@@ -4446,10 +4563,27 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
         end
     end
     if nav_walking then pcall(nav_walk_watch) end
-    if NV.resume_walk and not nav_walking and not NV.route then
+    if NV.resume_walk and not nav_walking and not NV.route and not NV.door_auto then
         NV.resume_walk = nil
-        pcall(nav_walk_start, true)   -- after a step through a doorway: on to the target
+        pcall(nav_walk_start, true)   -- after a doorway / an opened door: on to the target
     end
+    -- after "Arrived" at a person: another short step until the game picks them as the
+    -- one to talk to (M.talk_pick = player.refTalkChara), at most 3
+    local a = NV.approach
+    if a and not nav_walking and not NV.face and not NV.route and os.clock() >= a.next then
+        if M.talk_pick == a.addr then
+            log("NAVWALK in talk range")
+            NV.approach = nil
+        elseif a.tries >= 3 then
+            log("NAVWALK talk range not reached")
+            NV.approach = nil
+        else
+            a.tries = a.tries + 1
+            a.next = os.clock() + 0.7
+            pcall(NV.face_goal, true)
+        end
+    end
+    pcall(NV.door_auto_step)          -- opening a door on the route (E, wait, walk on)
     if not NV.route and not nav_walking then
         local ok, err = pcall(NV.bg_step)   -- quiet reachability check of the list
         if not ok and tostring(err) ~= NV.bgerr then
@@ -4710,6 +4844,9 @@ M.poll_area_name = function()
     pcall(function() area = w.TextAreaName.Text:ToString() end)
     pcall(function() region = w.TextRegionName.Text:ToString() end)
     if not area or area == "" then return end
+    -- the banner's design-time text before the game fills it in: loading at a save
+    -- point spoke "0123456789, 0123456" (2026-11-14) -- wait for the real name
+    if area:match("^%d+$") or (region and region:match("^%d+$")) then return end
     -- the banner's separator is part of the region text ("Flachland –"); strip a
     -- trailing dash as a whole UTF-8 sequence (byte classes would eat umlauts)
     if region then
@@ -4808,6 +4945,7 @@ M.interact_poll = function()
         local o = p.refTalkChara
         if o and o:IsValid() then taddr = o:GetAddress(); tobj = o end
     end) end
+    M.talk_pick = taddr   -- who Enter would talk to now (the walker's approach check)
     local raw = {}
     local mgr = get_fcmd_mgr()
     if mgr then local _; _, raw = read_active_commands(mgr) end
@@ -5274,6 +5412,29 @@ radar_pump = function(src)
                 if not ev then ev = ef:IsEventPlayTheater() and true or false end
             end
         end)
+        -- A BATTLE is no event to the game, but the field must stand still too: the
+        -- navigator, walker and radar kept going in battle (user, 2026-11-14).
+        -- KSGameStatics:GetBattleMode needs a world object for its context: the
+        -- player, else the player controller.
+        local battle = false
+        pcall(function()
+            local gs = StaticFindObject("/Script/Octopath_Traveler.Default__KSGameStatics")
+            if not gs then return end
+            local ctx = get_player_obj()
+            if not ctx then
+                local pc = M.pc
+                local okc = false
+                if pc then pcall(function() okc = pc:IsValid() end) end
+                if not okc then pc = FindFirstOf("KSPlayerControllerBP_C"); M.pc = pc end
+                ctx = pc
+            end
+            if ctx then battle = gs:GetBattleMode(ctx) and true or false end
+        end)
+        if battle ~= (M.battle_now or false) then
+            M.battle_now = battle
+            log("BATTLE " .. (battle and "started" or "ended"))
+        end
+        if battle then ev = true end
         if ev then WS.ev_t = now end
         local settling = false
         if not ev then
