@@ -1154,6 +1154,9 @@ pcall(RegisterKeyBind, Key.Q, function() if M.battle_now then return end M.read_
 -- Announce the selected category on open + each move (interrupt behaviour via say_item).
 do
     local mm_idx
+    -- back from a sub-screen that left the list as it was (the world map): say the
+    -- selected category again, without the objective
+    M.mainmenu_reannounce = function() mm_idx = nil; M.mm_no_objective = true end
     M.poll_mainmenu = function()
         local mw
         for i = 1, #scene_widgets do
@@ -1190,8 +1193,330 @@ do
         M.say_item(say)
         -- On open, also read the current objective (queued after the category). Q re-reads
         -- it on demand. (Both requested.)
-        if opening and M.read_objective then M.read_objective(true) end
+        if opening and M.read_objective and not M.mm_no_objective then M.read_objective(true) end
+        M.mm_no_objective = nil
     end
+end
+
+-- WORLD MAP (main menu -> Weltkarte; user request 2026-11-14: "no overview at all").
+-- The screen is WorldMap_C, which the main menu holds (MainMenuWidget_C.WorldMap); it is
+-- not on the UI manager's active stack ("ACTIVE screen: nil" while it is open). From the
+-- object dump:
+--   WorldMap_C: WorldMapAreaLabel (the name plate at the cursor), IconList (one
+--     WorldMapIcon_C per place), IconRecommendationList, CursorPosition, IsFocus,
+--     WorldMapState.
+--   WorldMapAreaLabel_C: TextAreaName / TextRegionName (the shown texts), IsUnreached,
+--     AttachWorldMapIcon (the place under the cursor), NowWorldMapTable @0x258 = its row.
+--   WorldMapIcon_C: DataRowName (row of /Game/Level/Database/WorldMapTable), IconPosition,
+--     NowLocationFlag (you are here), IsUnreached, RecommendationList.
+--   WorldMapTable row: Kind @0, IconType @4, RefLevelName TArray<FName> @0x10 (the level
+--     IDs, "79_0"), RegionName @0x20, MapName @0x28 (GameText labels), CanFastTravel
+--     @0x58, TownDBID @0x70. A row name says the kind: eMAP_T_ town, _F_ path, _D_ dungeon.
+--   The levels' encounters give the level (M.level_danger).
+--   WorldMapIconRecommendation_C: CapterValue, LevelValue, CharacterNameLabel.
+-- Announces the place under the cursor when it changes (name, region, recommended level,
+-- not visited, you are here, the chapters recommended there); Page Up / Page Down step
+-- through every place, nearest to where you are first, with its direction.
+M.WM = { list = nil, idx = 0, open = false }
+-- A WorldMapTable row (raw, by address) -> { name, region, kind, lmin, lmax, refs, town, fast }
+M.wm_row_info = function(r)
+    if not (r and r ~= 0 and shim and shim.Peek) then return nil end
+    local info = { kind = shim.Peek(r, "i32"), icon = shim.Peek(r + 0x04, "i32"),
+        town = shim.Peek(r + 0x70, "i32"), fast = shim.Peek(r + 0x58, "u8") }
+    local c, n = shim.PeekFName(r + 0x28)
+    info.name = M.gametext(c, n)
+    c, n = shim.PeekFName(r + 0x20)
+    info.region = M.gametext(c, n)
+    -- RefLevelName: the place's levels, as level IDs ("79_0" = LevelTable row 79); their
+    -- encounters give the level (M.level_danger), lowest to highest over all of them
+    local arr, cnt = shim.Peek(r + 0x10, "ptr"), shim.Peek(r + 0x18, "i32")
+    info.refs = {}
+    if arr and arr ~= 0 and cnt and cnt > 0 and cnt < 32 then
+        for i = 0, cnt - 1 do
+            local lc, ln = shim.PeekFName(arr + i * 8)
+            if lc and lc > 0 then
+                local s = M.fname_str(lc, ln)
+                info.refs[#info.refs + 1] = s
+                local d = M.level_danger(tonumber(s:match("^(%d+)") or ""))
+                if d then
+                    info.lmin = math.min(info.lmin or d.danger, d.danger)
+                    info.lmax = math.max(info.lmax or d.danger, d.danger)
+                end
+            end
+        end
+    end
+    return info
+end
+-- the row name's kind: eMAP_T_ town, eMAP_F_ a path (field), eMAP_D_ dungeon
+M.wm_what = function(row)
+    local k = type(row) == "string" and row:match("^eMAP_(%u)_")
+    return (k == "T" and "town") or (k == "F" and "path") or (k == "D" and "dungeon") or nil
+end
+M.wm_find = function()
+    local w = M.wm_widget
+    local ok = false
+    if w then pcall(function() ok = w:IsValid() end) end
+    if ok then return w end
+    M.wm_widget = nil
+    for i = 1, #scene_widgets do
+        local e = scene_widgets[i]
+        if e[2] == "MainMenuWidget_C" then
+            pcall(function()
+                local x = e[1].WorldMap
+                if x and x:IsValid() then M.wm_widget = x end
+            end)
+            if M.wm_widget then break end
+        end
+    end
+    return M.wm_widget
+end
+-- The story chapters a town hosts, from the TownTable (TownInfoData, object dump: ID @8,
+-- MainEvent1CharacterID @0x60, MainEvent1Capter @0x64, MainEvent2CharacterID @0x90,
+-- MainEvent2Capter @0x94): { "Cyrus, chapter 2", ... }. The IDs count from 1 (Olberic,
+-- Tressa, Cyrus, Primrose, H'aanit, Therion, Ophilia, Alfyn: Atlasdamm has 3, chapter 1),
+-- one above the GameText labels ePLAYABLE_CHARA_NAME_00..07 that name them.
+M.town_events = function(town)
+    if type(town) ~= "number" or town <= 0 then return {} end
+    if not M.town_rows then
+        local idx, n = {}, 0
+        local tt = shim and shim.DtCount and M.dt_addr("TownTable")
+        if tt then
+            for i = 0, (shim.DtCount(tt) or 0) - 1 do
+                local _, _, row = shim.DtRowAt(tt, i)
+                local id = row and shim.Peek(row + 0x08, "i32")
+                if id then idx[id] = row; n = n + 1 end
+            end
+        end
+        if n == 0 then return {} end
+        M.town_rows = idx
+    end
+    local row = M.town_rows[town]
+    if not row then return {} end
+    local out, raw = {}, {}
+    for _, o in ipairs({ 0x60, 0x90 }) do
+        local who, ch = shim.Peek(row + o, "i32"), shim.Peek(row + o + 4, "i32")
+        raw[#raw + 1] = string.format("%s/%s", tostring(who), tostring(ch))
+        if type(who) == "number" and who >= 1 and who <= 8 and type(ch) == "number" and ch > 0 then
+            local name = M.gametext(M.fname_of(string.format("ePLAYABLE_CHARA_NAME_%02d", who - 1)))
+            out[#out + 1] = string.format("%s, chapter %d", name or ("traveler " .. who), ch)
+        end
+    end
+    M.town_logged = M.town_logged or {}
+    if not M.town_logged[town] then
+        M.town_logged[town] = true
+        log(string.format("WORLDMAP town %d events (who/chapter): %s -> %s", town, table.concat(raw, " "),
+            table.concat(out, "; ")))
+    end
+    return out
+end
+-- the chapters recommended at a place: "Ophilia, chapter 1, level 1"
+M.wm_recs = function(icon)
+    local out = {}
+    pcall(function()
+        local rl = icon.RecommendationList
+        if not (rl and rl:IsValid()) then return end
+        local n = rl.ActiveCount or 0
+        rl.RecommendationWidget:ForEach(function(i, v)
+            if i > n then return end
+            local w = v:get()
+            if not (w and w:IsValid()) then return end
+            local who, lbl
+            pcall(function() lbl = w.CharacterNameLabel:ToString() end)
+            pcall(function() who = M.gametext(M.fname_of(lbl)) end)
+            local ch, lv = w.CapterValue, w.LevelValue
+            -- the shown texts too: Kammbruch's (Cyrus' chapter 2) had no name label and
+            -- no values, "Recommended: someone" (2026-11-14)
+            local tx = {}
+            for _, f in ipairs({ "CharacterText", "CapterText", "LevelText", "RecommendationText" }) do
+                local s
+                pcall(function() s = w[f]:GetText():ToString() end)
+                tx[#tx + 1] = f .. "=" .. tostring(s)
+                if s and s ~= "" then tx[f] = s end
+            end
+            M.rec_logged = M.rec_logged or {}
+            local lk = tostring(lbl) .. tostring(ch) .. tostring(lv) .. table.concat(tx, ";")
+            if not M.rec_logged[lk] then
+                M.rec_logged[lk] = true
+                log(string.format("WORLDMAP rec %d/%d: label=%s chapter=%s level=%s %s", i, n, tostring(lbl), tostring(ch),
+                    tostring(lv), table.concat(tx, " ")))
+            end
+            -- an unused widget keeps its design texts ("オフィーリア, 第1章, 99"): no name
+            -- label and no chapter -- not a recommendation (Kammbruch, 2026-11-14)
+            if (not lbl or lbl == "None" or lbl == "") and not (type(ch) == "number" and ch > 0) then return end
+            if not who and tx.CharacterText then who = tx.CharacterText end
+            local s = (who or "someone")
+            if type(ch) == "number" and ch > 0 then s = s .. ", chapter " .. ch
+            elseif tx.CapterText then s = s .. ", " .. tx.CapterText end
+            if type(lv) == "number" and lv > 0 then s = s .. ", level " .. lv
+            elseif tx.LevelText then s = s .. ", " .. tx.LevelText end
+            out[#out + 1] = s
+        end)
+    end)
+    return out
+end
+-- One place: a WorldMapIcon_C -> { name, region, ..., x, y, here, unreached, recs }
+M.wm_icon_info = function(icon)
+    local rowname
+    pcall(function() rowname = icon.DataRowName:ToString() end)
+    local info
+    local tbl = M.dt_addr and M.dt_addr("WorldMapTable")
+    if rowname and tbl and shim.DtFind then
+        local c, n = M.fname_of(rowname)
+        local r = c and shim.DtFind(tbl, c, n)
+        info = r and M.wm_row_info(r)
+    end
+    info = info or {}
+    info.row = rowname
+    info.what = M.wm_what(rowname)
+    pcall(function() info.x = icon.IconPosition.X; info.y = icon.IconPosition.Y end)
+    pcall(function() info.here = icon.NowLocationFlag and true or false end)
+    pcall(function() info.unreached = icon.IsUnreached and true or false end)
+    pcall(function() info.visible = icon.IsVisiblity and not icon.HideFlag end)
+    pcall(function() info.dest = icon.DestinationFlag and true or false end)
+    info.recs = M.wm_recs(icon)
+    -- a story destination without a recommendation of its own (Kammbruch after Cyrus'
+    -- chapter 1, 2026-11-14): the chapters the town hosts say why
+    if info.dest and #info.recs == 0 then
+        local ok, ev = pcall(M.town_events, info.town)
+        info.story = ok and ev or {}
+    end
+    return info
+end
+-- "Kammbruch, town, Flachland, levels 10 to 15, not visited. Recommended: ..."
+M.wm_describe = function(info, where)
+    local parts = { info.name or info.row or "unknown place" }
+    if info.what then parts[#parts + 1] = info.what end
+    if info.region and info.region ~= info.name then parts[#parts + 1] = info.region end
+    if where then parts[#parts + 1] = where end
+    if info.lmin then
+        parts[#parts + 1] = (info.lmax and info.lmax > info.lmin)
+            and string.format("danger level %d to %d", info.lmin, info.lmax)
+            or string.format("danger level %d", info.lmin)
+    end
+    if info.here then parts[#parts + 1] = "you are here" end
+    if info.unreached then parts[#parts + 1] = "not visited" end
+    local s = table.concat(parts, ", ")
+    if info.recs and #info.recs > 0 then s = s .. ". Recommended: " .. table.concat(info.recs, "; ")
+    elseif info.dest then
+        -- every story destination is marked; with no recommendation, say whose chapters
+        s = s .. ". Story destination" .. ((info.story and #info.story > 0) and (": " .. table.concat(info.story, "; ")) or "")
+    end
+    return s
+end
+-- the places, nearest to where you are first
+M.wm_build_list = function(wm)
+    local list, here = {}, nil
+    pcall(function()
+        wm.IconList:ForEach(function(_, v)
+            local icon = v:get()
+            if not (icon and icon:IsValid()) then return end
+            local info = M.wm_icon_info(icon)
+            info.icon = icon
+            if info.here then here = info end
+            if info.visible ~= false then list[#list + 1] = info end
+        end)
+    end)
+    local hx, hy = here and here.x, here and here.y
+    for _, e in ipairs(list) do
+        e.d = (hx and e.x) and math.sqrt((e.x - hx) ^ 2 + (e.y - hy) ^ 2) or 0
+    end
+    table.sort(list, function(a, b) return a.d < b.d end)
+    log(string.format("WORLDMAP list: %d places, here=%s", #list, tostring(here and here.name)))
+    for i, e in ipairs(list) do
+        pcall(M.town_events, e.town)   -- (logs each town's chapters once)
+        if i <= 60 then
+            log(string.format("WORLDMAP place %d: %s row=%s kind=%s what=%s pos=(%.0f,%.0f) here=%s dest=%s unreached=%s lv=%s-%s refs=%s town=%s recs=%d",
+                i, tostring(e.name), tostring(e.row), tostring(e.kind), tostring(e.what), e.x or -1, e.y or -1,
+                tostring(e.here), tostring(e.dest), tostring(e.unreached), tostring(e.lmin), tostring(e.lmax),
+                table.concat(e.refs or {}, "+"), tostring(e.town), #(e.recs or {})))
+        end
+    end
+    return list, here
+end
+-- direction on the map (north up): from where you are to a place
+M.wm_dir = function(dx, dy)
+    local d = math.sqrt(dx * dx + dy * dy)
+    if d < 1 then return "here" end
+    local ns = (dy < -0.38 * d) and "north" or ((dy > 0.38 * d) and "south" or "")
+    local ew = (dx > 0.38 * d) and "east" or ((dx < -0.38 * d) and "west" or "")
+    if ns ~= "" and ew ~= "" then return ns .. "-" .. ew end
+    return ns ~= "" and ns or ew
+end
+M.wm_cycle = function(delta)
+    local WM = M.WM
+    if not WM.open then return false end
+    local wm = M.wm_find()
+    if not wm then return false end
+    if not WM.list then WM.list, WM.here = M.wm_build_list(wm); WM.idx = 0 end
+    local n = #WM.list
+    if n == 0 then speak("No places on the map"); return true end
+    if WM.idx < 1 then WM.idx = (delta > 0) and 1 or n   -- the first press: first or last
+    else WM.idx = ((WM.idx - 1 + delta) % n) + 1 end
+    local e = WM.list[WM.idx]
+    local where
+    if WM.here and e ~= WM.here and e.x and WM.here.x then
+        where = string.format("%s, %d", M.wm_dir(e.x - WM.here.x, e.y - WM.here.y), math.floor(e.d + 0.5))
+    end
+    speak(string.format("%d of %d: %s", WM.idx, n, M.wm_describe(e, where)), true)
+    return true
+end
+nav_keys = nav_keys or {}
+nav_keys.wm = function(delta) return M.wm_cycle(delta) end
+M.poll_worldmap = function()
+    local WM = M.WM
+    local wm = M.wm_find()
+    if not wm then WM.open = false; return end
+    local vis, focus, state = false, nil, nil
+    pcall(function() vis = wm:IsVisible() and true or false end)
+    pcall(function() focus = wm.IsFocus end)
+    pcall(function() state = wm.WorldMapState end)
+    local sig = string.format("%s/%s/%s", tostring(vis), tostring(focus), tostring(state))
+    if sig ~= WM.sig then WM.sig = sig; log("WORLDMAP state vis/focus/state = " .. sig) end
+    local open = vis and (focus == nil or focus == true)
+    if not open then
+        if WM.open then
+            log("WORLDMAP closed")
+            pcall(M.mainmenu_reannounce)   -- back in the main menu: say where
+        end
+        WM.open, WM.list, WM.area = false, nil, nil
+        return
+    end
+    local lbl
+    pcall(function() lbl = wm.WorldMapAreaLabel end)
+    local area, region
+    pcall(function() area = lbl.TextAreaName:GetText():ToString() end)
+    pcall(function() region = lbl.TextRegionName:GetText():ToString() end)
+    if not WM.open then
+        WM.open, WM.list, WM.idx = true, nil, 0
+        log("WORLDMAP opened")
+        local _, here = M.wm_build_list(wm)
+        WM.here = here
+        speak("World map" .. (here and here.name and (". You are at " .. here.name) or ""), true)
+        M.await_first_item = true   -- the place under the cursor goes after it
+    end
+    local key = tostring(area) .. "|" .. tostring(region)
+    if key == WM.area or not area or area == "" then return end
+    WM.area = key
+    -- the place under the cursor: its icon (recommendations, you are here) and table row
+    local info
+    pcall(function()
+        local icon = lbl.AttachWorldMapIcon
+        if icon and icon:IsValid() then info = M.wm_icon_info(icon) end
+    end)
+    if not info or not info.name then
+        local a = 0
+        pcall(function() a = lbl:GetAddress() end)
+        local row = (a ~= 0) and M.wm_row_info(a + 0x258) or nil
+        info = info or {}
+        if row then for k, v in pairs(row) do if info[k] == nil then info[k] = v end end end
+    end
+    pcall(function() if lbl.IsUnreached then info.unreached = true end end)
+    info.name = area
+    info.region = (region and region ~= "") and region or info.region
+    log(string.format("WORLDMAP cursor: %s | %s row=%s kind=%s refs=%s lv=%s-%s here=%s unreached=%s recs=%d",
+        tostring(area), tostring(region), tostring(info.row), tostring(info.kind), table.concat(info.refs or {}, "+"),
+        tostring(info.lmin), tostring(info.lmax), tostring(info.here), tostring(info.unreached), #(info.recs or {})))
+    M.say_item(M.wm_describe(info))
 end
 
 -- Tutorial pop-up reader. The pop-up's active widget is UITutorial_C; its current page
@@ -2840,6 +3165,7 @@ M.fast_steps = {
     { "saveload", function() M.poll_saveload() end },
     { "options", function() M.poll_options() end },
     { "mainmenu", function() M.poll_mainmenu() end },
+    { "worldmap", function() M.poll_worldmap() end },
     { "tutorial", function() M.poll_tutorial() end },
     { "fieldcmd", function() M.poll_fieldcommand() end },
 }
@@ -3511,6 +3837,7 @@ do
     pcall(function() down = Key.PAGE_DOWN end)
     if up then
         local ok = pcall(RegisterKeyBind, up, function()
+            if nav_keys.wm and nav_keys.wm(-1) then return end   -- the world map's places
             if nav_keys.obj and nav_keys.obj(-1) then return end
             cycle_player_select(-1)
         end)
@@ -3518,6 +3845,7 @@ do
     end
     if down then
         local ok = pcall(RegisterKeyBind, down, function()
+            if nav_keys.wm and nav_keys.wm(1) then return end   -- the world map's places
             if nav_keys.obj and nav_keys.obj(1) then return end
             cycle_player_select(1)
         end)
