@@ -6034,7 +6034,7 @@ end
 -- headmaster at 158 gave no talk hint; a 60 ms tap moved nothing. Not exits / doors.
 NV.face_goal = function(retry)
     local g = NV.goal
-    if not g or g.cat == "exit" or g.cat == "door" or g.cat == "building" then return end
+    if not g or g.cat == "exit" or g.cat == "door" or g.cat == "building" or g.cat == "event" then return end
     local p = get_player_obj(); if not p then return end
     local px, py = read_actor_pos(p); if not px then return end
     local tx, ty = g.x, g.y
@@ -6049,7 +6049,12 @@ NV.face_goal = function(retry)
         if not retry and t.actor and class_name_of(t.actor) == "KSFieldNPCCharacter_C" then
             local a = 0
             pcall(function() a = t.actor:GetAddress() end)
-            if a ~= 0 then NV.approach = { addr = a, tries = 0, next = os.clock() + 0.7, x = tx, y = ty } end
+            -- its name (nil for the save point's book): another actor of the same person
+            -- picked where it stands counts as reached (nav_tick)
+            local nm
+            pcall(function() nm = shim.NpcName(a) end)
+            if nm == "" or nm == "???" then nm = nil end
+            if a ~= 0 then NV.approach = { addr = a, tries = 0, next = os.clock() + 0.7, x = tx, y = ty, name = nm } end
         end
     end
     local dx, dy = tx - px, ty - py
@@ -6297,8 +6302,11 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
             -- walking INTO an exit ends in its transition fade: that is the arrival,
             -- and the new area announces itself -- say nothing then
             local into_exit = NV.goal and NV.goal.cat == "exit" and (NV.push or (NV.lastgd or 1e9) < 450)
-            if waswalking and not into_exit then speak("Walk stopped") end
+            -- a story event's spot: its scene starting is the arrival, as an exit's fade
+            local into_event = NV.goal and NV.goal.cat == "event" and (NV.lastgd or 1e9) < 450
+            if waswalking and not (into_exit or into_event) then speak("Walk stopped") end
             if into_exit then log("NAVWALK through exit") end
+            if into_event then log("NAVWALK into the event") end
         end
         return
     end
@@ -6572,6 +6580,13 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
                 end
                 return
             end
+        elseif NV.goal.cat == "event" then
+            -- a story event's spot starts its scene when you step IN: no "close enough"
+            -- at 170 (that left you 107 short of the headmaster's, 2026-11-14). The scene
+            -- ends the walk (nav_drive); at the spot without one, arrived.
+            if gd < 45 and math.abs(pz - (NV.goal.z or pz)) < LEVEL_THRESH then
+                nav_walk_stop("Arrived"); return
+            end
         elseif gd < 170 and math.abs(pz - (NV.goal.z or pz)) < LEVEL_THRESH then
             -- (not when the goal is a floor up or down: in the academy hall a walk to
             -- a door upstairs said "Arrived" passing beneath it)
@@ -6648,7 +6663,9 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
             NV.noimprove = (NV.noimprove or 0) + 1
         end
         local gdz = (NV.goal and NV.goal.z) and math.abs(pz - NV.goal.z) or 0
-        if gd >= 0 and gd < 220 and gdz < LEVEL_THRESH then
+        -- (an event's spot must be stepped into: stuck 200 short of it is not there)
+        local reach = (NV.goal and NV.goal.cat == "event") and 60 or 220
+        if gd >= 0 and gd < reach and gdz < LEVEL_THRESH then
             speak("Arrived")                       -- close enough to interact
             pcall(NV.face_goal)
         elseif NV.goal and (NV.noimprove or 0) < 2 and (NV.retries or 0) < 5 then
@@ -6686,9 +6703,16 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
             -- the game's pick can be ANOTHER object for the same person: in the library
             -- the hint said "Path action, Mercedes" (pick 24EF9C0D030), yet the list's
             -- actor differed and the walker stepped on, "not reached" (2026-11-14).
-            -- Someone picked where the target stands counts.
+            -- Someone of the same name picked where the target stands counts -- the same
+            -- NAME: Mercedes, picked next to the save point marker's nameless actor,
+            -- counted as it ("in talk range", and Enter talked to her, user report
+            -- 2026-11-14).
+            local pn
+            pcall(function() pn = shim.NpcName(M.talk_pick) end)
             local x, y = read_actor_pos(M.talk_pick_obj)
-            if x and math.sqrt((x - a.x) ^ 2 + (y - a.y) ^ 2) < 100 then inrange = true end
+            if x and a.name and pn == a.name and math.sqrt((x - a.x) ^ 2 + (y - a.y) ^ 2) < 100 then
+                inrange = true
+            end
         end
         if inrange then
             log("NAVWALK in talk range")
@@ -7322,9 +7346,23 @@ M.minimap_markers = function(pz)
     -- The actor gives the REAL height. With the player's own z (icons carry X/Y only)
     -- the router searched the wrong floor: "No route found" to the "!" one floor down
     -- (user log 2026-11-13), while the chest category reached the very same spot.
-    local byname, npcs, pool = {}, {}, { chest = {}, exit = {} }
-    for _, spec in ipairs({ { "KSFieldNPCCharacter_C", "npc" }, { "TreasureBoxBP_C", "chest" },
-                            { "LevelTrigger_C", "exit" } }) do
+    -- Names repeat across levels (the always-loaded ResidentGame level has its own
+    -- KSFieldNPCCharacter_C_46 and so on), so a name gives every actor of it, and the
+    -- icon takes the one NEAREST to the icon, and only near it: the save point once
+    -- pinned to a nameless actor at Mercedes' counter -- the walker took you to her,
+    -- 3224 from the academy door, where the save point had been 2289 away the day
+    -- before; the minimap's quill was far off (user report 2026-11-14).
+    -- The objective can also be a story event's trigger (EventTriggerBP_C, a spot you
+    -- step into): the headmaster's at his office door, a floor up. Without its actor the
+    -- marker had the player's own height, and the walker said "Arrived" a floor below
+    -- (user report 2026-11-14).
+    local byname, npcs, events, pool = {}, {}, {}, { chest = {}, exit = {}, npc = {}, event = {} }
+    local specs = { { "KSFieldNPCCharacter_C", "npc" }, { "TreasureBoxBP_C", "chest" },
+                    { "LevelTrigger_C", "exit" } }
+    for _, ic in ipairs(icons) do   -- (each FindAllOf stalls the game 45-80 ms: only if needed)
+        if ic.reg:find("^EventTriggerBP") then specs[#specs + 1] = { "EventTriggerBP_C", "event" }; break end
+    end
+    for _, spec in ipairs(specs) do
         pcall(function()
             local list = FindAllOf(spec[1])
             if not list then return end
@@ -7332,27 +7370,54 @@ M.minimap_markers = function(pz)
                 local okv = false
                 pcall(function() okv = o:IsValid() end)
                 if okv then
-                    pcall(function() byname[o:GetFName():ToString()] = o end)
-                    if spec[2] == "npc" then
-                        pcall(function() npcs[o:GetAddress()] = true end)
-                    else
-                        local ax, ay = read_actor_pos(o)
-                        if ax then local t = pool[spec[2]]; t[#t + 1] = { o = o, x = ax, y = ay } end
+                    local ax, ay = read_actor_pos(o)
+                    if ax then
+                        local e = { o = o, x = ax, y = ay }
+                        pcall(function()
+                            local nm = o:GetFName():ToString()
+                            byname[nm] = byname[nm] or {}
+                            table.insert(byname[nm], e)
+                        end)
+                        local t = pool[spec[2]]; t[#t + 1] = e
                     end
+                    if spec[2] == "npc" then pcall(function() npcs[o:GetAddress()] = true end) end
+                    if spec[2] == "event" then pcall(function() events[o:GetAddress()] = true end) end
                 end
             end
         end)
     end
+    local function nearest(cands, ic, within)
+        local best, bd = nil, within
+        for _, c in ipairs(cands or {}) do
+            local d = math.sqrt((c.x - ic.x) ^ 2 + (c.y - ic.y) ^ 2)
+            if d < bd then best, bd = c.o, d end
+        end
+        return best, bd
+    end
+    M.pin_logged = M.pin_logged or {}
     local out = {}
     for _, ic in ipairs(icons) do
-        local actor = (ic.reg ~= "" and ic.reg ~= "None") and byname[ic.reg] or nil
+        local exitish = (ic.type == 14 or ic.type == 15)
+        local named = (ic.reg ~= "" and ic.reg ~= "None") and byname[ic.reg] or nil
+        local actor, how, pd = nil, "none", nil
+        if named then actor, pd = nearest(named, ic, exitish and 600 or 300); how = "name" end
         if not actor then
-            local cands = (ic.type == 5 and pool.chest) or ((ic.type == 14 or ic.type == 15) and pool.exit) or nil
-            local bd = (ic.type == 5) and 300 or 600
-            for _, c in ipairs(cands or {}) do
-                local d = math.sqrt((c.x - ic.x) ^ 2 + (c.y - ic.y) ^ 2)
-                if d < bd then actor, bd = c.o, d end
-            end
+            -- no actor of that name near the icon: the nearest chest / exit trigger, and for
+            -- the save point the nearest NPC (its book is one). Not for marked people: a
+            -- bystander next to them would lend the marker a wrong name.
+            local cands = (ic.type == 5 and pool.chest) or (exitish and pool.exit)
+                or (ic.type == 16 and pool.npc) or nil
+            actor, pd = nearest(cands, ic, (ic.type == 5) and 300 or (ic.type == 16) and 150 or 600)
+            how = actor and "nearest" or "icon"
+        end
+        local pk = ic.type .. "|" .. ic.reg .. "|" .. how
+        if not M.pin_logged[pk] then
+            M.pin_logged[pk] = true
+            local full = "-"
+            if actor then pcall(function() full = actor:GetFullName() end) end
+            log(string.format("MARKER pin type=%d reg=%s (%d of that name) by %s d=%s -> %s icon=(%.0f,%.0f)",
+                ic.type, ic.reg, named and #named or 0, how, pd and string.format("%.0f", pd) or "-",
+                full, ic.x, ic.y))
         end
         local x, y, z = ic.x, ic.y, pz
         if actor then
@@ -7376,8 +7441,10 @@ M.minimap_markers = function(pz)
             local okd, dest = pcall(M.exit_dest, actor)
             if okd and dest then label = kind .. ", to " .. dest end
         end
-        out[#out + 1] = { actor = actor, x = x, y = y, z = z, label = label,
-            walkcat = (ic.type == 14 or ic.type == 15) and "exit" or nil }
+        -- a story event's spot: the walker walks INTO it (walkcat "event")
+        local walkcat = (ic.type == 14 or ic.type == 15) and "exit" or nil
+        if events[aaddr] then label, walkcat = kind .. " place", "event" end
+        out[#out + 1] = { actor = actor, x = x, y = y, z = z, label = label, walkcat = walkcat }
     end
     return out
 end
