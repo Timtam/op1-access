@@ -5832,6 +5832,11 @@ local function nav_announce(prefix)
         local okd, dest, lv = pcall(M.exit_dest, t.actor)
         t.name = (okd and dest) and ("to " .. dest .. (lv and (", " .. lv) or "")) or false
     end
+    -- a shop says what it is ("Gasthaus", "Händler": M.shop_name), per focus
+    if t.cat == "shop" and t.name == nil and t.actor then
+        local oks, nm = pcall(M.shop_name, t.actor)
+        t.name = (oks and nm) or false
+    end
     local who = t.name and (t.name .. ", ") or ""
     -- the exit that leads on along the world map route (M.route_goal)
     if t.actor and (t.cat == "exit" or t.walkcat == "exit") then
