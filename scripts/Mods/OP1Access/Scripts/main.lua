@@ -357,6 +357,9 @@ local BLOCKING_CLASSES = {
     EquipmentMenuWidget_C = true, StatusMenuWidget_C = true,
     MenuSaveLoad_C = true,  OptionMenuWBP_C = true, OptionMenuSteamWBP_C = true,
     BattleCommandMenu_C = true, BattleResultPanelWidget_C = true, UIGameOver_C = true,
+    ShopMenuWidget_C = true,   -- shops and inns (the radar kept playing in a shop, 2026-11-14)
+    -- a menu's list or amount picker focused on its own (inside a shop, the equipment)
+    ListWidget_C = true, SelectItemNumWidget_C = true,
     ChatWidget_C = true, PartyChat_C = true,
     FieldCommandMenu_C = true,   -- path-action menu (J): mute radar / no wall-bump while open
     -- path-action RESULT scenes (Study/Search, Purchase/Steal, Allure/Lure, Inquire/Judge,
@@ -1287,6 +1290,172 @@ do
             M.await_first_item = true
         end
         M.say_item(label)
+    end
+end
+
+-- SHOP (user report 2026-11-14: in a shop the menu wasn't recognized -- the radar kept
+-- playing -- nor read). ShopMenuWidget_C, on the active stack (object dump): the top
+-- menu TopMenu_00..09 (MainMenuItemPanel_C, MenuText: "Kaufen", "Verkaufen",
+-- "Verlassen") with its cursor TopMenuSelectId; the title PartsMenuHeader.CaptionText
+-- ("Händler"); the money PartsPartyList.PlayerStatusPanel.TextHaveMoney/TextMoneyUnit;
+-- ProductList, a ListWidget_C (the goods: the list reader says them, M.ml_screen
+-- "shop"); SelectItemNum, a SelectItemNumWidget_C (itemNum, ItemPrice; texts Number,
+-- Price, MoneyUnit; labels PurchaseQuantity "Anzahl:", PurchasePrice "Gesamtkosten:") for
+-- how many to buy or sell: Collapsed (1) until a row is chosen, Visible (0) while it asks
+-- (log 2026-11-14). Inns use the same screen.
+-- The top menu shows only the shop's commands: TopShopCommands (TArray<uint8> @0x318) lists
+-- them, TopMenuSelectId indexes that list, and command k is panel TopMenu_0k, GameText
+-- eSHOP_CONTENT_0k (0 Kaufen, 1 Verkaufen, 2 Bleiben, 3 Ausrüstung, 4/5 Verlassen, 6
+-- Gruppe wechseln, 7 Geschichte lauschen, 8 Ruf wiederherstellen, 9 Weiterreisen). An inn
+-- read "Kaufen" for its "Bleiben" while the code took TopMenu_<cursor>.
+-- SHOP NAMES for the navigator (user request 2026-11-14: say what a shop is before
+-- talking to it): ShopTriggerBP_C.ShopLabel @0x370 ("Plain_L_A_SHOP_00") is a row of
+-- /Game/Shop/Database/ShopInfo (ShopInfoData: ShopName FName @0 = a GameText label,
+-- eSHOP_NAME_TEMP_03 "Gasthaus"; ShopType u8 @8), the title the shop menu shows.
+M.shop_name = function(actor)
+    if not (shim and shim.DtFind and shim.PeekFName) then return nil end
+    local a
+    pcall(function() a = actor:GetAddress() end)
+    if not a or a == 0 then return nil end
+    local c, n = shim.PeekFName(a + 0x370)
+    local dt = M.dt_addr("/Game/Shop/Database/ShopInfo")
+    local row = dt and c and c > 0 and shim.DtFind(dt, c, n)
+    if not row or row == 0 then
+        log(string.format("SHOPNAME %s: no row (table %s)", M.fname_str(c, n), tostring(dt)))
+        return nil
+    end
+    local nc, nn = shim.PeekFName(row)
+    local s = M.gametext(nc, nn)
+    log(string.format("SHOPNAME %s -> %s = %s, type %s", M.fname_str(c, n), M.fname_str(nc, nn), tostring(s),
+        tostring(shim.Peek(row + 8, "u8"))))
+    return s
+end
+do
+    local sh = {}
+    -- the shop's top menu: { { cmd, text, off }, ... } in menu order (nil: not readable)
+    sh.commands = function(w)
+        if not (shim and shim.Peek) then return nil end
+        local wa
+        pcall(function() wa = w:GetAddress() end)
+        if not wa or wa == 0 then return nil end
+        local arr, cnt = shim.Peek(wa + 0x318, "ptr"), shim.Peek(wa + 0x320, "i32")
+        if not arr or arr == 0 or type(cnt) ~= "number" or cnt <= 0 or cnt > 10 then return nil end
+        local out = {}
+        for i = 0, cnt - 1 do
+            local k = shim.Peek(arr + i, "u8")
+            if type(k) ~= "number" or k > 9 then return nil end
+            local p, t, off
+            pcall(function() p = w[string.format("TopMenu_%02d", k)] end)
+            if p then
+                t = M.wtext(p.MenuText)
+                pcall(function() off = p.IsUnEnable end)
+            end
+            if not t or M.placeholder(t) then t = M.gt_label(string.format("eSHOP_CONTENT_%02d", k)) end
+            out[#out + 1] = { cmd = k, text = t, off = off == true }
+        end
+        return out
+    end
+    M.shop_money = function(w)
+        local m, u
+        pcall(function()
+            local p = w.PartsPartyList.PlayerStatusPanel
+            m, u = M.wtext(p.TextHaveMoney), M.wtext(p.TextMoneyUnit)
+        end)
+        if m and not M.placeholder(m) then
+            return m .. ((u and not M.placeholder(u)) and (" " .. u) or "")
+        end
+        return nil
+    end
+    M.poll_shop = function()
+        local w, cls = M.get_active_screen()
+        if cls == "ShopMenuWidget_C" then
+            sh.w = w
+        elseif sh.open and (cls == "ListWidget_C" or cls == "SelectItemNumWidget_C") and sh.w then
+            -- its goods list or amount picker focused on its own: still the shop
+            local okv = false
+            pcall(function() okv = sh.w:IsValid() end)
+            if not okv then sh.w = nil; return end
+            w = sh.w
+        else
+            -- (a dialog over the shop, "Kaufen?": keep the state, it comes back)
+            if cls ~= "UICommonDialogBP_C" then
+                sh.top, sh.num, sh.open, sh.st, sh.w, sh.cmds = nil, nil, nil, nil, nil, nil
+            end
+            return
+        end
+        if not sh.open then
+            sh.open = true
+            local title
+            pcall(function() title = M.wtext(w.PartsMenuHeader.CaptionText) end)
+            local money = M.shop_money(w)
+            local mode, label
+            pcall(function() mode = w.ShopMode end)
+            pcall(function() label = w.ShopLabel:ToString() end)
+            local okc, cmds = pcall(sh.commands, w)
+            sh.cmds = okc and cmds or nil
+            local ct = {}
+            for _, c in ipairs(sh.cmds or {}) do
+                ct[#ct + 1] = string.format("%d=%s%s", c.cmd, tostring(c.text), c.off and "(off)" or "")
+            end
+            log(string.format("SHOP open: %s mode=%s label=%s money=%s commands=[%s]", tostring(title), tostring(mode),
+                tostring(label), tostring(money), table.concat(ct, " ")))
+            speak(((title and not M.placeholder(title)) and title or "Shop") .. (money and (", " .. money) or ""), true)
+            M.await_first_item = true
+        end
+        -- what the shop shows now (logged on change, to tell its states apart)
+        local mode, act, pv = nil, false, nil
+        local sn
+        pcall(function() mode = w.ShopMode end)
+        pcall(function() act = w.ProductList.ActiveFlag end)
+        pcall(function() sn = w.SelectItemNum end)
+        if sn then pv = M.wvis(sn) end
+        local st = string.format("mode=%s list=%s picker=%s", tostring(mode), tostring(act), tostring(pv))
+        if st ~= sh.st then sh.st = st; log("SHOP state " .. st) end
+        -- how many: the amount picker while it shows ("Anzahl: 1, Gesamtkosten: 50
+        -- Blätter", then "2, 100 Blätter" per step). The goods list stays active under it.
+        if pv == 0 or pv == 3 or pv == 4 then
+            local n, num, price, lq, lp
+            pcall(function() n = sn.itemNum end)
+            pcall(function() num, price = M.wtext(sn.Number), M.wtext(sn.Price) end)
+            pcall(function() lq, lp = M.wtext(sn.PurchaseQuantity), M.wtext(sn.PurchasePrice) end)
+            if not num or M.placeholder(num) then num = (type(n) == "number") and tostring(n) or nil end
+            if price and M.placeholder(price) then price = nil end
+            local key = tostring(num) .. "|" .. tostring(price)
+            if num and key ~= sh.num then
+                local first = sh.num == nil
+                sh.num = key
+                local cost = price and (price .. " " .. M.MONEY_SIGN) or nil
+                local s
+                if first then
+                    log(string.format("SHOP picker: %s %s / %s %s (itemNum %s)", tostring(lq), tostring(num), tostring(lp),
+                        tostring(price), tostring(n)))
+                    if not lq or M.placeholder(lq) then lq = M.gt_label("eSHOP_BUY_NUMBER") or "Quantity:" end
+                    if not lp or M.placeholder(lp) then lp = M.gt_label("eSHOP_BUY_TOTAL_PRICE") or "Total:" end
+                    s = lq .. " " .. num .. (cost and (", " .. lp .. " " .. cost) or "")
+                else
+                    s = num .. (cost and (", " .. cost) or "")
+                end
+                M.say_item(s)
+            end
+            return
+        end
+        sh.num = nil
+        -- the goods list in use: the list reader speaks
+        if act then sh.top = nil; return end
+        local ci
+        pcall(function() ci = w.TopMenuSelectId end)
+        if type(ci) ~= "number" or ci == sh.top then return end
+        sh.top = ci
+        local c = sh.cmds and sh.cmds[ci + 1]
+        local t = c and c.text
+        if not c then
+            -- the command list unreadable: the panel by the cursor (right for shops
+            -- that show every command from the first on)
+            pcall(function() t = M.wtext(w[string.format("TopMenu_%02d", ci)].MenuText) end)
+        end
+        t = (t and not M.placeholder(t)) and t or ("Item " .. (ci + 1))
+        if c and c.off then t = t .. ", unavailable" end
+        M.say_item(t)
     end
 end
 
@@ -2407,6 +2576,7 @@ M.ml_screen = function(addr, w)
             if is("ListEqp_Center") then return "equip", owner, "center" end
             if is("ListEqp_Right") then return "equip", owner, "right" end
         end
+        if cls == "ShopMenuWidget_C" and is("ProductList") then return "shop", owner end
         return nil   -- another screen's list (read plainly)
     end
     for _, o in ipairs(M.ml_list("MainMenuItemListWidget_C")) do
@@ -2626,7 +2796,28 @@ M.poll_menu_list = function()
         pcall(function() idx, stv = row.IndexInAll, row.ItemStatus end)
         if not c1 or M.placeholder(c1) then return end
         say = c1
-        if c2 and not M.placeholder(c2) then say = say .. ", " .. c2 end
+        if scr == "shop" then
+            -- the goods (2026-11-14 log): col1 the name, col2 how many you have, col3 the
+            -- price, unit the currency sign -- said as "Heiltraube, 50 Blätter, Zur Hand
+            -- 0" (the column header's own text, eSHOP_EQUIP_AFTER_BUY_NUM)
+            local c3, un = M.wtext(row.RefText_Col3), M.wtext(row.RefText_Unit)
+            M.shop_cols_logged = M.shop_cols_logged or {}
+            local lk = tostring(c1)
+            if not M.shop_cols_logged[lk] then
+                M.shop_cols_logged[lk] = true
+                log(string.format("SHOP row: col1=%s col2=%s col3=%s unit=%s status=%s", tostring(c1), tostring(c2),
+                    tostring(c3), tostring(un), tostring(stv)))
+            end
+            if c3 and not M.placeholder(c3) then
+                say = say .. ", " .. c3 .. " " .. ((un and not M.placeholder(un)) and un or M.MONEY_SIGN)
+            end
+            if c2 and not M.placeholder(c2) then
+                say = say .. ", " .. (M.gt_label("eSHOP_EQUIP_AFTER_BUY_NUM") or "on hand") .. " " .. c2
+            end
+            if stv == 1 then say = say .. ", unavailable" end
+        elseif c2 and not M.placeholder(c2) then
+            say = say .. ", " .. c2
+        end
         if scr == "items" and stv == 1 then say = say .. ", not usable here" end
         if scr == "abilities" then
             if c1 == "???" then say = "Locked skill"
@@ -3473,6 +3664,7 @@ M.fast_steps = {
     { "mainmenu", function() M.poll_mainmenu() end },
     { "worldmap", function() M.poll_worldmap() end },
     { "gameover", function() M.poll_gameover() end },
+    { "shop", function() M.poll_shop() end },
     { "tutorial", function() M.poll_tutorial() end },
     { "fieldcmd", function() M.poll_fieldcommand() end },
 }
