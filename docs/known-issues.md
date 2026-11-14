@@ -3,18 +3,26 @@
 Problems noticed in existing features that are not fixed yet. Newest first. When one
 gets fixed, delete its entry (the commit message keeps the history).
 
-## Battles (user report 2026-11-14)
+## Battles
 
-- **Battle menus are not read at all.** Command menu (Angriff, Gelehrter-Fertigkeiten,
-  Objekt, Verteidigen, Fliehen), skills, items, target choice, turn order and the result
-  screen are silent; only the battle tutorials are read. In battle the UI manager's
-  focused screen is `InputWrapper_C`. The battle UI classes are in the object dump
-  (`BattleCommandMenu_C` / `BattleCommandMenuItem_C`, `BattleCommandHelpWindow_C`,
-  `BattleTargetCursor_C`, `BattleEnemyStatus_C`, `WeakStatusIcon_C`, `BreakStatusIcon_C`,
-  `ActionOrderTimeLine_C`, `BattleResultPanelWidget_C`).
-- **Enemy information needs shortcuts:** names, HP if shown, shield points, revealed
-  weaknesses, break state, turn order -- on keys, without having to target each enemy.
-  (Battles are gated since 2026-11-14: the navigator keys say "In battle".)
+Read since 2026-11-14 (84bfbf6, ece7854): command menus, skill and item lists with
+cost or count and help line, boost level, targets, action names, the result screen.
+Keys 1-5 read an enemy, 6-9 a party member, 0 the turn order. Tested with Cyrus alone
+against one Eissentinel in the study dungeon. Not yet seen or checked:
+
+- **Several enemies or party members.** Enemies are numbered in the order of their
+  panels (widget order), the turn order lists icons in widget order. Whether both match
+  the screen's left-to-right order needs a fight with more than one enemy. Party keys
+  6-9 were only tried with one traveler.
+- **"N targets" for an all-enemies skill** was not heard: Feuerball against one enemy
+  showed a single target.
+- **Not read at all:** buffs and debuffs and other status icons (`BuffIcon_C`, the
+  enemy's `DiseaseIconList`), damage numbers, item drops on the result screen (the
+  reader exists, no drop yet), what a boosted command does, and the boost help.
+- **The same action twice in a row is said once** (the banner text did not change);
+  the actor of an action is not named.
+- **Lowering the boost** (the game's key for it is unknown) and whether keys 0-9 do
+  anything in OT's own controls were not checked; no side effect was seen in 5 fights.
 
 ## Walker (user report 2026-11-14)
 
