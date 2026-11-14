@@ -306,7 +306,7 @@ local BLOCKING_CLASSES = {
     MainMenuJobWidget_C = true, MainMenuTutorialListWidget_C = true, MainMenuMissionRecord_C = true,
     EquipmentMenuWidget_C = true, StatusMenuWidget_C = true,
     MenuSaveLoad_C = true,  OptionMenuWBP_C = true, OptionMenuSteamWBP_C = true,
-    BattleCommandMenu_C = true, BattleResultPanelWidget_C = true,
+    BattleCommandMenu_C = true, BattleResultPanelWidget_C = true, UIGameOver_C = true,
     ChatWidget_C = true, PartyChat_C = true,
     FieldCommandMenu_C = true,   -- path-action menu (J): mute radar / no wall-bump while open
     -- path-action RESULT scenes (Study/Search, Purchase/Steal, Allure/Lure, Inquire/Judge,
@@ -1195,6 +1195,48 @@ do
         -- it on demand. (Both requested.)
         if opening and M.read_objective and not M.mm_no_objective then M.read_objective(true) end
         M.mm_no_objective = nil
+    end
+end
+
+-- GAME OVER (user report 2026-11-14: after the party fell, the menu was silent).
+-- UIGameOver_C, on the active stack (object dump): NowCursorPos @0x2D0 indexes CursorList
+-- @0x2C0, the GameoverItemWidget_C items Save @0x288 ("Weiter ab letztem Speicherpunkt")
+-- and Title @0x2A8 ("Zum Titelbildschirm"), each showing its label in Text_Content;
+-- BackToTitleOnly @0x2D4. "Spiel vorbei" itself is a picture.
+do
+    local go = { idx = nil }
+    M.poll_gameover = function()
+        local w, cls = M.get_active_screen()
+        if cls ~= "UIGameOver_C" then go.idx = nil; return end
+        local ci
+        pcall(function() ci = w.NowCursorPos end)
+        if type(ci) ~= "number" or ci == go.idx then return end
+        local opening = (go.idx == nil)
+        go.idx = ci
+        local items = {}
+        pcall(function()
+            w.CursorList:ForEach(function(_, v)
+                local it = v:get()
+                local s
+                pcall(function() s = it.Text_Content:GetText():ToString() end)
+                items[#items + 1] = s or ""
+            end)
+        end)
+        if #items == 0 then   -- the two items by name
+            for _, f in ipairs({ "Save", "Title" }) do
+                local s
+                pcall(function() s = w[f].Text_Content:GetText():ToString() end)
+                if s and s ~= "" then items[#items + 1] = s end
+            end
+        end
+        local label = items[ci + 1]
+        if not label or label == "" then label = "Item " .. tostring(ci + 1) end
+        if opening then
+            log(string.format("GAMEOVER items=[%s] cursor=%d", table.concat(items, "|"), ci))
+            speak("Game over", true)
+            M.await_first_item = true
+        end
+        M.say_item(label)
     end
 end
 
@@ -3166,6 +3208,7 @@ M.fast_steps = {
     { "options", function() M.poll_options() end },
     { "mainmenu", function() M.poll_mainmenu() end },
     { "worldmap", function() M.poll_worldmap() end },
+    { "gameover", function() M.poll_gameover() end },
     { "tutorial", function() M.poll_tutorial() end },
     { "fieldcmd", function() M.poll_fieldcommand() end },
 }
