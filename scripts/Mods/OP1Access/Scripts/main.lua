@@ -1401,6 +1401,20 @@ M.shop_name = function(actor)
     log(string.format("SHOPNAME %s -> %s, type %s = %s", M.fname_str(c, n), raw, tostring(ty), tostring(s)))
     return s
 end
+-- a shop trigger's ShopType from the ShopInfo row (0 Plattner, 1 Händler, 2 Krämer,
+-- 3 Gasthaus, 4 Wirtshaus), or nil
+M.shop_type = function(actor)
+    if not (shim and shim.DtFind and shim.PeekFName and shim.Peek) then return nil end
+    local a
+    pcall(function() a = actor:GetAddress() end)
+    if not a or a == 0 then return nil end
+    local c, n = shim.PeekFName(a + 0x370)
+    local dt = M.dt_addr("/Game/Shop/Database/ShopInfo")
+    local row = dt and c and c > 0 and shim.DtFind(dt, c, n)
+    if not row or row == 0 then return nil end
+    local ty = shim.Peek(row + 8, "u8")
+    return type(ty) == "number" and ty or nil
+end
 do
     local sh = {}
     -- command (ESHOPMENU_MODE) -> eSHOP_CONTENT_xx: 0 Kaufen, 1 Verkaufen, 2 Bleiben, 3
@@ -5973,9 +5987,91 @@ NV.resolve_name = function(o)
     return r.name
 end
 
+-- SHOPKEEPERS (2026-11-15, user report: the walk to the Wirtshaus in Atlasdam ended in
+-- the doorway, the keeper still to be found by hand). A shop's ShopTriggerBP_C is a
+-- 40-unit box just inside the entrance (the radar's shop icon), not the counter. The
+-- keeper is the person whose talk event is a system one: PlacementData.EventLabel_A..E
+-- "SC_SYS_SH0_*" (the shop event, cmd 7210) or "SC_SYS_BA0_*" (the tavern, cmd 7200;
+-- Atlasdam's barkeep: SC_SYS_BA0_PLL000). Townsfolk carry "SC_NP_*" talk scripts, the
+-- save point's book SC_SYS_SA0. A shop's target is then its keeper: the one nearest to
+-- the trigger on its floor within 1500 (an event param naming the shop label wins).
+-- Hidden ones count: a house's people are hidden until you go in. One FindAllOf per
+-- area (keepers are cached; their positions are read fresh).
+NV.keepers = function()
+    if NV.kp_area == M.area_said and NV.kp_list then return NV.kp_list end
+    local out = {}
+    local list
+    pcall(function() list = FindAllOf("KSFieldNPCCharacter_C") end)
+    for _, o in pairs(list or {}) do
+        local okv = false
+        pcall(function() okv = o:IsValid() end)
+        if okv then
+            local kind, params = nil, {}
+            pcall(function()
+                local pd = o.PlacementData
+                for _, L in ipairs({ "A", "B", "C", "D", "E" }) do
+                    local el = ""
+                    pcall(function() el = pd["EventLabel_" .. L]:ToString() end)
+                    if el:find("^SC_SYS_SH") or el:find("^SC_SYS_BA") then
+                        kind = kind or el
+                        for i = 1, 3 do
+                            pcall(function()
+                                local pv = pd["EventParam_" .. L .. "_" .. i]:ToString()
+                                if pv ~= "None" and pv ~= "" then params[pv] = true end
+                            end)
+                        end
+                    end
+                end
+            end)
+            if kind then out[#out + 1] = { actor = o, kind = kind, params = params } end
+        end
+    end
+    log(string.format("SHOPKEEPERS %d in %s", #out, tostring(M.area_said)))
+    NV.kp_list, NV.kp_area = out, M.area_said
+    return out
+end
+NV.shop_keeper = function(trig)
+    local tx, ty, tz = read_actor_pos(trig)
+    if not tx then return nil end
+    local label = ""
+    pcall(function() label = trig.ShopLabel:ToString() end)
+    -- a tavern (ShopType 4) is run by a barkeep (SC_SYS_BA*), any other shop by someone
+    -- with the shop event (SC_SYS_SH*). Atlasdam has a barkeep only: its armorer, store and
+    -- merchant open at their trigger, so they keep it as their target.
+    local okt, stype = pcall(M.shop_type, trig)
+    local want = (okt and stype == 4) and "^SC_SYS_BA" or "^SC_SYS_SH"
+    local best, bd = nil, 1500
+    for _, k in ipairs(NV.keepers()) do
+        local okv = false
+        pcall(function() okv = k.actor:IsValid() end)
+        if okv and k.kind:find(want) then
+            local x, y, z = read_actor_pos(k.actor)
+            if x and math.abs((z or tz) - tz) < 300 then
+                local d = math.sqrt((x - tx) ^ 2 + (y - ty) ^ 2)
+                if k.params[label] then d = d - 10000 end   -- the keeper named for this shop wins
+                if d < bd then best, bd = k, d end
+            end
+        end
+    end
+    if best then
+        log(string.format("SHOPKEEPER for %s: %s (%s)", label, tostring(best.actor:GetFName():ToString()), best.kind))
+        return best.actor
+    end
+    return nil
+end
+
 -- A target is an actor (read live: NPCs wander) or, for minimap markers without a
--- matching actor, a fixed position. Returns x, y, z (z may be nil).
+-- matching actor, a fixed position. Returns x, y, z (z may be nil). A shop's position
+-- is its keeper's (NV.shop_keeper), when one was found.
 NV.tpos = function(t)
+    if t.keeper then
+        local okk = false
+        pcall(function() okk = t.keeper:IsValid() end)
+        if okk then
+            local x, y, z = read_actor_pos(t.keeper)
+            if x then return x, y, z end
+        end
+    end
     if t.actor then
         local x, y, z = read_actor_pos(t.actor)
         if x then return x, y, z end
@@ -6042,6 +6138,16 @@ local function nav_build_list()
                     local e = { actor = o, cat = c.name, known = true, name = nm,
                         d = math.sqrt((ox - px) ^ 2 + (oy - py) ^ 2) }
                     if c.name == "chest" then pcall(function() e.addr = o:GetAddress() end) end
+                    if c.name == "shop" then
+                        -- the shop's target is its keeper (NV.shop_keeper), not the
+                        -- trigger at the entrance
+                        local okk, k = pcall(NV.shop_keeper, o)
+                        if okk and k then
+                            e.keeper = k
+                            local kx, ky = read_actor_pos(k)
+                            if kx then e.d = math.sqrt((kx - px) ^ 2 + (ky - py) ^ 2) end
+                        end
+                    end
                     NV.list[#NV.list + 1] = e
                 end
             end

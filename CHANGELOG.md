@@ -49,7 +49,8 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   bump sounds.
 - A navigator: categories with Home and End, targets with Page Up and Page Down, Ctrl+Backspace
   for directions. It says which chests are opened, which targets can't be reached, where exits
-  lead and how dangerous the area behind them is, and what kind of shop a shop is.
+  lead and how dangerous the area behind them is, and what kind of shop a shop is. A
+  tavern leads to its barkeep, not to the door.
 - A walker: Backspace walks to the target over a computed route, also up and down narrow
   stairs and around people, opens doors on the way and frees itself when stuck. When
   someone blocks the only way, it says who ("Armer is in the way").
