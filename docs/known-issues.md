@@ -19,6 +19,16 @@ the game:
 
 Open:
 
+- **The walk to a tavern now ends at the barkeep — checked in Atlasdam only.** User
+  report 2026-11-15: the walk to the "Wirtshaus" went in at the door and stopped there.
+  A shop's ShopTriggerBP_C is a 40-unit box just inside the entrance; the barkeep stands
+  ~520 farther in, behind the bar. A shop's target is now its keeper: the person whose
+  talk event is a system one (PlacementData.EventLabel "SC_SYS_BA0_*" for a tavern's
+  barkeep, "SC_SYS_SH0_*" for a shopkeeper), nearest to the trigger. Heard: door opened,
+  "Arrived" beside the "Wirtshaus-Wirt", his talk hint up. The inn, the armorer and the
+  merchants of Atlasdam have no such person: their trigger is the counter and says "<name>,
+  E" there, so they keep the trigger (the walk to the Gasthaus ended at "Gasthaus, E").
+  Other towns' shops weren't checked; a shop with a keeper "SC_SYS_SH0" wasn't seen.
 - **Opening "Geschichte lauschen" stalls the game once for ~80 ms** ("FAST polls slow:
   [tavern=80]"), each time it opens. The reader's own part takes under 20 ms; a "TAVERN
   story read" line breaks it down when it is slow.
