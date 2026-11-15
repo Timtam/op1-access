@@ -834,6 +834,16 @@ end
 -- KSUIManager:GetActiveStack() returns it. Cached manager handle, re-found if it dies.
 -- On M (not a chunk local) to stay under the main-chunk 200-local limit.
 M.get_active_screen = function()
+    -- inside one run of the fast screen polls the screen can't change: one GetActiveStack
+    -- call per run instead of one per reader (2026-11-15: fewer UFunction calls from game-
+    -- thread jobs, after a c0000264 in UE4SS's hook machinery mid-session)
+    local fr = M.fast_run
+    if fr and fr.done then return fr.w, fr.cls end
+    local w, cls = M.get_active_screen_raw()
+    if fr then fr.w, fr.cls, fr.done = w, cls, true end
+    return w, cls
+end
+M.get_active_screen_raw = function()
     local kuim = M.ui_manager
     local ok = false
     if kuim then pcall(function() ok = kuim:IsValid() end) end
@@ -4016,6 +4026,7 @@ M.fast_steps = {
 }
 M.fast_polls = function()
     M.fast_q = nil
+    M.fast_run = {}
     local t0, slow = os.clock(), nil
     for _, s in ipairs(M.fast_steps) do
         local ts = os.clock()
@@ -4023,6 +4034,7 @@ M.fast_polls = function()
         local d = os.clock() - ts
         if d > 0.015 then slow = (slow and (slow .. " ") or "") .. string.format("%s=%.0f", s[1], d * 1000) end
     end
+    M.fast_run = nil
     local dt = os.clock() - t0
     -- a slow run stalls the game: log it, at most every 10 s, with the count meanwhile
     if dt > 0.02 then
