@@ -564,7 +564,9 @@ M.reg_add = function(w, cls, label)
     for i = 1, #scene_widgets do
         if scene_widgets[i][4] == addr then return end   -- already registered + live
     end
-    scene_widgets[#scene_widgets + 1] = { w, cls, label, addr }
+    -- [5]: a handle (M.handle) -- the polls check it with the shim before UE4SS touches
+    -- the widget again (see poll_active_menu)
+    scene_widgets[#scene_widgets + 1] = { w, cls, label, addr, M.handle and M.handle(w) or nil }
     if cls == "TitlePlayerSelect_C" then cs_instance = w end
 end
 
@@ -589,7 +591,7 @@ local function on_widget_created(NewObject)
     -- whatever scene widget is currently visible — handles back-out
     -- transitions (e.g. closing Save/Load and returning to Title) where
     -- no UIOpen / UIClose fires.
-    scene_widgets[#scene_widgets + 1] = {NewObject, cls, label}
+    scene_widgets[#scene_widgets + 1] = { NewObject, cls, label, nil, M.handle and M.handle(NewObject) or nil }
     if cls == "TitlePlayerSelect_C" then
         cs_instance = NewObject
         -- "Choose your character" normally comes from the poll loop's visibility
@@ -920,15 +922,22 @@ end
 M.get_active_screen_raw = function()
     local kuim = M.ui_manager
     local ok = false
-    if kuim then pcall(function() ok = kuim:IsValid() end) end
+    -- (the kept manager only while the shim's reads show the same object: M.handle_ok)
+    if kuim and (not M.handle_ok or M.handle_ok(M.ui_manager_h)) then pcall(function() ok = kuim:IsValid() end) end
     if not ok then
-        M.ui_manager = nil
+        M.ui_manager, M.ui_manager_h = nil, nil
         -- FindFirstOf walks every object (~45 ms) while no manager exists yet (boot):
         -- at most once a second, not on every call of every reader
         local now = os.clock()
         if now - (M.uim_tried or -9) < 1.0 then return nil, nil end
         M.uim_tried = now
-        pcall(function() local x = FindFirstOf("KSUIManager"); if x and x:IsValid() then M.ui_manager = x end end)
+        pcall(function()
+            local x = FindFirstOf("KSUIManager")
+            if x and x:IsValid() then
+                M.ui_manager = x
+                M.ui_manager_h = M.handle and M.handle(x) or nil
+            end
+        end)
         kuim = M.ui_manager
     end
     if not kuim then return nil, nil end
@@ -995,13 +1004,21 @@ local function poll_active_menu()
     if M.menu_unsafe then return end
     local kept = {}
     local best_idx, best_class, best_label = 0, nil, nil
+    if M.trace then log("TR active loop " .. #scene_widgets) end
 
     for i = 1, #scene_widgets do
         local entry = scene_widgets[i]
         local w, cls, label = entry[1], entry[2], entry[3]
 
+        -- The shim's guarded reads first (entry[5], M.handle): a title widget freed
+        -- while a save loads from the title after a game over took the game down in
+        -- UE4SS's IsA, past any pcall, twice (2026-11-15; the trace's last line was
+        -- this poll). Only a handle that still matches may be touched by UE4SS.
         local alive = false
-        pcall(function() alive = w and w:IsValid() end)
+        if entry[5] and M.handle_ok(entry[5]) then
+            pcall(function() alive = w and w:IsValid() end)
+        end
+        if not alive and w == cs_instance then cs_instance = nil end
         if alive then
             kept[#kept + 1] = entry
             if TITLE_FLOW[cls] and widget_is_visible(w) then
@@ -1018,7 +1035,9 @@ local function poll_active_menu()
 
     -- A modal confirm dialog (UICommonDialogBP) takes priority: poll_dialog
     -- announces it and we suppress the underlying screen while it is open.
+    if M.trace then log("TR active dialog") end
     if poll_dialog and poll_dialog() then return end
+    if M.trace then log("TR active title") end
 
     -- Debounced announce (see POLL_ANNOUNCE_SETTLE): only speak once best_class
     -- has held steady, so a screen switch's transient widgets aren't each read out.
@@ -1060,6 +1079,7 @@ local function poll_active_menu()
     -- (IntProperty at 0x250). Reading it each tick gives the current cursor
     -- index even though we can't hook the BP-only cursor UFunctions.
     poll_title_selection(best_class)
+    if M.trace then log("TR active cs") end
 
     -- Bespoke path for TitlePlayerSelect_C — the free-cursor character
     -- map. Reads the localized name + class from PlayerPanel_C's
@@ -2579,6 +2599,7 @@ M.event_menus_tick = function()
     M.evm_t, M.evm_queued = now, now
     M.in_gt(function()
         M.evm_queued = nil
+        if M.trace then log("TR evmenus") end
         pcall(M.poll_event_menus)
     end)
 end
@@ -3327,6 +3348,7 @@ M.menu_lists_tick = function()
     M.ml.t, M.ml.queued = now, now
     M.in_gt(function()
         M.ml.queued = nil
+        if M.trace then log("TR menulist") end
         pcall(M.poll_menu_list)
     end)
 end
@@ -3922,6 +3944,7 @@ M.dmg_push = function(s)
 end
 M.dmg_hook = function(kind)
     return function(ctx, p1, p2, p3)
+        if M.trace then log("TR hook dmg " .. kind) end
         pcall(function()
             if kind == "damage" then
                 -- DamageType seen (2026-11-14): 0 a plain hit, 3 a weakness (shield down),
@@ -3976,6 +3999,7 @@ M.bt_actor = function()
     return nil
 end
 M.act_hook = function(ctx)
+    if M.trace then log("TR hook act") end
     pcall(function()
         local s = M.wtext(ctx:get().CommandName)
         if not s or M.placeholder(s) then return end
@@ -4216,6 +4240,7 @@ M.fast_polls = function()
     local t0, slow = os.clock(), nil
     for _, s in ipairs(M.fast_steps) do
         local ts = os.clock()
+        if M.trace then log("TR fast " .. s[1]) end   -- (crash hunting: the last line names it)
         pcall(s[2])
         local d = os.clock() - ts
         if d > 0.015 then slow = (slow and (slow .. " ") or "") .. string.format("%s=%.0f", s[1], d * 1000) end
@@ -8885,7 +8910,12 @@ local function start_pump_loop()
         if not M.fg_ok() then return false end   -- unfocused: skip nav_drive + pump (game calls fault)
         -- run on the game thread (this LoopAsync is a background thread; reading actors
         -- here races the game's actor frees -> uncatchable crash)
-        M.in_gt(function() pcall(nav_drive); pcall(radar_pump, "loop") end)
+        M.in_gt(function()
+            if M.trace then log("TR loop navdrive") end
+            pcall(nav_drive)
+            if M.trace then log("TR loop pump") end
+            pcall(radar_pump, "loop")
+        end)
         return false
     end)
 end
@@ -10402,6 +10432,7 @@ radar_pump = function(src)
     end
     do
         local ev = false
+        if M.trace then log("TR pump event") end
         pcall(function()
             local ef = StaticFindObject("/Script/Octopath_Traveler.Default__EventFunction")
             if ef then
@@ -10409,6 +10440,7 @@ radar_pump = function(src)
                 if not ev then ev = ef:IsEventPlayTheater() and true or false end
             end
         end)
+        if M.trace then log("TR pump battle") end
         -- A BATTLE is no event to the game, but the field must stand still too: the
         -- navigator, walker and radar kept going in battle (user, 2026-11-14).
         -- KSGameStatics:GetBattleMode needs a world object for its context: the
@@ -10455,7 +10487,9 @@ radar_pump = function(src)
         elseif not ev then
             -- position reads PAUSE during events (scenes teleport the player step by
             -- step; freezing WS.px makes the whole displacement register as ONE jump).
+            if M.trace then log("TR pump player") end
             local p = get_player_obj()
+            if M.trace then log("TR pump fade") end
             if not p then
                 WS.present_since = nil        -- no field player: title / load in progress
                 settling = true
@@ -10499,7 +10533,9 @@ radar_pump = function(src)
         -- screen is stable and its menus must read, so this is fade/event-specific
         -- (narrower than world_susp). WS.fade is nil on the title -> false there.
         local fade_now = false
+        if M.trace then log("TR pump fade2") end
         if WS.fade then pcall(function() fade_now = (WS.fade:IsFadeVisible() == true) end) end
+        if M.trace then log("TR pump after") end
         -- A screen fade is always a teardown window. An EVENT is only one IN-GAME
         -- (cutscene) -- on the TITLE screen IsEventPlaying is true (boot/title sequence)
         -- but the menus are stable and must read, so qualify ev with "a field player
@@ -10563,8 +10599,10 @@ radar_pump = function(src)
     -- so this fires only for the screen actually on display.
     local menu_open, talk_open = false, false
     if not world_susp then
+        if M.trace then log("TR pump area/popup") end
         if pump_count % 3 == 0 then pcall(M.poll_area_name) end
         if pump_count % 2 == 1 then pcall(M.poll_action_popup) end
+        if M.trace then log("TR pump active") end
         -- Immediate check: the focused screen (active stack) being a blocking menu mutes
         -- the radar at once -- the scene_widgets scan below only sees it after the ~5Hz
         -- registry scan runs, which left a lag (e.g. the J path-action menu kept the radar
@@ -10598,12 +10636,14 @@ radar_pump = function(src)
                 M.fc_busy_since = nil
             end
         end
+        if M.trace then log("TR pump vis") end
         if not menu_open then
             for i = 1, #scene_widgets do
                 local e = scene_widgets[i]
                 if BLOCKING_CLASSES[e[2]] and widget_is_visible(e[1]) then menu_open = true; break end
             end
         end
+        if M.trace then log("TR pump balloon") end
         -- speech-bubble conversation (path actions run without IsEventPlaying). Between
         -- two lines the balloon is briefly gone (<1 s, seen with NPC dialogue): hold the
         -- gate 1 s past the last bubble so the radar doesn't blip between lines.
@@ -10642,6 +10682,7 @@ radar_pump = function(src)
             end
         end
     end
+    if M.trace then log("TR pump explore=" .. tostring(explore)) end
     if explore then
         -- lazy audio bring-up on the first field pump
         if WS.px and not audio_inited and not audio_autotry and shim and shim.AudioInit then
