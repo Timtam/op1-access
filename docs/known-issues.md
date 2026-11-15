@@ -392,6 +392,12 @@ Open:
 - **A picked-up hidden item stays on the minimap.** Its "!" was still there a minute
   later, so the marker list keeps it, as "hidden item, collected" (the chest's open
   flag).
+- **A revealed hidden item makes no chest sound until it is opened** (user report
+  2026-11-15). The game creates its chest during the path action, which counts as a
+  menu, not a scene: the radar's rescan after it uses the kept chest list or runs before
+  the chest exists, and the new-marker check drops that list 2 s later without a new
+  rescan. The next rescan comes after the "Erhalten" dialog, so the usual chest sound
+  starts only then. Not fixed yet.
 - **The walker can stop on the wrong side of a hidden item.** The tavern guest's item in
   Atlasdam lies behind a ledge: coming from the tavern the walk said "Arrived" 138 away
   and no "Untersuchen, E" came (blocked to the right and down); coming from upstairs it
