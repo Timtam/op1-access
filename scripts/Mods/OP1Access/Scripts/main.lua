@@ -5156,6 +5156,96 @@ end
 -- and speak the nearest one's direction + distance. The direction frame + distance
 -- scale are UNCALIBRATED here -- the log prints raw player/nearest deltas so we can
 -- calibrate from one field test (same way the char-select axes were fixed). Ctrl+F8.
+-- OBJECT LISTS, KEPT (2026-11-15, user: the navigator's categories answered slowly).
+-- A kept object handle is touched again only after the shim's SEH-guarded reads show its
+-- memory still holds the same object: same vtable and class, not being destroyed
+-- (UObjectBase in 4.18: ObjectFlags +0x8, ClassPrivate +0x10; RF_BeginDestroyed 0x8000,
+-- RF_FinishDestroyed 0x10000). UE4SS's own IsValid on a freed object can fault inside IsA,
+-- which pcall can't catch (see beacon_step).
+M.handle = function(o)
+    local h
+    pcall(function()
+        local a = o:GetAddress()
+        if a and a ~= 0 then
+            h = { o = o, a = a, vt = shim.Peek(a, "ptr"), cls = shim.Peek(a + 0x10, "ptr") }
+        end
+    end)
+    if h and h.vt and h.cls then return h end
+    return nil
+end
+M.handle_ok = function(h)
+    if not h then return false end
+    local vt, cls, fl
+    pcall(function()
+        vt = shim.Peek(h.a, "ptr"); cls = shim.Peek(h.a + 0x10, "ptr"); fl = shim.Peek(h.a + 8, "i32")
+    end)
+    return vt == h.vt and cls == h.cls and fl ~= nil and (math.floor(fl) & 0x18000) == 0
+end
+
+-- The level the player is in (LevelManagerBP_C.CurrentLevelID, e.g. 77 = the academy's
+-- map). One level holds several areas (the banner changes between them, nothing loads),
+-- and it changes the moment a new map is there -- the area banner only a second later.
+-- nil while a fade is on or before the manager is found.
+M.level_id = function()
+    if M.fade_now then return nil end
+    local h = M.levelmgr_h
+    if not M.handle_ok(h) then
+        h = nil
+        M.levelmgr_h = nil
+        local now = os.clock()
+        if now - (M.levelmgr_t or -10) < 5.0 then return nil end
+        M.levelmgr_t = now
+        pcall(function()
+            local lm = FindFirstOf("LevelManagerBP_C")
+            if lm and lm:IsValid() then h = M.handle(lm) end
+        end)
+        M.levelmgr_h = h
+        if not h then return nil end
+    end
+    local id
+    pcall(function() id = h.o.CurrentLevelID end)
+    return id
+end
+
+-- Every FindAllOf walks all objects: 45-80 ms on the game thread. A category press did
+-- one or two (its class, and the house doors for "inside a building"), the marker
+-- category three or four (people, chests, exits, events), and the radar's rescan after
+-- every dialogue five. The lists are now kept per class while you stay in one level:
+-- dropped when a scene or a transition starts or ends (the map may change behind it),
+-- when the level changes, after ttl seconds (callers: 10 min; with 30 / 60 s, and 2 min
+-- for people, a press a minute later still scanned), when a new marker comes up
+-- (M.marker_watch), and as soon as one kept object is gone.
+-- The radar's rescan right after you arrive fills them, so the navigator's first press
+-- is quick too. (Keyed by the area banner first: it comes a second after the rescan,
+-- so every first press in an area scanned again, 80-160 ms.)
+M.fa_cache = {}
+M.find_all = function(cls, ttl)
+    local key = M.level_id() or M.area_said
+    local c = M.fa_cache[cls]
+    local now = os.clock()
+    if c and c.key == key and now - c.t < (ttl or 30) then
+        local all_ok = true
+        for _, h in ipairs(c.hs) do
+            if not M.handle_ok(h) then all_ok = false; break end
+        end
+        if all_ok then return c.list end
+        log("FINDALL " .. cls .. ": a kept object is gone, scanning again")
+    end
+    local hs, list = {}, {}
+    pcall(function()
+        local all = FindAllOf(cls)
+        if all then
+            for _, o in pairs(all) do
+                local h = M.handle(o)
+                if h then hs[#hs + 1] = h; list[#list + 1] = o end
+            end
+        end
+    end)
+    M.fa_cache[cls] = { key = key, t = now, hs = hs, list = list }
+    log(string.format("FINDALL %s: %d in %.0f ms (level %s)", cls, #list, (os.clock() - now) * 1000, tostring(key)))
+    return list
+end
+M.fa_flush = function() M.fa_cache = {} end
 local NAV_CLASSES = {
     { cls = "TreasureBoxBP_C",       name = "chest" },
     { cls = "LevelTrigger_C",        name = "exit" },     -- area transitions (the BP, not the C++ base)
@@ -5640,8 +5730,9 @@ local function beacon_rescan()
     beacon_objs = {}
     beacon_slotof = {}
     for _, c in ipairs(NAV_CLASSES) do
-        local list = nil
-        pcall(function() list = c.cls and FindAllOf(c.cls) end)
+        -- (the kept lists: after a scene or transition they were dropped, so this scans
+        -- afresh then; after a door jump in the same level they are still good)
+        local list = c.cls and M.find_all(c.cls, 600) or nil
         if list then
             for _, o in pairs(list) do
                 local okv = false
@@ -6018,9 +6109,7 @@ end
 NV.keepers = function()
     if NV.kp_area == M.area_said and NV.kp_list then return NV.kp_list end
     local out = {}
-    local list
-    pcall(function() list = FindAllOf("KSFieldNPCCharacter_C") end)
-    for _, o in pairs(list or {}) do
+    for _, o in ipairs(M.find_all("KSFieldNPCCharacter_C", 600)) do
         local okv = false
         pcall(function() okv = o:IsValid() end)
         if okv then
@@ -6132,8 +6221,7 @@ local function nav_build_list()
         NV.list_done(px, py)
         return
     end
-    local list = nil
-    pcall(function() list = FindAllOf(c.cls) end)
+    local list = M.find_all(c.cls, 600)
     if not list then return end
     -- NPC category: list ONLY talkable NPCs (property-detected or learned). Other
     -- categories list everything. A throttled per-NPC log surfaces the property
@@ -6304,8 +6392,7 @@ M.house_door_for = function(tx, ty, tz, px, py, pz, dolog, allow_plane)
     if M.house_cache_area ~= M.area_said then
         M.house_cache, M.plane_cache, M.house_cache_area = {}, {}, M.area_said
     end
-    local list
-    pcall(function() list = FindAllOf("HouseEnterTriggerBP_C") end)
+    local list = M.find_all("HouseEnterTriggerBP_C", 600)
     if not list then return nil end
     local best, bestd, besthow = nil, 1e9, nil
     local pbest, pbestd = nil, 1e9
@@ -6470,6 +6557,7 @@ local function nav_cat_cycle(delta)
     -- on the world map Home / End go through the regions
     if M.wm_region_cycle and M.wm_region_cycle(delta) then return end
     if world_susp then speak(M.battle_now and "In battle" or "Scene running"); return end
+    local t0 = os.clock()
     for _ = 1, #NAV_CLASSES do
         NV.cat = ((NV.cat - 1 + delta) % #NAV_CLASSES) + 1
         nav_build_list()
@@ -6488,6 +6576,7 @@ local function nav_cat_cycle(delta)
                 extra = string.format(", %d opened", nopen)
             end
             nav_announce(string.format("%s, %d targets%s. ", NAV_CLASSES[NV.cat].name, #NV.list, extra))
+            log(string.format("NAVCAT %s: %.0f ms", NAV_CLASSES[NV.cat].name, (os.clock() - t0) * 1000))
             return
         end
     end
@@ -6866,7 +6955,7 @@ M.door_list = function()
     if M.door_list_area == M.area_said and M.door_list_cache then return M.door_list_cache end
     local out = {}
     pcall(function()
-        local list = FindAllOf("HouseEnterTriggerBP_C")
+        local list = M.find_all("HouseEnterTriggerBP_C", 600)
         if not list then return end
         for _, door in pairs(list) do
             local okv = false
@@ -7161,15 +7250,8 @@ NV.PEOPLE_R = 70
 -- the people of the area (FindAllOf at most every 20 s, positions read fresh): circles
 -- {x, y, z, actor}; hidden helpers are not people; the one at the target is left out
 NV.people_scan = function(px, py, pz, ox, oy)
-    local now = os.clock()
-    if NV.ppl_area ~= M.area_said or not NV.ppl_list or now - (NV.ppl_t or 0) > 20 then
-        local list
-        pcall(function() list = FindAllOf("KSFieldNPCCharacter_C") end)
-        NV.ppl_list, NV.ppl_area, NV.ppl_t = {}, M.area_said, now
-        if list then for _, o in pairs(list) do NV.ppl_list[#NV.ppl_list + 1] = o end end
-    end
     local out = {}
-    for _, o in ipairs(NV.ppl_list) do
+    for _, o in ipairs(M.find_all("KSFieldNPCCharacter_C", 600)) do
         local okv, hidden = false, false
         pcall(function() okv = o:IsValid() end)
         if okv then pcall(function() hidden = (o.bHidden == true) end) end
@@ -9604,7 +9686,7 @@ M.minimap_markers = function(pz)
     end
     for _, spec in ipairs(specs) do
         pcall(function()
-            local list = FindAllOf(spec[1])
+            local list = M.find_all(spec[1], 600)
             if not list then return end
             for _, o in pairs(list) do
                 local okv = false
@@ -10064,6 +10146,9 @@ radar_pump = function(src)
         if susp ~= WS.susp then
             WS.susp = susp
             log(susp and "RADAR suspended (event/transition)" or "RADAR resumed")
+            -- a scene or transition may change the map: the kept object lists go, at
+            -- its start and at its end (nothing kept from inside it either)
+            if M.fa_flush then M.fa_flush() end
             if susp then
                 -- MUTE the whole soundscape: suspended sources otherwise keep
                 -- ringing their last state straight through scene dialogue
