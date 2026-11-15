@@ -6532,8 +6532,19 @@ local function nav_route_finish(goalnode)
     NV.route = nil
     if not R then return end
     if not goalnode then
-        log(string.format("ROUTE fail traces=%d pops=%d slides=%d %.1fs", R.traces, R.pops, R.slides or 0,
-            os.clock() - R.started))
+        log(string.format("ROUTE fail traces=%d pops=%d slides=%d people-blocked=%d %.1fs", R.traces, R.pops,
+            R.slides or 0, R.ppl_hit or 0, os.clock() - R.started))
+        -- people stood in the way of some steps: was it them? The same search without
+        -- people; if that finds a way, the person on it is named (below, R.blame)
+        if R.people and (R.ppl_hit or 0) > 0 and not R.nopeople then
+            local s0 = R.shifted or { x = R.px, y = R.py, z = R.pz }
+            local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, s0.x, s0.y, s0.z)
+            W.nopeople, W.blame = true, R.people
+            W.saidlong = R.saidlong
+            log("ROUTE again without people")
+            NV.route = W
+            return
+        end
         -- after a search on the shifted grid (NV.route_shift) the fallbacks below start
         -- from where you stand, and "boxed in" needs both searches to have died at once
         local boxed = (R.pops or 0) <= 3 and (R.pops0 or 0) <= 3
@@ -6664,6 +6675,21 @@ local function nav_route_finish(goalnode)
             raw = tr
             NV.goal = { x = door.x, y = door.y, z = door.z, cat = "door", key = NV.goal and NV.goal.key }
         end
+    end
+    -- PEOPLE IN THE WAY: a way found only without people names the one on it; a way to a
+    -- door also checks its last leg (the search ends a cell before the target), where
+    -- someone standing in the doorway is
+    local blocker = nil
+    if R.blame then
+        blocker = NV.path_blocker(R.blame, raw, R.pz)
+    elseif R.people and #raw >= 2 and (door or (NV.goal and (NV.goal.cat == "door" or NV.goal.cat == "building"))) then
+        blocker = NV.path_blocker(R.people, { raw[#raw - 1], raw[#raw] }, R.pz)
+    end
+    if blocker then
+        local nm = NV.person_name(blocker)
+        log(string.format("ROUTE blocked by a person at (%.0f,%.0f): %s", blocker.x, blocker.y, tostring(nm)))
+        speak((nm or "Someone") .. " is in the way")
+        return
     end
     -- the cells right at the target are no use: the walk arrives within 110 of it, and
     -- they can lie in its own collision -- the last two steps into a chest were "soft"
@@ -6887,6 +6913,7 @@ NV.route_widen = function(R)
     else return nil end
     local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, R.px, R.py, R.pz, pad)
     W.gcache, W.ecache, W.eside, W.gcache2, W.slides = R.gcache, R.ecache, R.eside, R.gcache2, R.slides
+    W.people, W.nopeople, W.blame, W.ppl_hit = R.people, R.nopeople, R.blame, R.ppl_hit
     W.traces, W.pops, W.started, W.saidlong = R.traces, R.pops, R.started, R.saidlong
     W.cpu, W.ticks = R.cpu, R.ticks
     W.shifted, W.pops0, W.shift_i = R.shifted, R.pops0, R.shift_i
@@ -6923,6 +6950,7 @@ NV.route_shift = function(R)
             if math.abs(az - base.z) <= 100 and okl and not hitl then
                 local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, ax, ay, az, R.pad)
                 W.shifted, W.shift_i = base, i
+                W.people, W.nopeople, W.blame, W.ppl_hit = R.people, R.nopeople, R.blame, R.ppl_hit
                 W.pops0 = R.shifted and R.pops0 or R.pops
                 W.traces, W.started, W.saidlong = R.traces, R.started, R.saidlong
                 W.cpu, W.ticks = R.cpu, R.ticks
@@ -6996,6 +7024,74 @@ end
 -- (s0) or back onto the grid (0). Diagonals only between unslid cells.
 -- -> w (true / "soft"), offset {ox, oy}, floor z, traces used | nil, nil, nil, used
 NV.SLIDES = { 22, -22, 44, -44 }
+
+-- PEOPLE IN THE WAY (2026-11-15). The router's traces (channel 0) don't see people; only
+-- the player's own profile hits their capsules (CHPROBE beside the Armer: ch0 -, Pawn
+-- 33). Routes ran through them as cheap "soft" steps and the walk bumped -- in lower
+-- Felsfall the Armer stands in a house's doorway. Walks and directions now keep
+-- NV.PEOPLE_R (both capsules and a margin) from everyone in the area except the person
+-- walked to. When that leaves no way, the same search runs without people, and if it
+-- finds one the walk says who is in the way (nav_route_finish). The background check of
+-- the list leaves people out: they move.
+NV.PEOPLE_R = 70
+-- the people of the area (FindAllOf at most every 20 s, positions read fresh): circles
+-- {x, y, z, actor}; hidden helpers are not people; the one at the target is left out
+NV.people_scan = function(px, py, pz, ox, oy)
+    local now = os.clock()
+    if NV.ppl_area ~= M.area_said or not NV.ppl_list or now - (NV.ppl_t or 0) > 20 then
+        local list
+        pcall(function() list = FindAllOf("KSFieldNPCCharacter_C") end)
+        NV.ppl_list, NV.ppl_area, NV.ppl_t = {}, M.area_said, now
+        if list then for _, o in pairs(list) do NV.ppl_list[#NV.ppl_list + 1] = o end end
+    end
+    local out = {}
+    for _, o in ipairs(NV.ppl_list) do
+        local okv, hidden = false, false
+        pcall(function() okv = o:IsValid() end)
+        if okv then pcall(function() hidden = (o.bHidden == true) end) end
+        if okv and not hidden then
+            local x, y, z = read_actor_pos(o)
+            if x and not (ox and math.sqrt((x - ox) ^ 2 + (y - oy) ^ 2) < 90) then
+                out[#out + 1] = { x = x, y = y, z = z or pz, actor = o }
+            end
+        end
+    end
+    return out
+end
+-- the first person a step from a to b comes within NV.PEOPLE_R of, or nil. Heading away
+-- from someone you stand next to is fine (the closest point is the start).
+NV.person_on = function(people, ax, ay, az, bx, by)
+    if not people then return nil end
+    local dx, dy = bx - ax, by - ay
+    local l2 = dx * dx + dy * dy
+    local r2 = NV.PEOPLE_R * NV.PEOPLE_R
+    for _, q in ipairs(people) do
+        if math.abs(q.z - az) < 250 then
+            local t = (l2 > 0) and (((q.x - ax) * dx + (q.y - ay) * dy) / l2) or 0
+            if t > 0 then
+                if t > 1 then t = 1 end
+                local cx, cy = ax + dx * t - q.x, ay + dy * t - q.y
+                if cx * cx + cy * cy < r2 then return q end
+            end
+        end
+    end
+    return nil
+end
+-- the first person on a list of walk points ({x, y, z}), or nil
+NV.path_blocker = function(people, pts, z0)
+    for i = 2, #pts do
+        local a, b = pts[i - 1], pts[i]
+        local q = NV.person_on(people, a.x, a.y, a.z or z0, b.x, b.y)
+        if q then return q end
+    end
+    return nil
+end
+NV.person_name = function(q)
+    local nm
+    pcall(function() nm = NV.resolve_name(q.actor) end)
+    if nm == "" or nm == "???" then nm = nil end
+    return nm
+end
 -- floor at a world point (down trace from za+160 to za-240), cached per 10-unit spot
 NV.ground_at = function(R, ksl, p, wx, wy, za)
     local gk = math.floor(wx / 10 + 0.5) .. "," .. math.floor(wy / 10 + 0.5) .. "@" .. math.floor((za - R.pz) / 200 + 0.5)
@@ -7230,16 +7326,32 @@ NV.route_slice = function(R, budget, itercap, deadline)
             -- leaving a cell next to walls costs more: open ways keep off the walls
             -- (the routes hugged them, and the walker clipped the corners)
             local pen = 0.4 * blocked
+            -- where this cell's walker stands (a slid cell: its slid point)
+            local ax0, ay0 = R.px + best.x * NV.STEP + (best.ox or 0), R.py + best.y * NV.STEP + (best.oy or 0)
             for _, c in ipairs(cand) do
                 local nk = c[4]
-                if not R.closed[nk] then
+                local so = c[7]
+                -- PEOPLE IN THE WAY: a step through someone's circle is out (NV.person_on)
+                local who = nil
+                if R.people and not R.closed[nk] then
+                    local bx = R.px + c[1] * NV.STEP + (so and so[1] or 0)
+                    local by = R.py + c[2] * NV.STEP + (so and so[2] or 0)
+                    local pre = so and so.pre
+                    if pre then
+                        who = NV.person_on(R.people, ax0, ay0, best.z, pre.x, pre.y)
+                            or NV.person_on(R.people, pre.x, pre.y, best.z, bx, by)
+                    else
+                        who = NV.person_on(R.people, ax0, ay0, best.z, bx, by)
+                    end
+                    if who then R.ppl_hit = (R.ppl_hit or 0) + 1 end
+                end
+                if not R.closed[nk] and not who then
                     local isdoor = type(c[5]) == "number"
                     -- a door costs a stop and an E press: open ways up to 25 cells longer
                     -- win (at +6 the router took a door to a target it also reached openly);
                     -- a step the pawn trace calls blocked ("soft") costs 8
                     local step = isdoor and 25 or (c[5] == "soft" and 8 or (c[6] and 1.41421 or 1))
                     -- a slid step: only where the grid has no way (narrow passages)
-                    local so = c[7]
                     local slid = so and (so[1] ~= 0 or so[2] ~= 0)
                     if slid then step = step + 1 end
                     local ng = best.g + step + pen
@@ -7301,10 +7413,17 @@ local function nav_route_begin(mode, ox, oy, oz)
         end
         return
     end
+    -- the people around (NV.people_scan): the route keeps away from them -- except the
+    -- one at the target when the target may be a person (not a door or an exit)
+    local gcat = NV.goal and NV.goal.cat
+    local topeople = not (gcat == "door" or gcat == "building" or gcat == "exit" or gcat == "through")
+    local okp, people = pcall(NV.people_scan, px, py, pz, topeople and ox or nil, topeople and oy or nil)
+    if not okp then people = nil end
     -- direct-line shortcut (same level only): if a BODY-WIDTH corridor (3 lines,
     -- center +-42) to the target is clear, skip the search entirely
     local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
-    if ksl and samelevel and NV.corridor_clear(ksl, p, px, py, pz, ox, oy) then
+    if ksl and samelevel and NV.corridor_clear(ksl, p, px, py, pz, ox, oy)
+        and not NV.person_on(people, px, py, pz, ox, oy) then
         if mode == "walk" then
             nav_walk_begin_path({ { x = px, y = py }, { x = ox, y = oy } }, "direct")
         else
@@ -7314,6 +7433,8 @@ local function nav_route_begin(mode, ox, oy, oz)
         return
     end
     NV.route = NV.route_job(mode, ox, oy, oz, px, py, pz)
+    NV.route.people = people
+    if people then log(string.format("ROUTE keeps away from %d people", #people)) end
 end
 NV.route_begin = nav_route_begin   -- for nav_route_finish (defined above it)
 
