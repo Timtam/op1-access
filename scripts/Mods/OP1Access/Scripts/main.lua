@@ -51,7 +51,49 @@ local function speak(text, interrupt)
         return
     end
     log("speak: " .. text)
+    if M.hist_add then pcall(M.hist_add, text) end
     pcall(function() shim.Speak(text, interrupt ~= false) end)
+end
+
+-- SPEECH HISTORY (user request 2026-11-15): the last 100 lines said -- the mod's own and
+-- the dialogue the shim speaks (added from the pump's PollTalk) -- to read again at any
+-- time: comma = back (the first press says the newest), period = forward, Shift+comma =
+-- the first (oldest), Shift+period = the last (newest). A replay is said, not added;
+-- the same line twice in a row is kept once.
+M.hist = { list = {}, pos = nil, key_t = -9 }
+M.hist_add = function(text)
+    local H = M.hist
+    if type(text) ~= "string" or text == "" then return end
+    H.pos = nil   -- the next "back" starts at the newest line again
+    if H.list[#H.list] == text then return end
+    H.list[#H.list + 1] = text
+    if #H.list > 100 then table.remove(H.list, 1) end
+end
+M.hist_say = function(i)
+    local H = M.hist
+    local n = #H.list
+    local text
+    if n == 0 then
+        text = "No messages yet"
+    else
+        if i < 1 then i = 1 elseif i > n then i = n end
+        H.pos = i
+        text = H.list[i]
+    end
+    log(string.format("HIST %s/%d: %s", tostring(H.pos), n, text))
+    if shim and shim.Speak then pcall(function() shim.Speak(text, true) end) end
+end
+-- dir: -1 back, 1 forward, "first", "last". UE4SS may fire a plain key's bind with
+-- Shift held as well as the Shift bind: a second call within 0.15 s is dropped.
+M.hist_key = function(dir)
+    local H = M.hist
+    local now = os.clock()
+    if now - H.key_t < 0.15 then return end
+    H.key_t = now
+    local n = #H.list
+    if dir == "first" then return M.hist_say(1) end
+    if dir == "last" or H.pos == nil then return M.hist_say(n) end
+    return M.hist_say(H.pos + dir)
 end
 
 local function silence()
@@ -8706,7 +8748,8 @@ do
         local ok
         if mods then ok = pcall(RegisterKeyBind, k, mods, fn)
         else ok = pcall(RegisterKeyBind, k, fn) end
-        log("Bound " .. label .. " (" .. (mods and "Ctrl+" or "") .. kn .. "): " .. tostring(ok))
+        log("Bound " .. label .. " (" .. (mods and ((mods[1] == ModifierKey.SHIFT) and "Shift+" or "Ctrl+") or "")
+            .. kn .. "): " .. tostring(ok))
         return ok and true or false
     end
     local function bindany(names, mods, fn, label)
@@ -8731,6 +8774,23 @@ do
     end, "nav walk")
     bindany({ "BACKSPACE", "BACK" }, { ModifierKey.CONTROL }, function() pcall(nav_info) end,       "nav info")
     bindany({ "RETURN", "ENTER" },   { ModifierKey.CONTROL }, function() pcall(nav_walk_start) end, "nav walk alt")
+    -- speech history (M.hist_key): comma / period back / forward, with Shift the first /
+    -- the last line. The game binds neither (DefaultInput.ini: W A S D Q E O I J M P,
+    -- arrows, Enter, Backspace, Escape, Shift, F12). The plain bind checks Shift itself.
+    local function hist_plain(dir, shifted)
+        return function()
+            local ctrl, shift, alt = false, false, false
+            if shim and shim.KeyModifiers then pcall(function() ctrl, shift, alt = shim.KeyModifiers() end) end
+            if ctrl or alt then return end
+            pcall(M.hist_key, shift and shifted or dir)
+        end
+    end
+    bindany({ "OEM_COMMA", "COMMA" },  nil, hist_plain(-1, "first"), "history back")
+    bindany({ "OEM_PERIOD", "PERIOD" }, nil, hist_plain(1, "last"),  "history forward")
+    if ModifierKey.SHIFT then
+        bindany({ "OEM_COMMA", "COMMA" },  { ModifierKey.SHIFT }, function() pcall(M.hist_key, "first") end, "history first")
+        bindany({ "OEM_PERIOD", "PERIOD" }, { ModifierKey.SHIFT }, function() pcall(M.hist_key, "last") end,  "history last")
+    end
     -- claim Page Up/Down in the field: with a live field player we handle the
     -- press (return true); otherwise char-select keeps it
     nav_keys.obj = function(delta)
@@ -10336,6 +10396,7 @@ radar_pump = function(src)
         pcall(function() t = shim.PollTalk() end)
         if t and t ~= "" then
             log("STORY: " .. t)
+            if M.hist_add then pcall(M.hist_add, t) end   -- for the speech history
             if learn_talk_npc then pcall(learn_talk_npc) end
         end
     end
