@@ -174,30 +174,28 @@ against one Eissentinel in the study dungeon. Not yet seen or checked:
 
 ## Path actions
 
-Tested with Cyrus' Scrutinize ("Studieren") only. The hint, the radar gate and the result
-reading are verified for that one action. Since 2026-11-15 (feb83b5) the hint and the J
-menu say "done" or "not possible yet". Checked in the game: the old woman at the academy
-("Studieren, done", a check mark on her balloon) and a guard (no mark, no "done"). Open:
+All eight were tried in the game on 2026-11-15 (e46c615). A test session put the other
+travelers into the party in memory, without saving: the party lists in
+`KSSaveGameBP_C.PlayerParty` were set while still in the flats, then fast travel to
+Atlasdamm made the game set up the new party's path actions. Heard: the hint ("Path
+action, Wache: Studieren; Kaufen; Stehlen; Herausfordern"), the J menu, Purchase and
+Steal (list, item, price or chance, description, question, cancel), the questions of
+Challenge, Provoke, Guide and Allure with the person's panel ("Wache. Stärke 4 of 10.
+Fertigkeiten: Verteidigungshaltung. Rufbereit 9"), a successful Guide and Allure, a
+failed Allure, the question to swap followers ("Now: … New: …") and Inquire's result.
+Open:
 
-- **The other seven travelers' screens are read, but none was tried** (feb83b5, built
-  from the object dump and the blueprints' name tables). Only Cyrus is in the party so
-  far. Each one logs what it read; check these lines the first time:
-  - Purchase and Steal (`FieldCommandPurchase_C`): the row layout is guessed from the
-    shop (col1 item, col3 price or chance with the unit, col2 how many you have).
-    `FCSCREEN row:` shows the real columns.
-  - Strength stars: counted by the RankEnable texture on each star (`FCRANK`). If that
-    count stays 0, the strength isn't said.
-  - The person's panel (`FCSCREEN person:`): which text block holds the caption and
-    which the value is guessed (TextRank, NameAbility/TextAbility, NameLimit/TextLimit).
-  - Questions over these screens get the item or the person in front
-    (`FCSCREEN question over ...`). For that the dialog has to sit in the screen's widget
-    tree, or the screen reader has to have seen the screen first.
-  - Inquire (Alfyn) uses Scrutinize's result panel (`FieldCommandSearch_C`,
-    SearchMode false); its header "Alfyn: Erkundigen" isn't said.
-  - "not possible yet" comes from the balloon's Imp icon. Which cases show it (the level
-    for noble actions, a bad reputation?) is not known.
-  - Not read: the follower's own status ("Untersuchen") beyond the screens above, and
-    H'aanit's capture in battle.
+- **Not tried:** an actual purchase or theft (the haggling message "Erfolgreich
+  gefeilscht"), Olberic's and H'aanit's duels, H'aanit's monster list (capture and
+  release in battle), parting from a follower, and the follower's own entries in the J
+  menu.
+- **The balloon's cross ("not possible")** showed for the tavern keeper's Scrutinize and
+  for a child's Provoke, Guide and Allure. A level lock shows nothing: Olberic's
+  Challenge only said "Ihr müsst mindestens Stufe 7 erreicht haben …" when tried.
+- **Opening a path-action list stalls ~80 ms once** (`[fcscreens=88]`), like the tavern's
+  story select.
+- **Inquire's header "Alfyn: Erkundigen" isn't said**; its result is read like
+  Scrutinize's.
 - **"Talk, ???" for a figure you cannot talk to** (user report 2026-11-13) — FIXED, not
   confirmed: at the academy entrance the game picked an invisible helper from the
   always-loaded ResidentGame level; Enter did nothing. Without a path action the talk

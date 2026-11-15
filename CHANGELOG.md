@@ -40,8 +40,9 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
 - Path actions (J): facing someone tells you which path actions you can use on them and
   whether one is done already or not possible yet; the J menu says the same. The screens
   of all eight travelers' path actions are read: what a person carries with price or
-  chance (Purchase, Steal), the opponent (Challenge, Provoke), H'aanit's monsters, the
-  person who would follow you (Guide, Allure), and what Scrutinize and Inquire find out.
+  chance (Purchase, Steal), the person's strength, skills and how often they can be called
+  (Challenge, Provoke, Guide, Allure, also when you swap followers), H'aanit's monsters,
+  and what Scrutinize and Inquire find out.
 - A 3D radar (Steam Audio) for chests, exits, people, buildings and shops, a wall radar and
   bump sounds.
 - A navigator: categories with Home and End, targets with Page Up and Page Down, Ctrl+Backspace
