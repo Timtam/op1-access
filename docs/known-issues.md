@@ -126,8 +126,7 @@ against one Eissentinel in the study dungeon. Not yet seen or checked:
   HP", "Eissentinel recovers, shield 1". Checked against one enemy. Not yet heard: SP
   and BP recovery, misses ("miss"), criticals (their DamageType is unknown: only
   0/3/4/5 were seen, 3 and 5 say "weak").
-- **Not read at all:** item drops on the result screen (the reader exists, no drop
-  yet), what a boosted command does, and the boost help.
+- **Not read at all:** what a boosted command does, and the boost help.
 - **Who acts is guessed for several enemies** (0e0e5d7). An action right after your
   own input is your character's; otherwise it is the only enemy's, or the one whose
   turn-order icon fades (IsFade, seen once). Not tried with two or more enemies or
@@ -139,8 +138,13 @@ against one Eissentinel in the study dungeon. Not yet seen or checked:
   the capture message has no name in front, and the result line says the money in the
   game's language ("Victory. 20 Blätter"). The capture picks its target without a target
   cursor; the enemy whose success rate shows ("Erfolgschance 60 %") now counts as the
-  target and its line includes the rate. That last part was not heard yet, nor the
-  rate for stealing in battle.
+  target and its line includes the rate. Heard for stealing in battle (Therion,
+  2026-11-15): "Flach-Froggen I, shield 1, weak to Licht, 2 unknown, Erfolgschance 5 %",
+  then "Therion: Stehlen", "Ihr konntet nichts stehlen ...". Not heard for H'aanit's
+  capture yet.
+- **Item drops and knock-outs heard** (2026-11-15): "Victory. 24 Blätter, 4 EXP, 4 JP.
+  Items: Anregende Pflaume 1". A party member going down is said with the damage line
+  since 744e09a ("Olberic 4, Olberic down"); "back up" after a revival wasn't seen.
 
 ## Walker (user report 2026-11-14)
 
@@ -245,9 +249,15 @@ Open:
   "Händler. Feuerseelenstein. Erfolgschance: 100 %. Diebstahl versuchen?", then
   "Feuerseelenstein, Erfolgsrate 100 %, stolen"). Each new game needs its intro pressed
   through (5-8 minutes of Enter).
-- **Not tried:** a failed theft, the haggling message "Erfolgreich gefeilscht",
-  Olberic's duel, releasing a beast, parting from a follower, and the follower's own
-  entries in the J menu.
+- **Tried with a test party in Atlasdam (2026-11-15):** a failed theft (Therion at level
+  3: "Lebhafter Ohrring, Erfolgsrate 15 %", the question with "(Euer Ruf in dieser Stadt
+  wird sich verschlechtern, wenn dies misslingt.)", then "Wache: Heda! Was glaubt Ihr, wo
+  Ihr hier seid?!" and the tutorial about the town's reputation), and Olberic's duel
+  against a guard ("Wache. Stärke 4 of 10. Diese Person zu einem Duell herausfordern?",
+  the whole fight read). Olberic lost; the mod says no "lost" of its own, the game's line
+  "Olberic: ... Ein bedauerliches Resultat." tells it.
+- **Not tried:** the haggling message "Erfolgreich gefeilscht", releasing a beast,
+  parting from a follower, and the follower's own entries in the J menu.
 - **The balloon's cross ("not possible")** showed for the tavern keeper's Scrutinize and
   for a child's Provoke, Guide and Allure. A level lock shows nothing: Olberic's
   Challenge only said "Ihr müsst mindestens Stufe 7 erreicht haben …" when tried.
