@@ -366,6 +366,8 @@ local BLOCKING_CLASSES = {
     -- Provoke/Monster) -- dialog-like, read fine, but the radar must stay silent during them
     FieldCommandSearch_C = true, FieldCommandPurchase_C = true, FieldCommandLure_C = true,
     FieldCommandJudge_C = true, FieldCommandMonster_C = true,
+    -- their lists focused on their own (Purchase / Steal, H'aanit's monsters)
+    PurchaselistWidget_C = true, MonsterListWidget_C = true,
     -- focused while a path action plays out (user log 2026-11-10): the bubble manager
     -- during the speech bubbles, the common dialog for the result boxes ("Ihr habt
     -- neue Informationen gewonnen!") -- the radar came back between the boxes.
@@ -2146,13 +2148,15 @@ do
         local ci; pcall(function() ci = w.CurrentCursor end)
         if type(ci) ~= "number" or ci == fc_idx then return end
         fc_idx = ci
-        local label
+        local label, btn
         pcall(function()
             local box = w.ShowVerticalBox
-            local btn = box and box:GetChildAt(ci)
+            btn = box and box:GetChildAt(ci)
             if btn then local t = btn.Text; if t then local g = t:GetText(); if g then label = g:ToString() end end end
         end)
-        speak(label or ("Action " .. tostring(ci)))
+        -- done already / not possible yet / not usable on this person (M.fc_item_state)
+        local okx, extra = pcall(M.fc_item_state, btn, label)
+        speak((label or ("Action " .. tostring(ci))) .. ((okx and extra) and (", " .. extra) or ""))
     end
 end
 
@@ -3792,6 +3796,7 @@ M.fast_steps = {
     { "shop", function() M.poll_shop() end },
     { "tutorial", function() M.poll_tutorial() end },
     { "fieldcmd", function() M.poll_fieldcommand() end },
+    { "fcscreens", function() M.poll_fc_screens() end },
 }
 M.fast_polls = function()
     M.fast_q = nil
@@ -4205,6 +4210,12 @@ poll_dialog = function()
         if not desc and M.fc_result_text and not M.evm_active and result_dlg then
             local okr, r = pcall(M.fc_result_text, inst)
             if okr then desc = r end
+        end
+        -- the other path actions' questions: the item (Purchase / Steal) or the person's
+        -- panel (Challenge / Provoke / Guide / Allure) in front
+        if not desc and not result_dlg and M.fc_dialog_desc then
+            local okd, d = pcall(M.fc_dialog_desc, inst)
+            if okd and d then desc = d end
         end
         if not desc and not result_dlg and #buttons >= 2 and M.fc_busy and M.fc_target_name then
             local okf, busy = pcall(M.fc_busy)
@@ -8155,7 +8166,14 @@ M.interact_poll = function()
         pcall(function() shim.AudioPlayCue(has_path and M.PATH_CUE or M.TALK_CUE) end)
     end
     local what = has_path and "Path action" or "Talk"
-    speak((nm and nm ~= "") and (what .. ", " .. nm) or what, false)
+    local s = (nm and nm ~= "") and (what .. ", " .. nm) or what
+    -- which ones, and whether they are done or not possible yet (the balloon's icons):
+    -- "Path action, Wachmann: Studieren, done"
+    if has_path and M.fc_hint_actions then
+        local oka, acts = pcall(M.fc_hint_actions, raw, addr)
+        if oka and acts then s = s .. ": " .. acts end
+    end
+    speak(s, false)
 end
 
 -- PATH ACTION IN PROGRESS: the field-command manager's own state, polled by the radar
@@ -8293,6 +8311,423 @@ M.fc_result_text = function(dlg)
     end
     local out = M.join_sentences(parts)
     return out ~= "" and out or nil
+end
+
+-- THE OTHER TRAVELERS' PATH ACTIONS (user request 2026-11-15: "make the remaining path
+-- actions accessible, even without being able to try them"). Only Cyrus' Scrutinize has
+-- been played; the rest is built from the game's own widgets and texts (object dump, the
+-- name tables of the blueprints in Content/UI/FieldCommand, GameText eFC_*) and logs what
+-- it reads (FCSCREEN, FCJUDGE, FCMENU, FCRANK) so the first real use shows what to fix.
+--   type (KSFIeldCommandType)  traveler   name (GameText)            screen
+--   1 Purchase                 Tressa     eFC_NAME_PURCHASE Kaufen   FieldCommandPurchase_C
+--   2 Steal                    Therion    eFC_NAME_STEAL Stehlen     FieldCommandPurchase_C (ExecSteal)
+--   3 Battle (Challenge)       Olberic    eFC_NAME_BATTLE            FieldCommandMonster_C (BattleMode)
+--   4 Monster (Provoke)        H'aanit    eFC_NAME_MONSTER           FieldCommandMonster_C
+--   5 Blessing (Guide)         Ophilia    eFC_NAME_BLESSING Führen   FieldCommandLure_C
+--   6 Lure (Allure)            Primrose   eFC_NAME_LURE Verführen    FieldCommandLure_C (IsLure)
+--   7 Examination (Inquire)    Alfyn      eFC_NAME_EXAMINATION       FieldCommandSearch_C, as Scrutinize
+--   8 Search (Scrutinize)      Cyrus      eFC_NAME_SEARCH Studieren  FieldCommandSearch_C
+-- Their questions ("Erfolgschance: 34 %\nDiebstahl versuchen?", "Preis: ⑳120\nDieses
+-- Objekt kaufen?", "Ihr müsst mindestens Stufe {0} erreicht haben ...", "Ihr könnt nur
+-- eine Person führen ...") are common dialogs: the dialog reader speaks them, with the
+-- item or the person's panel in front (M.fc_dialog_desc).
+M.FC_TYPES = {
+    [1] = { "eFC_NAME_PURCHASE", "Purchase" }, [2] = { "eFC_NAME_STEAL", "Steal" },
+    [3] = { "eFC_NAME_BATTLE", "Battle" }, [4] = { "eFC_NAME_MONSTER", "Monster" },
+    [5] = { "eFC_NAME_BLESSING", "Blessing" }, [6] = { "eFC_NAME_LURE", "Lure" },
+    [7] = { "eFC_NAME_EXAMINATION", "Examination" }, [8] = { "eFC_NAME_SEARCH", "Search" },
+}
+-- a path action's name in the game's language ("Studieren")
+M.fc_type_name = function(t)
+    local e = M.FC_TYPES[t]
+    return (e and M.gt_label(e[1])) or FIELD_CMD_NAME[t] or ("action " .. tostring(t))
+end
+M.fc_get = function(w, field)
+    local v
+    if w then pcall(function() v = w[field] end) end
+    return v
+end
+M.fc_shown = function(w)
+    if not w then return false end
+    local v = M.wvis(w)
+    return v ~= nil and v ~= 1 and v ~= 2
+end
+-- a text block's text while it shows and isn't a design filler ("0123", "１２", "ああ")
+M.fc_txt = function(w, field)
+    local tb = M.fc_get(w, field)
+    if not tb or not M.fc_shown(tb) then return nil end
+    local s = M.wtext(tb)
+    if not s or M.placeholder(s) or M.is_placeholder(s) then return nil end
+    return (s:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+-- The balloon over the person you face (FieldCommandJudge_C), what sighted players see:
+-- an icon per path action on offer, and on it the blueprint turns on Icon_<Type>_Comp
+-- (GetFCommandComplete: done with this person) or Icon_<Type>_Imp (GetFCommandEnable /
+-- GetFCommandNecessaryLevel: not possible yet). One instance, found once (FindAllOf walks
+-- every object: at most every 10 s while there is none).
+M.fc_judge = function()
+    local j = M.fc_judge_w
+    local ok = false
+    if j then pcall(function() ok = j:IsValid() end) end
+    if ok then return j end
+    M.fc_judge_w = nil
+    local now = os.clock()
+    if now - (M.fc_judge_t or -99) < 10 then return nil end
+    M.fc_judge_t = now
+    pcall(function()
+        for _, w in ipairs(FindAllOf("FieldCommandJudge_C") or {}) do
+            local v = false
+            pcall(function() v = w:IsValid() end)
+            if v then
+                local t = M.fc_get(w, "TargetCharacter")
+                if not M.fc_judge_w or (t and M.addr_of(t)) then M.fc_judge_w = w end
+            end
+        end
+    end)
+    return M.fc_judge_w
+end
+-- { [type] = "done" | "not possible yet" } for the person at `addr`, from the balloon
+M.fc_judge_states = function(addr, types)
+    local j = M.fc_judge()
+    if not j then return {} end
+    local ta = M.addr_of(M.fc_get(j, "TargetCharacter"))
+    if not ta or ta ~= addr then
+        log(string.format("FCJUDGE balloon over %X, not %X", ta or 0, addr or 0))
+        return {}
+    end
+    local out, raw = {}, {}
+    for _, t in ipairs(types) do
+        local e = M.FC_TYPES[t]
+        if e then
+            local comp = M.fc_shown(M.fc_get(j, "Icon_" .. e[2] .. "_Comp"))
+            local imp = M.fc_shown(M.fc_get(j, "Icon_" .. e[2] .. "_Imp"))
+            raw[#raw + 1] = string.format("%s comp=%s imp=%s", e[2], tostring(comp), tostring(imp))
+            if comp then out[t] = "done" elseif imp then out[t] = "not possible yet" end
+        end
+    end
+    log("FCJUDGE " .. table.concat(raw, "; "))
+    return out
+end
+-- the hint's list: "Studieren, done; Stehlen"
+M.fc_hint_actions = function(types, addr)
+    local seen, list = {}, {}
+    for _, t in ipairs(types or {}) do
+        if t ~= 0 and not seen[t] then seen[t] = true; list[#list + 1] = t end
+    end
+    if #list == 0 then return nil end
+    local okj, st = pcall(M.fc_judge_states, addr, list)
+    if not okj then st = {} end
+    local parts = {}
+    for _, t in ipairs(list) do
+        parts[#parts + 1] = M.fc_type_name(t) .. (st[t] and (", " .. st[t]) or "")
+    end
+    return table.concat(parts, "; ")
+end
+-- An entry of the J menu (FieldCommandMenuItemPanel_C): the blueprint shows Icon_Imp
+-- (IsNecessaryLevel) and Icon_Purchase_Comp (IsComplete) on it and greys it out
+-- (UnusedFlag / IsUnused: not for this person). Its State is only the animation state
+-- (EFIELDCOMMAND_MENUITEM_STATE: eNONE, eOPEN, eUPDATE, eDECIDE, eCLOSE, eSELECT).
+M.fc_item_state = function(btn, label)
+    if not btn then return nil end
+    local unused = M.fc_get(btn, "UnusedFlag")
+    local comp = M.fc_shown(M.fc_get(btn, "Icon_Purchase_Comp"))
+    local imp = M.fc_shown(M.fc_get(btn, "Icon_Imp"))
+    local key = string.format("%s unused=%s comp=%s imp=%s", tostring(label), tostring(unused), tostring(comp), tostring(imp))
+    if key ~= M.fc_item_logged then M.fc_item_logged = key; log("FCMENU item " .. key) end
+    if comp then return "done" end
+    if imp then return "not possible yet" end
+    if unused == true then return "unavailable" end
+    return nil
+end
+-- stars of a RankWidget_C (Stärke): the images in RankList whose brush is RankEnable
+-- (@0x258); a brush's texture is read raw at Image+0x140 (as the battle icons)
+M.fc_rank = function(rw)
+    if not M.fc_shown(rw) then return nil end
+    local en = M.peekp(rw, 0x258)
+    local on, shown, total = 0, 0, 0
+    pcall(function()
+        rw.RankList:ForEach(function(_, e)
+            local img = e:get()
+            total = total + 1
+            if not M.fc_shown(img) then return end
+            shown = shown + 1
+            local tex = M.peekp(img, 0x140)
+            if en and tex == en then on = on + 1 end
+        end)
+    end)
+    local key = string.format("%d/%d/%d/%s", total, shown, on, tostring(en))
+    if key ~= M.fc_rank_logged then
+        M.fc_rank_logged = key
+        log(string.format("FCRANK stars total=%d shown=%d on=%d enable=%X", total, shown, on, en or 0))
+    end
+    return on > 0 and on or nil
+end
+-- A person's panel (NPCStatusPartsWidget_C) on the Challenge / Provoke / Guide / Allure
+-- screens: name, strength (TextRank "Stärke" + stars), what they can do in battle
+-- (NameAbility "Fertigkeiten" + TextAbility, in AbilityArea), how often they can be
+-- called (NameLimit "Rufbereit" + TextLimit "3-mal", in LimitArea) -- GameText
+-- eFC_BATTLE_DIALOG_RANK / _ABILITY, eFC_LEAD_SUPPORT_LIMIT(_FORMAT).
+M.fc_npc_status = function(p)
+    if not M.fc_shown(p) then return nil end
+    local parts, raw = {}, {}
+    local f = {}
+    for _, k in ipairs({ "TextCharaName", "TextRank", "NameAbility", "TextAbility", "NameLimit", "TextLimit",
+        "KSTextBlock_0", "KSTextBlock_1", "KSTextBlock_3" }) do
+        f[k] = M.fc_txt(p, k)
+        raw[#raw + 1] = k .. "=" .. tostring(f[k])
+    end
+    if f.TextCharaName then parts[#parts + 1] = f.TextCharaName end
+    local stars = M.fc_rank(M.fc_get(p, "RankWidget"))
+    if stars then
+        parts[#parts + 1] = (f.TextRank or M.gt_label("eFC_BATTLE_DIALOG_RANK") or "Strength") .. " " .. stars
+    end
+    if M.fc_shown(M.fc_get(p, "AbilityArea")) and f.TextAbility then
+        parts[#parts + 1] = (f.NameAbility and (f.NameAbility .. ": ") or "") .. f.TextAbility
+    end
+    if M.fc_shown(M.fc_get(p, "LimitArea")) and f.TextLimit then
+        parts[#parts + 1] = (f.NameLimit and (f.NameLimit .. " ") or "") .. f.TextLimit
+    end
+    local key = table.concat(raw, " ")
+    if key ~= M.fc_status_logged then M.fc_status_logged = key; log("FCSCREEN person: " .. key) end
+    if #parts == 0 then return nil end
+    return M.join_text(parts)
+end
+-- Guide / Allure: the person's panel (right), and while one already follows you the
+-- change panel (NPCFollowChangePartsWidget_C: LeftWidget the one now, RightWidget the
+-- new one) -- "Now: <panel>. New: <panel>"
+M.fc_lure_status = function(w)
+    local ch = M.fc_get(w, "CaptionChangeWidget")
+    if M.fc_shown(ch) then
+        local a = M.fc_npc_status(M.fc_get(ch, "LeftWidget"))
+        local b = M.fc_npc_status(M.fc_get(ch, "RightWidget"))
+        if a or b then
+            return M.join_text({ a and ("Now: " .. a) or "", b and ("New: " .. b) or "" })
+        end
+    end
+    local out = {}
+    for _, k in ipairs({ "RightCaptionWidget", "LeftCaptionWidget" }) do
+        local s = M.fc_npc_status(M.fc_get(w, k))
+        if s then out[#out + 1] = s end
+    end
+    return #out > 0 and M.join_text(out) or nil
+end
+-- the focused row of a path-action list (PurchaselistWidget_C / MonsterListWidget_C):
+-- the one whose cursor icon shows, else the one at CursorPosition
+M.fc_list_row = function(lw)
+    local row, cur
+    pcall(function() cur = lw.CursorPosition end)
+    pcall(function()
+        lw.ActiveListItem:ForEach(function(_, e)
+            if row then return end
+            local r = e:get()
+            if M.fc_shown(M.fc_get(r, "RefIcon_Cursor")) or M.fc_shown(M.fc_get(r, "CursorIcon")) then row = r end
+        end)
+    end)
+    if not row and type(cur) == "number" then
+        pcall(function()
+            lw.ActiveListItem:ForEach(function(k, e) if k == cur + 1 then row = e:get() end end)
+        end)
+    end
+    return row, cur
+end
+-- the list's column titles (Column1_Title ... of its ListColumn widget)
+M.fc_titles = function(lw)
+    local col = M.fc_get(lw, "ListColumn")
+    return { M.fc_txt(col, "Column1_Title"), M.fc_txt(col, "Column2_Title"), M.fc_txt(col, "Column3_Title") }
+end
+-- A row of what a person carries (Purchase / Steal), laid out like the shop's goods:
+-- col1 the item, col3 the price or the chance with RefText_Unit (⑳ / %), col2 how many
+-- you have; a struck-through row is taken, a greyed one (ItemStatus 1) out of reach.
+-- "Heilkraut, 50 Blätter, In Besitz 3" / "Kupferring, Erfolgsrate 34 %, In Besitz 0"
+M.fc_purchase_say = function(row, steal, titles)
+    local c1 = M.fc_txt(row, "RefText_Col1") or M.fc_txt(row, "Column1_Text")
+    if not c1 then return nil end
+    local c2 = M.fc_txt(row, "RefText_Col2") or M.fc_txt(row, "Column2_Text")
+    local c3 = M.fc_txt(row, "RefText_Col3") or M.fc_txt(row, "Column2_Text_2")
+    local un = M.fc_txt(row, "RefText_Unit") or M.fc_txt(row, "Unit_Text")
+    local st = M.fc_get(row, "ItemStatus")
+    local struck = M.fc_shown(M.fc_get(row, "RefImg_Strikethrough"))
+    local lk = string.format("%s|%s|%s|%s|%s|%s", c1, tostring(c2), tostring(c3), tostring(un), tostring(st), tostring(struck))
+    M.fc_rows_logged = M.fc_rows_logged or {}
+    if not M.fc_rows_logged[lk] then
+        M.fc_rows_logged[lk] = true
+        log(string.format("FCSCREEN row: col1=%s col2=%s col3=%s unit=%s status=%s struck=%s titles=%s/%s/%s", c1,
+            tostring(c2), tostring(c3), tostring(un), tostring(st), tostring(struck), tostring(titles[1]),
+            tostring(titles[2]), tostring(titles[3])))
+    end
+    local price, have = c3, c2
+    if not price then price, have = c2, nil end
+    local say = c1
+    if price then
+        if un == "%" or (steal and not un) then
+            say = say .. ", " .. (M.gt_label("eFC_STEAL_UI_RATE") or "chance") .. " " .. price .. " %"
+        elseif price:match("^[%d%.,]+$") then
+            say = say .. ", " .. price .. " " .. (un or M.MONEY_SIGN)
+        else
+            say = say .. ", " .. price .. (un and (" " .. un) or "")   -- "Unverkäufl."
+        end
+    end
+    if have then say = say .. ", " .. (M.gt_label("eFC_PURCHASE_UI_HAVEITEM") or "on hand") .. " " .. have end
+    if struck then say = say .. (steal and ", stolen" or ", bought") end
+    if st == 1 then say = say .. ", unavailable" end
+    return say
+end
+-- A row of H'aanit's monsters (ListItemWidget_Col3_2_C): name, how often it can be
+-- called (Column2_Text, "--" none), strength stars -- with the list's column titles
+M.fc_monster_say = function(row, titles)
+    local c1 = M.fc_txt(row, "Column1_Text") or M.fc_txt(row, "RefText_Col1")
+    if not c1 then return nil end
+    local c2 = M.fc_txt(row, "Column2_Text") or M.fc_txt(row, "RefText_Col2")
+    local stars = M.fc_rank(M.fc_get(row, "RankWidget") or M.fc_get(row, "RefRankWidget"))
+    local say = c1
+    if c2 then say = say .. ", " .. (titles[2] and (titles[2] .. " ") or "") .. c2 end
+    if stars then say = say .. ", " .. (titles[3] or M.gt_label("eFC_MONSTER_UI_RANK") or "strength") .. " " .. stars end
+    return say
+end
+-- the chosen monster's panel (MonsterStatusCaptionPartsWidget_C): its skills
+M.fc_monster_detail = function(p)
+    if not M.fc_shown(p) then return nil end
+    local ab = {}
+    for _, k in ipairs({ "TextAbility01", "TextAbility02" }) do
+        local s = M.fc_txt(p, k)
+        if s then ab[#ab + 1] = s end
+    end
+    if #ab == 0 then return nil end
+    local cap = M.fc_txt(p, "NameAbility")
+    return (cap and (cap .. ": ") or "") .. table.concat(ab, "; ")
+end
+M.FC_SCREENS = { FieldCommandPurchase_C = "purchase", FieldCommandMonster_C = "monster",
+    FieldCommandLure_C = "lure" }
+M.FC_LISTS = { PurchaselistWidget_C = true, MonsterListWidget_C = true }
+M.FCS = {}
+M.fc_screen_open = function(S)
+    local w = S.owner
+    local head = M.fc_txt(M.fc_get(w, "PartsMenuHeader"), "CaptionText")
+    local st, steal, bm, lure = M.fc_get(w, "State"), M.fc_get(w, "ExecSteal"), M.fc_get(w, "BattleMode"),
+        M.fc_get(w, "IsLure")
+    S.steal = steal == true
+    local parts = {}
+    if S.kind == "purchase" then
+        head = head or M.gt_label(S.steal and "eFC_STEAL_HEADER" or "eFC_PURCHASE_HEADER")
+        parts[#parts + 1] = head
+        local lw = M.fc_get(w, "PurchaselistWidget")
+        local cap = M.fc_txt(lw, "CaptionText")       -- "Besitz von <name>"
+        if cap then parts[#parts + 1] = cap end
+        local p = M.fc_get(w, "PlayerStatusPanel")
+        local money = (not S.steal) and M.fc_shown(p) and M.fc_txt(p, "TextHaveMoney")
+        if money then parts[#parts + 1] = money .. " " .. (M.fc_txt(p, "TextMoneyUnit") or M.MONEY_SIGN) end
+    elseif S.kind == "monster" then
+        parts[#parts + 1] = head or M.gt_label(bm and "eFC_BATTLE_HEADER" or "eFC_MONSTER_HEADER")
+        local s = M.fc_npc_status(M.fc_get(w, "NPCStatusPartsWidget"))
+        if s then parts[#parts + 1] = s; S.status_said = s end
+    else
+        parts[#parts + 1] = head or M.gt_label(lure and "eFC_LURE_HEADER" or "eFC_LEAD_HEADER")
+        local s = M.fc_lure_status(w)
+        if s then parts[#parts + 1] = s; S.status_said = s end
+    end
+    log(string.format("FCSCREEN open %s: head=%s state=%s steal=%s battle=%s lure=%s level=%s", S.kind, tostring(head),
+        tostring(st), tostring(steal), tostring(bm), tostring(lure), tostring(M.fc_get(w, "FieldCommandLevel"))))
+    if #parts > 0 then
+        speak(M.join_text(parts), true)
+        M.await_first_item = true
+    end
+end
+M.fc_screen_tick = function(S)
+    local w, now = S.owner, os.clock()
+    local st = M.fc_get(w, "State")
+    if st ~= S.state then S.state = st; log(string.format("FCSCREEN %s state %s", S.kind, tostring(st))) end
+    local lw = (S.kind == "purchase" and M.fc_get(w, "PurchaselistWidget"))
+        or (S.kind == "monster" and M.fc_get(w, "MonsterList")) or nil
+    if lw and M.fc_shown(lw) then
+        local row = M.fc_list_row(lw)
+        local titles = M.fc_titles(lw)
+        local say
+        if row and S.kind == "purchase" then say = M.fc_purchase_say(row, S.steal, titles)
+        elseif row then say = M.fc_monster_say(row, titles) end
+        if say and say ~= S.row then
+            S.row = say
+            M.say_item(say)
+            S.more_at = now + 0.3
+        end
+    end
+    -- a panel that shows up later (the opponent once the list closed, a changed follower)
+    if S.kind ~= "purchase" then
+        local s = (S.kind == "monster") and M.fc_npc_status(M.fc_get(w, "NPCStatusPartsWidget")) or M.fc_lure_status(w)
+        if s and s ~= S.status_said then S.status_said = s; speak(s, false) end
+    end
+    -- after the row: the item's description (help window) / the monster's skills
+    if S.more_at and now >= S.more_at then
+        S.more_at = nil
+        local m
+        if S.kind == "purchase" then m = M.ml_help()
+        else m = M.fc_monster_detail(M.fc_get(w, "MonsterStatusCaptionPartsWidget")) end
+        if m and m ~= S.more_said then S.more_said = m; speak(m, false) end
+    end
+end
+M.poll_fc_screens = function()
+    local w, cls = M.get_active_screen()
+    local S = M.FCS
+    local kind, owner = M.FC_SCREENS[cls or ""], w
+    if not kind and M.FC_LISTS[cls or ""] then
+        -- its list focused on its own: the screen is the list's owner (owner -> WidgetTree -> list)
+        local o
+        pcall(function() o = w:GetOuter():GetOuter() end)
+        local oc = o and class_name_of(o)
+        if oc and M.FC_SCREENS[oc] then kind, owner = M.FC_SCREENS[oc], o
+        elseif S.kind and S.owner then kind, owner = S.kind, S.owner end
+    end
+    if not kind then
+        if cls == "UICommonDialogBP_C" then
+            if S.kind then S.dlg = true end    -- a question over the screen: it comes back
+        elseif S.kind then
+            log("FCSCREEN closed")
+            M.FCS = {}
+        end
+        return
+    end
+    local oa = M.addr_of(owner)
+    if S.kind ~= kind or S.addr ~= oa then
+        S = { kind = kind, owner = owner, addr = oa }
+        M.FCS = S
+        pcall(M.fc_screen_open, S)
+    end
+    if S.dlg then S.dlg, S.row = nil, nil end   -- back from the question: the row again
+    pcall(M.fc_screen_tick, S)
+end
+-- What goes in front of a path action's question: the item for Purchase / Steal ("Preis:
+-- ⑳120. Dieses Objekt kaufen?" says no name), the person's panel for the others unless
+-- their screen said it already. The screen is the dialog's owner (dialog -> WidgetTree
+-- -> screen), else the one the screen reader saw last.
+M.fc_dialog_desc = function(dlg)
+    local o, kind
+    pcall(function() o = dlg:GetOuter() end)
+    for _ = 1, 3 do
+        if not o then break end
+        local c = class_name_of(o)
+        if c and M.FC_SCREENS[c] then kind = M.FC_SCREENS[c]; break end
+        local nxt
+        pcall(function() nxt = o:GetOuter() end)
+        o = nxt
+    end
+    local S = M.FCS
+    if not kind and S.kind and S.owner then
+        local ok = false
+        pcall(function() ok = S.owner:IsValid() end)
+        if ok then o, kind = S.owner, S.kind end
+    end
+    if not kind then return nil end
+    local same = (M.addr_of(o) == S.addr)
+    log(string.format("FCSCREEN question over %s (seen by the screen reader: %s)", kind, tostring(same)))
+    if kind == "purchase" then
+        local row = M.fc_list_row(M.fc_get(o, "PurchaselistWidget"))
+        return row and (M.fc_txt(row, "RefText_Col1") or M.fc_txt(row, "Column1_Text")) or nil
+    end
+    if same and S.status_said then return nil end
+    local s
+    if kind == "monster" then s = M.fc_npc_status(M.fc_get(o, "NPCStatusPartsWidget"))
+    else s = M.fc_lure_status(o) end
+    if s and same then S.status_said = s end
+    return s
 end
 
 -- MINIMAP MARKERS: what sighted players read off the radar map (bottom right).
