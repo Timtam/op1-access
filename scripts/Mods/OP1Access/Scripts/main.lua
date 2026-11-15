@@ -5422,6 +5422,7 @@ local function nav_dir(dx, dy)
     if #parts == 0 then return "here" end
     return table.concat(parts, " ")
 end
+M.nav_dir = nav_dir   -- (for M.marker_watch)
 local nav_last_px, nav_last_py = nil, nil
 local LEVEL_THRESH = 250  -- |dz| beyond this = another floor (one floor measured ~502 units; 250 clears same-floor jitter)
 local function nav_probe()
@@ -6591,7 +6592,10 @@ end
 -- marker was there 4 s after it), so a list built within 4 s of a jump is stale too.
 NV.list_stale = function()
     local j = M.jump_t
-    return j ~= nil and (NV.list_t or -1) < j + 4.0
+    if j ~= nil and (NV.list_t or -1) < j + 4.0 then return true end
+    -- a new radar marker came up after the marker list was built (M.marker_watch)
+    local c = NAV_CLASSES[NV.cat]
+    return (c and c.markers and M.marker_new_t ~= nil and (NV.list_t or -1) < M.marker_new_t) and true or false
 end
 -- Rebuild a stale list. Returns true if its targets changed (then the first one is
 -- selected), false if they're the same (the selection stays).
@@ -9604,20 +9608,146 @@ end
 --   16 = quill -- a save point (book on a lectern; Enter opens "Speichern")
 --   0  = unused slot
 -- Called on demand (category cycling), exploring only.
-M.MARKER_KIND = { [5] = "hidden item", [6] = "objective", [14] = "exit toward objective",
-                  [16] = "save point" }
+-- The whole enum (ERADARMAP_ICON_TYPE, its display names read from the cooked asset,
+-- 2026-11-15): 0 ePLAYER, 1 eSAVEPOINT, 2 eTREASUREBOX, 3 eTHIEF_TREASUREBOX, 4
+-- eTREASUREBOX_EMPTY, 5 eTHDDEN_POINT, 6 eMAIN_SCENARIO, 7 eSUB_SCENARIO (a side story:
+-- the user found them in Atlasdam by talking to people), 8 eITEM_SHOP, 9 eWEAPON_SHOP,
+-- 10 eGENERAL_SHOP, 11 eINN, 12 eMAIN_BAR, 13 eBAR, 14 eMAIN_MAPCHANGE, 15 eMAPCHANGE,
+-- 16 eSAVE, 17 eADDMEMBER (a traveler who can join). Chests and shops have their own
+-- categories: the marker list leaves 2-4 and 8-13 out.
+M.MARKER_KIND = { [1] = "save point", [5] = "hidden item", [6] = "objective", [7] = "side story",
+                  [14] = "exit toward objective", [16] = "save point", [17] = "traveler to recruit" }
+M.MARKER_SKIP = { [0] = true, [2] = true, [3] = true, [4] = true, [8] = true, [9] = true, [10] = true,
+                  [11] = true, [12] = true, [13] = true }
+
+-- NEW MARKERS (2026-11-15, user: after talking to people in Atlasdam side stories came
+-- up, and Scrutinize revealed hidden items -- maybe with new markers, but nothing said
+-- so). While you explore, the radar's icons are compared every 2 s (property reads only,
+-- no FindAllOf): one worth walking to (hidden item, objective, side story, exit toward
+-- the objective, traveler to recruit) that wasn't there before is said with its
+-- direction and distance: "New marker: hidden item, up left, 350". A new icon must show
+-- in two checks in a row (the area banner, read every 0.3 s, has caught up by then). Not
+-- said: what an area shows when you arrive; anything within 6 s of a teleport (each part
+-- of a level has its own icons, and they follow a few seconds late); a set where two or
+-- more icons went away at once (another part's icons coming in: 6 s of quiet) or three
+-- or more came at once; an icon seen before in this level.
+-- The navigator's marker list is rebuilt on its next use, so the new one is in it.
+-- The minimap widget, kept as a checked handle (it is touched every 2 s by the watch).
+-- Found again only when it is gone; with `throttle`, at most every that many seconds
+-- (FindFirstOf walks the objects too).
+M.get_radarmap = function(throttle)
+    local h = M.radarmap_h
+    if M.handle_ok(h) then
+        local ok = false
+        pcall(function() ok = h.o:IsValid() end)
+        if ok then return h.o end
+    end
+    M.radarmap_h = nil
+    local now = os.clock()
+    if throttle and now - (M.radarmap_find_t or -99) < throttle then return nil end
+    M.radarmap_find_t = now
+    local rm
+    pcall(function() local x = FindFirstOf("RadarMap_C"); if x and x:IsValid() then rm = x end end)
+    M.radarmap_h = rm and M.handle(rm) or nil
+    return M.radarmap_h and rm or nil
+end
+M.MW = { seen = nil, area = nil, t = 0, pend = {} }
+M.MW_KINDS = { [5] = true, [6] = true, [7] = true, [14] = true, [17] = true }
+M.marker_watch = function(px, py)
+    local W = M.MW
+    local now = os.clock()
+    if now - W.t < 2.0 then return end
+    W.t = now
+    local rm = M.get_radarmap(30)
+    if not rm then return end
+    local cur, list, sig = {}, {}, {}
+    pcall(function()
+        rm.RadarIconList:ForEach(function(_, v)
+            local w = v:get()
+            if not (w and w:IsValid()) then return end
+            local t, vis, reg, x, y = 0, false, "", nil, nil
+            pcall(function() t = w.IconParam.IconType end)
+            pcall(function() vis = w.IconParam.IsVisibility end)
+            if type(t) == "number" and t ~= 0 then
+                local sk = t .. (vis and "" or "h")   -- h = hidden on the map
+                sig[sk] = (sig[sk] or 0) + 1
+            end
+            if not M.MW_KINDS[t] then return end
+            pcall(function() reg = w.IconParam.RegistObjectName:ToString() end)
+            pcall(function() x = w.IconParam.Position.X; y = w.IconParam.Position.Y end)
+            if not vis or not x then return end
+            local key = t .. "|" .. ((reg ~= "" and reg ~= "None") and reg
+                or string.format("%d,%d", math.floor(x / 100), math.floor(y / 100)))
+            cur[key] = true
+            list[#list + 1] = { key = key, type = t, x = x, y = y }
+        end)
+    end)
+    -- one log line whenever the minimap's icons change (type x count, "h" = not shown):
+    -- shows what the game changed live, e.g. a chest 2 -> 4 when opened
+    local parts = {}
+    for k, n in pairs(sig) do parts[#parts + 1] = k .. "x" .. n end
+    table.sort(parts)
+    local s = table.concat(parts, " ")
+    if s ~= W.sig then
+        W.sig = s
+        log("MARKER icons: " .. s)
+    end
+    local lvl = M.level_id and M.level_id() or nil
+    if lvl and W.lvl and lvl ~= W.lvl then   -- another level: start over, 6 s of quiet
+        W.seen, W.settle_until = nil, now + 6.0
+    end
+    local settle = W.seen == nil or W.area ~= M.area_said or (M.jump_t and now - M.jump_t < 6.0)
+        or now < (W.settle_until or 0)
+    if not settle and W.prev then
+        local gone = 0
+        for k in pairs(W.prev) do if not cur[k] then gone = gone + 1 end end
+        if gone >= 2 then
+            W.settle_until = now + 6.0
+            settle = true
+            log("MARKER " .. gone .. " icons gone at once: another part's icons, not said")
+        end
+    end
+    if settle then
+        W.seen = W.seen or {}
+        for k in pairs(cur) do W.seen[k] = true end
+        W.pend = {}
+    else
+        local confirm, pend = {}, {}
+        for _, ic in ipairs(list) do
+            if not W.seen[ic.key] then
+                if W.pend[ic.key] then confirm[#confirm + 1] = ic else pend[ic.key] = true end
+            end
+        end
+        W.pend = pend
+        for _, ic in ipairs(confirm) do W.seen[ic.key] = true end
+        if #confirm > 0 then
+            -- the marker list pins icons to people, chests and event spots: scan those
+            -- afresh in case the game made a new one for this marker
+            for _, k in ipairs({ "KSFieldNPCCharacter_C", "TreasureBoxBP_C", "EventTriggerBP_C" }) do
+                M.fa_cache[k] = nil
+            end
+        end
+        if #confirm >= 3 then
+            log("MARKER " .. #confirm .. " new icons at once: a changed map, not said")
+        elseif px then
+            for _, ic in ipairs(confirm) do
+                local dx, dy = ic.x - px, ic.y - py
+                local s = string.format("New marker: %s, %s, %d", M.MARKER_KIND[ic.type] or "marker",
+                    M.nav_dir and M.nav_dir(dx, dy) or "", math.floor(math.sqrt(dx * dx + dy * dy) + 0.5))
+                log("MARKER new " .. ic.key)
+                speak(s, false)
+                M.marker_new_t = now   -- the navigator's marker list is stale now (NV.list_stale)
+            end
+        end
+    end
+    W.prev, W.area = cur, M.area_said
+    if lvl then W.lvl = lvl end
+end
 
 -- The marker kind pinned to an actor (by its object name), or nil. Used to name the
 -- talk pick when it has no NPC name (a save point's book). Scans the ~16 icons.
 M.marker_kind_of = function(actor)
-    local rm = M.radarmap
-    local ok = false
-    if rm then pcall(function() ok = rm:IsValid() end) end
-    if not ok then
-        rm = nil
-        pcall(function() local x = FindFirstOf("RadarMap_C"); if x and x:IsValid() then rm = x end end)
-        M.radarmap = rm
-    end
+    local rm = M.get_radarmap()
     if not (rm and actor) then return nil end
     local fname
     pcall(function() fname = actor:GetFName():ToString() end)
@@ -9637,14 +9767,7 @@ M.marker_kind_of = function(actor)
     return kind
 end
 M.minimap_markers = function(pz)
-    local rm = M.radarmap
-    local ok = false
-    if rm then pcall(function() ok = rm:IsValid() end) end
-    if not ok then
-        rm = nil
-        pcall(function() local x = FindFirstOf("RadarMap_C"); if x and x:IsValid() then rm = x end end)
-        M.radarmap = rm
-    end
+    local rm = M.get_radarmap()
     if not rm then return {} end
     local icons = {}
     pcall(function()
@@ -9659,6 +9782,7 @@ M.minimap_markers = function(pz)
             pcall(function() x = w.IconParam.Position.X; y = w.IconParam.Position.Y end)
             if type(t) ~= "number" or t == 0 or not vis or not x then return end
             if t == 15 and not green then return end
+            if M.MARKER_SKIP[t] then return end
             icons[#icons + 1] = { type = t, green = green, reg = reg, x = x, y = y }
         end)
     end)
@@ -9678,7 +9802,7 @@ M.minimap_markers = function(pz)
     -- step into): the headmaster's at his office door, a floor up. Without its actor the
     -- marker had the player's own height, and the walker said "Arrived" a floor below
     -- (user report 2026-11-14).
-    local byname, npcs, events, pool = {}, {}, {}, { chest = {}, exit = {}, npc = {}, event = {} }
+    local byname, npcs, events, chests, pool = {}, {}, {}, {}, { chest = {}, exit = {}, npc = {}, event = {} }
     local specs = { { "KSFieldNPCCharacter_C", "npc" }, { "TreasureBoxBP_C", "chest" },
                     { "LevelTrigger_C", "exit" } }
     for _, ic in ipairs(icons) do   -- (each FindAllOf stalls the game 45-80 ms: only if needed)
@@ -9703,6 +9827,7 @@ M.minimap_markers = function(pz)
                         local t = pool[spec[2]]; t[#t + 1] = e
                     end
                     if spec[2] == "npc" then pcall(function() npcs[o:GetAddress()] = true end) end
+                    if spec[2] == "chest" then pcall(function() chests[o:GetAddress()] = true end) end
                     if spec[2] == "event" then pcall(function() events[o:GetAddress()] = true end) end
                 end
             end
@@ -9751,6 +9876,12 @@ M.minimap_markers = function(pz)
         local label = kind
         local aaddr = 0
         if actor then pcall(function() aaddr = actor:GetAddress() end) end
+        -- a hidden item is a chest the game makes when you learn of it; its "!" stays on
+        -- the minimap after you pick it up (2026-11-15: still there a minute later)
+        if ic.type == 5 and chests[aaddr] and M.chest_state then
+            local okc, opened = pcall(M.chest_state, { addr = aaddr })
+            if okc and opened then label = kind .. ", collected" end
+        end
         if npcs[aaddr] then
             -- names only for NPCs: NpcName reads the NPC placement label at a fixed
             -- offset -- on a chest or trigger that would be garbage (and a bad FName
@@ -10286,6 +10417,8 @@ radar_pump = function(src)
         end
         pcall(nav_tick)
         pcall(M.interact_poll)   -- talk / path-action hint
+        -- new radar markers (a hidden item after Scrutinize, a side story after a talk)
+        if WS.px and M.marker_watch then pcall(M.marker_watch, WS.px, WS.py) end
     end
     if pump_count % 30 == 1 then pcall(arm_pump_tickhook) end
     -- self-heal: LoopAsyncs can die on level load; if ours has gone quiet, start a
