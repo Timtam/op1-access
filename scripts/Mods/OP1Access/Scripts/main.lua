@@ -6532,7 +6532,8 @@ local function nav_route_finish(goalnode)
     NV.route = nil
     if not R then return end
     if not goalnode then
-        log(string.format("ROUTE fail traces=%d pops=%d %.1fs", R.traces, R.pops, os.clock() - R.started))
+        log(string.format("ROUTE fail traces=%d pops=%d slides=%d %.1fs", R.traces, R.pops, R.slides or 0,
+            os.clock() - R.started))
         -- after a search on the shifted grid (NV.route_shift) the fallbacks below start
         -- from where you stand, and "boxed in" needs both searches to have died at once
         local boxed = (R.pops or 0) <= 3 and (R.pops0 or 0) <= 3
@@ -6633,6 +6634,9 @@ local function nav_route_finish(goalnode)
             local w = par and (R.ecache[par.k .. ">" .. nd.k] or R.ecache[nd.k .. ">" .. par.k])
             local t = (w == "soft") and "s" or (type(w) == "number" and "D" or "")
             if par and par.x ~= nd.x and par.y ~= nd.y then t = t .. "x" end
+            if (nd.ox or 0) ~= 0 or (nd.oy or 0) ~= 0 then
+                t = t .. string.format("~%d", math.floor(math.abs((nd.ox or 0) + (nd.oy or 0)) + 0.5))
+            end
             parts[#parts + 1] = nd.x .. "," .. nd.y .. t
         end
         log(string.format("ROUTE cells from (%.0f,%.0f): %s", R.px, R.py, table.concat(parts, " ")))
@@ -6640,8 +6644,11 @@ local function nav_route_finish(goalnode)
     local raw = { { x = R.px, y = R.py } }
     -- on the shifted grid the walk starts where you stand, then goes to its start cell
     if R.shifted then raw = { { x = R.shifted.x, y = R.shifted.y }, { x = R.px, y = R.py, z = R.pz } } end
-    for i = #chain, 1, -1 do   -- (z = the cell's floor, for NV.nudge_wp)
-        raw[#raw + 1] = { x = R.px + chain[i].x * NV.STEP, y = R.py + chain[i].y * NV.STEP, z = chain[i].z }
+    for i = #chain, 1, -1 do   -- (z = the cell's floor, for NV.nudge_wp; ox/oy: a slid step)
+        local pre = chain[i].pre   -- the side step before entering a narrow passage
+        if pre then raw[#raw + 1] = { x = pre.x, y = pre.y, z = pre.z } end
+        raw[#raw + 1] = { x = R.px + chain[i].x * NV.STEP + (chain[i].ox or 0),
+                          y = R.py + chain[i].y * NV.STEP + (chain[i].oy or 0), z = chain[i].z }
     end
     raw[#raw + 1] = { x = R.ox, y = R.oy }
     -- a SHUT DOOR on the way: walk to the first one only. There the door leg's usual
@@ -6687,8 +6694,8 @@ local function nav_route_finish(goalnode)
     local ez = (door and R.mode == "walk") and (door.z or R.oz) or R.oz   -- the walk's end
     if ez - R.pz < -250 then floorword = ", downstairs"
     elseif ez - R.pz > 250 then floorword = ", upstairs" end
-    log(string.format("ROUTE ok cells=%d wps=%d traces=%d %.1fs (%d ticks, %.1f ms/tick, %.3f ms/trace)",
-        #chain, #pts, R.traces, os.clock() - R.started,
+    log(string.format("ROUTE ok cells=%d wps=%d traces=%d slides=%d %.1fs (%d ticks, %.1f ms/tick, %.3f ms/trace)",
+        #chain, #pts, R.traces, R.slides or 0, os.clock() - R.started,
         R.ticks or 0, (R.cpu or 0) * 1000 / math.max(1, R.ticks or 0), (R.cpu or 0) * 1000 / math.max(1, R.traces)))
     if R.mode == "walk" then
         if door then speak("A shut door on the way") end
@@ -6848,7 +6855,7 @@ NV.route_job = function(mode, ox, oy, oz, px, py, pz, pad)
         open = { { x = 0, y = 0, z = pz, k = startk, g = 0, f = math.abs(gx) + math.abs(gy) } },
         came = {}, gbest = { [startk] = 0 }, closed = {}, via = {},
         doors = (okd and type(doors) == "table") and doors or {},
-        ecache = {}, gcache = {}, traces = 0, pops = 0, started = os.clock(),
+        ecache = {}, gcache = {}, eside = {}, gcache2 = {}, traces = 0, pops = 0, started = os.clock(),
         maxtr = 7000, maxt = 8,   -- (5200 before the diagonals: more traces per cell now)
         minx = math.min(0, gx) - pad, maxx = math.max(0, gx) + pad,
         miny = math.min(0, gy) - pad, maxy = math.max(0, gy) + pad,
@@ -6879,7 +6886,7 @@ NV.route_widen = function(R)
     elseif R.pad < 40 then pad = 40
     else return nil end
     local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, R.px, R.py, R.pz, pad)
-    W.gcache, W.ecache = R.gcache, R.ecache
+    W.gcache, W.ecache, W.eside, W.gcache2, W.slides = R.gcache, R.ecache, R.eside, R.gcache2, R.slides
     W.traces, W.pops, W.started, W.saidlong = R.traces, R.pops, R.started, R.saidlong
     W.cpu, W.ticks = R.cpu, R.ticks
     W.shifted, W.pops0, W.shift_i = R.shifted, R.pops0, R.shift_i
@@ -6980,6 +6987,101 @@ NV.corridor_clear = function(ksl, p, px, py, pz, ox, oy)
     return true
 end
 
+-- NARROW PASSAGES (2026-11-15): lower Felsfall's long stairs are ~118 wide between their
+-- walls. A step's corridor (centre +-42) fits there only within 17 of their middle, and
+-- cell centres 130 apart missed that on both grids: the exit up was "not reachable" and
+-- the walk never started. A straight step whose CENTRE line is clear while a side line
+-- hits may slide its corridor sideways by 22 or 44, either way. The cell then stands for
+-- the slid point (node ox/oy; the walk goes there), and steps on from it run parallel
+-- (s0) or back onto the grid (0). Diagonals only between unslid cells.
+-- -> w (true / "soft"), offset {ox, oy}, floor z, traces used | nil, nil, nil, used
+NV.SLIDES = { 22, -22, 44, -44 }
+-- floor at a world point (down trace from za+160 to za-240), cached per 10-unit spot
+NV.ground_at = function(R, ksl, p, wx, wy, za)
+    local gk = math.floor(wx / 10 + 0.5) .. "," .. math.floor(wy / 10 + 0.5) .. "@" .. math.floor((za - R.pz) / 200 + 0.5)
+    local c = R.gcache2[gk]
+    if c ~= nil then return c, 0 end
+    R.traces = R.traces + 1
+    local ok, hit, oh = line_blocked(ksl, p, wx, wy, za + 160, wx, wy, za - 240)
+    local z = false
+    if ok and hit then
+        local dist
+        pcall(function() if type(oh.Distance) == "number" then dist = oh.Distance end end)
+        z = dist and (za + 160 - dist) or za
+    end
+    R.gcache2[gk] = z
+    return z, 1
+end
+NV.slide_step = function(R, ksl, p, best, d, nx, ny)
+    local used = 0
+    local qx, qy = d[2], -d[1]                     -- across the step (straight steps: unit)
+    local bo_x, bo_y = best.ox or 0, best.oy or 0
+    local ax, ay = R.px + best.x * NV.STEP + bo_x, R.py + best.y * NV.STEP + bo_y
+    local cx, cy = R.px + nx * NV.STEP, R.py + ny * NV.STEP
+    local tries, seen = {}, {}
+    local function add(s)
+        s = math.floor(s + 0.5)
+        if not seen[s] then seen[s] = true; tries[#tries + 1] = s end
+    end
+    if bo_x ~= 0 or bo_y ~= 0 then add(0); add(bo_x * qx + bo_y * qy) end
+    for _, s in ipairs(NV.SLIDES) do add(s) end
+    -- the 3 lines of a corridor from (x1,y1) to (x2,y2) along the step: clear?
+    local function corridor(x1, y1, z1, x2, y2, z2)
+        for _, off in ipairs({ 0, 1, -1 }) do
+            R.traces = R.traces + 1
+            used = used + 1
+            local o2, h2 = line_blocked(ksl, p, x1 + qx * 42 * off, y1 + qy * 42 * off, z1 + 55,
+                x2 + qx * 42 * off, y2 + qy * 42 * off, z2 + 55)
+            if not (o2 and not h2) then return false end
+        end
+        return true
+    end
+    for _, s in ipairs(tries) do
+        local bx, by = cx + qx * s, cy + qy * s
+        local zb, u = NV.ground_at(R, ksl, p, bx, by, best.z)
+        used = used + u
+        if zb and math.abs(zb - best.z) <= 200 then
+            -- straight from where this cell stands, or (into the passage from open
+            -- ground) a side step inside this cell first, then parallel: from a cell 50
+            -- off the passage's middle the slanted corridor clipped its entrance
+            local pre = nil
+            local ok = corridor(ax, ay, best.z, bx, by, zb)
+            if not ok and s ~= 0 then
+                local sx, sy = R.px + best.x * NV.STEP + qx * s, R.py + best.y * NV.STEP + qy * s
+                if math.abs(sx - ax) + math.abs(sy - ay) > 1 then
+                    local zs, u2 = NV.ground_at(R, ksl, p, sx, sy, best.z)
+                    used = used + u2
+                    if zs and math.abs(zs - best.z) <= 60 then
+                        R.traces = R.traces + 1
+                        used = used + 1
+                        local o3, h3 = line_blocked(ksl, p, ax, ay, best.z + 55, sx, sy, zs + 55)
+                        if o3 and not h3 and corridor(sx, sy, zs, bx, by, zb) then
+                            ok, pre = true, { x = sx, y = sy, z = zs }
+                        end
+                    end
+                end
+            end
+            if ok then
+                R.traces = R.traces + 1
+                used = used + 1
+                local fx, fy, fz = ax, ay, best.z
+                if pre then fx, fy, fz = pre.x, pre.y, pre.z end
+                local okp, hitp = line_blocked(ksl, p, fx, fy, fz + 55, bx, by, zb + 55, NV_TRACE)
+                -- unlike a plain step, a slid one the player's own profile calls blocked is
+                -- out: at a house door in lower Felsfall the route took one into an
+                -- invisible wall (ch0 blind, Pawn 28) instead of the door, and the walk
+                -- stuck there (2026-11-15). Along the stairs the slid line runs parallel to
+                -- the walls and stays clear.
+                if okp and not hitp then
+                    if s ~= 0 then R.slides = (R.slides or 0) + 1 end
+                    return true, { qx * s, qy * s, pre = pre }, zb, used
+                end
+            end
+        end
+    end
+    return nil, nil, nil, used
+end
+
 -- One slice of the A* search on job R: at most `budget` traces and `itercap` loop
 -- turns. Returns "found", node | "fail", why ("box" = no cells left in the box,
 -- "cap" = out of traces / time) | nil (not done, call again next tick).
@@ -7020,12 +7122,25 @@ NV.route_slice = function(R, budget, itercap, deadline)
             -- runs. Closed neighbours are checked too (cached, mostly as the reverse
             -- step), to count the walls.
             local open4, blocked, cand = {}, 0, {}
+            -- a cell entered by a slid step stands for the slid point (NV.slide_step)
+            local fromslid = (best.ox or 0) ~= 0 or (best.oy or 0) ~= 0
             for _, d in ipairs(NV.DIRS8) do
                 local nx, ny = best.x + d[1], best.y + d[2]
                 local diag = d[1] ~= 0 and d[2] ~= 0
                 local inbox = nx >= R.minx and nx <= R.maxx and ny >= R.miny and ny <= R.maxy
-                if inbox and diag and not (open4[d[1] .. ",0"] and open4["0," .. d[2]]) then inbox = false end
-                if inbox then
+                if inbox and diag and (fromslid or not (open4[d[1] .. ",0"] and open4["0," .. d[2]])) then
+                    inbox = false
+                end
+                if inbox and fromslid then
+                    -- from a slid point: straight steps only, slid again or back onto the grid
+                    local sw, so, sz, used = NV.slide_step(R, ksl, p, best, d, nx, ny)
+                    budget = budget - used
+                    if sw then
+                        cand[#cand + 1] = { nx, ny, sz, key3(nx, ny, zlayer(R, sz)), sw, false, so }
+                    else
+                        blocked = blocked + 1
+                    end
+                elseif inbox then
                     local zb, used = nav_ground(R, ksl, p, nx, ny, best.z)
                     budget = budget - used
                     if zb and math.abs(zb - best.z) <= 200 then
@@ -7050,7 +7165,13 @@ NV.route_slice = function(R, budget, itercap, deadline)
                                 local ok2, hit2 = line_blocked(ksl, p,
                                     ax0 + pox * off, ay0 + poy * off, best.z + 55,
                                     bx0 + pox * off, by0 + poy * off, zb + 55)
-                                if not (ok2 and not hit2) then w = false; break end
+                                if not (ok2 and not hit2) then
+                                    w = false
+                                    -- the centre line is clear, only a side line hits: maybe
+                                    -- a narrow passage (NV.slide_step)
+                                    if off ~= 0 and not diag then R.eside[ekey] = true end
+                                    break
+                                end
                             end
                             -- open on channel 0, but the character may still run into an
                             -- INVISIBLE wall there (the study's ledge: ch0 blind, the pawn
@@ -7092,6 +7213,13 @@ NV.route_slice = function(R, budget, itercap, deadline)
                             if w == true and not diag then open4[d[1] .. "," .. d[2]] = true end
                             cand[#cand + 1] = { nx, ny, zb, nk, w, diag }
                         elseif not diag then
+                            if R.eside[ekey] or R.eside[nk .. ">" .. best.k] then
+                                local sw, so, sz, used2 = NV.slide_step(R, ksl, p, best, d, nx, ny)
+                                budget = budget - used2
+                                if sw then
+                                    cand[#cand + 1] = { nx, ny, sz, key3(nx, ny, zlayer(R, sz)), sw, false, so }
+                                end
+                            end
                             blocked = blocked + 1
                         end
                     elseif not diag then
@@ -7110,6 +7238,10 @@ NV.route_slice = function(R, budget, itercap, deadline)
                     -- win (at +6 the router took a door to a target it also reached openly);
                     -- a step the pawn trace calls blocked ("soft") costs 8
                     local step = isdoor and 25 or (c[5] == "soft" and 8 or (c[6] and 1.41421 or 1))
+                    -- a slid step: only where the grid has no way (narrow passages)
+                    local so = c[7]
+                    local slid = so and (so[1] ~= 0 or so[2] ~= 0)
+                    if slid then step = step + 1 end
                     local ng = best.g + step + pen
                     if ng < (R.gbest[nk] or 1e9) then
                         R.gbest[nk] = ng
@@ -7119,7 +7251,8 @@ NV.route_slice = function(R, budget, itercap, deadline)
                         -- that steps near walls cost more than 1
                         local hx, hy = math.abs(R.gx - c[1]), math.abs(R.gy - c[2])
                         local h = math.max(hx, hy) + 0.41421 * math.min(hx, hy)
-                        NV.heap_push(R.open, { x = c[1], y = c[2], z = c[3], k = nk, g = ng, f = ng + 1.2 * h })
+                        NV.heap_push(R.open, { x = c[1], y = c[2], z = c[3], k = nk, g = ng, f = ng + 1.2 * h,
+                            ox = slid and so[1] or nil, oy = slid and so[2] or nil, pre = so and so.pre or nil })
                     end
                 end
             end
@@ -7233,10 +7366,10 @@ NV.bg_record = function(job, ok, how, viadoor)
         end
         NV.noroute[job.key] = { x = job.px, y = job.py, area = job.area, door = door }
     end
-    log(string.format("REACH %s %s d=%.0f dz=%.0f: %s (%s, traces=%d, pops=%d, %.1fs)", tostring(job.cat),
+    log(string.format("REACH %s %s d=%.0f dz=%.0f: %s (%s, traces=%d, pops=%d, slides=%d, %.1fs)", tostring(job.cat),
         tostring(job.name or job.key), math.sqrt((job.tx - job.px) ^ 2 + (job.ty - job.py) ^ 2), job.tz - job.pz,
         ok and "ok" or "NOT reachable", how or "route", job.R and job.R.traces or 0, job.R and job.R.pops or 0,
-        job.R and (os.clock() - job.R.started) or 0))
+        job.R and job.R.slides or 0, job.R and (os.clock() - job.R.started) or 0))
 end
 -- Set up the check of target t from the player's spot; nil = nothing to search
 -- (gone, already known, behind a house door, or settled by a straight line).
