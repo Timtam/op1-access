@@ -194,10 +194,22 @@ against one Eissentinel in the study dungeon. Not yet seen or checked:
   (planned in 0.8 s, walked 5460 in one go), the stairs down and up again. Routes near
   walls now cost more traces (3500-7000 instead of 1500-3500 here; still under 1 s).
   Not checked in other towns or dungeons yet.
-- **A person in a doorway still blocks the walk.** In lower Felsfall the Armer stands in
-  House_A's door, with invisible walls beside it; a target behind him is "not
-  reachable", and "try anyway" ends in bumps and "Walk interrupted". Before the slides
-  the walk went to the door and said "Open it", and E then talked to the Armer.
+- **People in the way — FIXED 2026-11-15, a few walks checked.** The router's traces
+  don't see people (only the player's own collision profile does), so routes went right
+  through them and the walk bumped; in lower Felsfall the Armer stands in House_A's
+  doorway, in Felsfall an old man in another house's door. Now walks and directions keep
+  70 from everyone in the area except the person walked to. When that leaves no way, the
+  same search runs without people, and if that finds one the walk names who is in the
+  way. A way to a door also checks its last step. Heard: "Armer is in the way" (to the
+  villager in House_A and to its door), "Alter Mann is in the way" (Felsfall). Walks with
+  2 and 13 people around (pub -> Felsfall, across Felsfall to the Ravus gate, to the
+  Alte Frau) ran clean. Open:
+  - People who walk around are taken where they stood at the start; a walk that bumps
+    into one routes again from the new positions.
+  - The list's background check leaves people out (they move), so a target behind
+    someone still says nothing until you walk.
+  - Such doors are probably shut by design: nothing tells whether the person ever
+    moves.
 - **The side step in front of a person is untested.** When stepping straight toward
   a person behind a counter gets no closer, every other try steps sideways to stand
   square in front (Mercedes is picked at 161 with 26 to the side, not at 166 with 48).
