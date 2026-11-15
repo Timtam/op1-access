@@ -104,21 +104,31 @@ end
 -- "Kosten: 8 FP\nFügt allen Gegnern Blitzschaden zu.". A piece ending without
 -- punctuation before one that doesn't start in lower case gets ". " (a pause);
 -- otherwise a plain space, so a sentence wrapped mid-way stays whole and a tutorial's
--- "behalten!" isn't followed by another ".".
+-- "behalten!" isn't followed by another ".". German nouns start in upper case, so a
+-- break INSIDE a piece after a word in lower case is a wrap too: "auf ein gewisses\n
+-- Herrenhaus" was read "gewisses. Herrenhaus" (2026-11-15).
+M.ends_lower_word = function(s)
+    local w = s:match("(%S+)$")
+    if not w then return false end
+    w = w:gsub("^[%(%[\"']+", ""):gsub("^\226\128[\152\156\158]", "")
+    return w:find("^%l") ~= nil or w:find("^\195[\159-\191]") ~= nil
+end
 M.join_text = function(parts)
     local out = ""
     for _, part in ipairs(parts) do
+        local inner = false        -- a later line of this same piece
         for line in (tostring(part) .. "\n"):gmatch("(.-)\r?\n") do
             line = line:gsub("^%s+", ""):gsub("%s+$", "")
             if line ~= "" then
                 if out == "" then
                     out = line
                 elseif out:find("[%.!%?:;,]$") or out:find("\226\128\166$") or line:find("^%l")
-                    or line:find("^\195[\159-\191]") then
+                    or line:find("^\195[\159-\191]") or (inner and M.ends_lower_word(out)) then
                     out = out .. " " .. line
                 else
                     out = out .. ". " .. line
                 end
+                inner = true
             end
         end
     end
