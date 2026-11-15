@@ -368,6 +368,8 @@ local BLOCKING_CLASSES = {
     FieldCommandJudge_C = true, FieldCommandMonster_C = true,
     -- their lists focused on their own (Purchase / Steal, H'aanit's monsters)
     PurchaselistWidget_C = true, MonsterListWidget_C = true,
+    -- the tavern's party change and story select (the latter also on entering a town)
+    ListCharacterWidget_C = true, BarMenuStorySelect_C = true,
     -- focused while a path action plays out (user log 2026-11-10): the bubble manager
     -- during the speech bubbles, the common dialog for the result boxes ("Ihr habt
     -- neue Informationen gewonnen!") -- the radar came back between the boxes.
@@ -1423,6 +1425,11 @@ do
             local mode, label
             pcall(function() mode = w.ShopMode end)
             pcall(function() label = w.ShopLabel:ToString() end)
+            -- the header is shared: back from "Geschichte lauschen" it still said "Abenteuer
+            -- in Atlasdamm" (user log 2026-11-14), so a shop keeps the title it opened with
+            sh.titles = sh.titles or {}
+            if label and sh.titles[label] then title = sh.titles[label]
+            elseif label and title and not M.placeholder(title) then sh.titles[label] = title end
             local okc, cmds = pcall(sh.commands, w)
             sh.cmds = okc and cmds or nil
             local ct = {}
@@ -1489,6 +1496,145 @@ do
         t = (t and not M.placeholder(t)) and t or ("Item " .. (ci + 1))
         if c and c.off then t = t .. ", unavailable" end
         M.say_item(t)
+    end
+end
+
+-- THE TAVERN'S OWN SCREENS (user log 2026-11-14: both stayed silent). They open from the
+-- keeper's menu inside the talk event; the fast polls read them (game thread, property
+-- reads only), never in a fade.
+-- PARTY CHANGE, "Gruppe wechseln" (ListCharacterWidget_C): the party in
+-- PartyCharacterList.PartyCharacter_00..03, the travelers waiting in the tavern in
+-- CharacterPanel_01..08 -- all PartyCharacterPanel_C, the panels M.ml_member reads
+-- ("Cyrus, level 5, HP 259 of 284, SP 56 of 64"). IsSelectMainType: the cursor is in the
+-- party, else among the waiting ones; MainSelectCursorIndex / SubSelectCursorIndex;
+-- the member picked to swap: DeclsionMainCursorIndex / DeclsionSubCursorIndex.
+M.TAV = {}
+-- Both read their texts only when the cursor moved, after a question, or once a second
+-- (texts filled late): a full read of the story entry took ~90 ms on the game thread
+-- (2026-11-15), each tick would stall the game.
+M.tav_due = function(T, quick)
+    local now = os.clock()
+    if quick == T.quick and T.said and now - (T.read_t or 0) < 1.0 then return false end
+    T.quick, T.read_t = quick, now
+    return true
+end
+M.poll_party_change = function(w)
+    local T = M.TAV
+    local main = M.fc_get(w, "IsSelectMainType")
+    local mi, si = M.fc_get(w, "MainSelectCursorIndex"), M.fc_get(w, "SubSelectCursorIndex")
+    local dm0, ds0 = M.fc_get(w, "DeclsionMainCursorIndex"), M.fc_get(w, "DeclsionSubCursorIndex")
+    if not M.tav_due(T, string.format("P%s/%s/%s/%s/%s", tostring(main), tostring(mi), tostring(si), tostring(dm0),
+        tostring(ds0))) then return end
+    local idx = (main and mi or si) or 0
+    -- leaving, the cursor drops to -1 for a moment ("Waiting 0: empty, chosen")
+    if idx < 0 then return end
+    local pc, n
+    if main then
+        pc = M.fc_get(M.fc_get(w, "PartyCharacterList"), string.format("PartyCharacter_%02d", idx))
+        n = M.fc_get(w, "MainCharacterMaxCount")
+    else
+        pc = M.fc_get(w, string.format("CharacterPanel_%02d", idx + 1))
+        n = M.fc_get(w, "SubCharacterMaxCount")
+    end
+    local who = (pc and M.fc_shown(pc)) and M.ml_member(pc) or nil
+    local s = string.format("%s %d%s: %s", main and "Party" or "Waiting", idx + 1,
+        (type(n) == "number" and n > 0) and (" of " .. n) or "", who or "empty")
+    local dm, ds = M.fc_get(w, "DeclsionMainCursorIndex"), M.fc_get(w, "DeclsionSubCursorIndex")
+    if (main and dm == idx) or ((not main) and ds == idx) then s = s .. ", chosen" end   -- (idx >= 0)
+    local sig = "P" .. s
+    if sig == T.said then return end
+    if not T.opened then
+        log(string.format("TAVERN party change: main=%s idx=%s/%s max=%s/%s chosen=%s/%s error=%s", tostring(main),
+            tostring(mi), tostring(si), tostring(M.fc_get(w, "MainCharacterMaxCount")),
+            tostring(M.fc_get(w, "SubCharacterMaxCount")), tostring(dm), tostring(ds), tostring(M.fc_get(w, "ErrorNo"))))
+        local t = M.fc_txt(w, "TitleText")
+        if t then s = t .. ". " .. s end
+    end
+    T.said, T.opened = sig, true
+    speak(s, true)
+end
+-- STORY SELECT, "Geschichte lauschen" (BarMenuStorySelect_C; the same screen asks when
+-- you enter a town where a traveler's chapter can begin, eBAR_MENU_STORYSELECT_HEADER
+-- "Eine Geschichte fortsetzen"): up to three entries StorySelectItem00..02
+-- (BarMenuStorySelectItem_C: StoryCharacterName, StoryChapter "Kapitel 1", StoryText,
+-- the recommended level RecomandationText + RecomandationLV, the state overlays
+-- StoryProccess1..3 with StoryProccesstext1..3 "Im Gange" / "Unterbrochen" /
+-- "Abgeschlossen"; ItemEnable), CursorPos the focused one. Its question ("Pfad von Cyrus,
+-- Kapitel 1. Die Geschichte beginnen?") is a common dialog.
+M.poll_story_select = function(w)
+    local T = M.TAV
+    local tp = os.clock()
+    local cp = M.fc_get(w, "CursorPos") or 0
+    if not M.tav_due(T, string.format("S%s/%s", tostring(cp), tostring(M.fc_get(w, "Status")))) then
+        -- the entry's description (help window) a moment after it
+        if T.help_at and os.clock() >= T.help_at then
+            T.help_at = nil
+            local h = M.ml_help and M.ml_help()
+            if h and h ~= T.help_said then T.help_said = h; speak(h, false) end
+        end
+        return
+    end
+    local t0 = os.clock()
+    local n = 0
+    for i = 0, 2 do
+        if M.fc_shown(M.fc_get(w, string.format("StorySelectItem%02d", i))) then n = n + 1 end
+    end
+    local item = M.fc_get(w, string.format("StorySelectItem%02d", cp))
+    if not item then return end
+    local f, raw = {}, {}
+    for _, k in ipairs({ "StoryCharacterName", "StoryChapter", "StoryText", "RecomandationText", "RecomandationLV",
+        "Level", "StoryProccesstext1", "StoryProccesstext2", "StoryProccesstext3" }) do
+        f[k] = M.fc_txt(item, k)
+        raw[#raw + 1] = k .. "=" .. tostring(f[k])
+    end
+    local en = M.fc_get(item, "ItemEnable")
+    local t1 = os.clock()
+    local parts = {}
+    for _, k in ipairs({ "StoryCharacterName", "StoryChapter", "StoryText" }) do
+        if f[k] then parts[#parts + 1] = f[k] end
+    end
+    if f.RecomandationLV and M.fc_shown(M.fc_get(item, "RecomandationRoot")) then
+        parts[#parts + 1] = (f.RecomandationText or "recommended level") .. " " .. f.RecomandationLV
+    end
+    for i = 1, 3 do
+        local t = f["StoryProccesstext" .. i]
+        if t and M.fc_shown(M.fc_get(item, "StoryProccess" .. i)) then parts[#parts + 1] = t end
+    end
+    if #parts == 0 then return end
+    local s = (n > 1 and string.format("%d of %d: ", cp + 1, n) or "") .. M.join_text(parts)
+    if en == false then s = s .. ", unavailable" end
+    local sig = "S" .. s
+    if sig == T.said then return end
+    local key = table.concat(raw, " ")
+    if key ~= T.logged then
+        T.logged = key
+        log(string.format("TAVERN story %d/%d enable=%s mode=%s status=%s: %s", cp + 1, n, tostring(en),
+            tostring(M.fc_get(w, "BarMenuMode")), tostring(M.fc_get(w, "Status")), key))
+    end
+    if not T.opened then
+        local h = M.gt_label("eBAR_MENU_STORYSELECT_HEADER")
+        if h then s = h .. ". " .. s end
+    end
+    local t2 = os.clock()
+    T.said, T.opened, T.help_at = sig, true, os.clock() + 0.4
+    speak(s, true)
+    local t3 = os.clock()
+    -- (opening the screen stalls ~80 ms once, but this part took < 20 ms: logged to find it)
+    if t3 - tp > 0.02 then
+        log(string.format("TAVERN story read %.0f ms: cursor %.0f, widgets %.0f, texts %.0f, speak %.0f",
+            (t3 - tp) * 1000, (t0 - tp) * 1000, (t1 - t0) * 1000, (t2 - t1) * 1000, (t3 - t2) * 1000))
+    end
+end
+M.poll_tavern = function()
+    if M.fade_now then return end
+    local w, cls = M.get_active_screen()
+    if cls == "ListCharacterWidget_C" then pcall(M.poll_party_change, w)
+    elseif cls == "BarMenuStorySelect_C" then pcall(M.poll_story_select, w)
+    elseif cls ~= "UICommonDialogBP_C" then
+        if M.TAV.opened then M.TAV = {} end
+    else
+        -- a question over the screen: afterwards the entry is said again
+        M.TAV.said, M.TAV.quick = nil, nil
     end
 end
 
@@ -3797,6 +3943,7 @@ M.fast_steps = {
     { "tutorial", function() M.poll_tutorial() end },
     { "fieldcmd", function() M.poll_fieldcommand() end },
     { "fcscreens", function() M.poll_fc_screens() end },
+    { "tavern", function() M.poll_tavern() end },
 }
 M.fast_polls = function()
     M.fast_q = nil
