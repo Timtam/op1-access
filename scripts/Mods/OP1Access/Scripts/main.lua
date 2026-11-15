@@ -1675,10 +1675,11 @@ M.wm_icon_info = function(icon)
     return info
 end
 -- "Kammbruch, town, Flachland, levels 10 to 15, not visited. Recommended: ..."
-M.wm_describe = function(info, where)
+-- (noregion: in a region's own list the region goes unsaid)
+M.wm_describe = function(info, where, noregion)
     local parts = { info.name or info.row or "unknown place" }
     if info.what then parts[#parts + 1] = info.what end
-    if info.region and info.region ~= info.name then parts[#parts + 1] = info.region end
+    if info.region and info.region ~= info.name and not noregion then parts[#parts + 1] = info.region end
     if where then parts[#parts + 1] = where end
     if info.lmin then
         parts[#parts + 1] = (info.lmax and info.lmax > info.lmin)
@@ -1686,8 +1687,12 @@ M.wm_describe = function(info, where)
             or string.format("danger level %d", info.lmin)
     end
     if info.here then parts[#parts + 1] = "you are here" end
-    if info.unreached then parts[#parts + 1] = "not visited" end
+    -- a place the map does not show yet (only a region's list has those)
+    local hidden = info.visible == false
+    if hidden then parts[#parts + 1] = "not discovered"
+    elseif info.unreached then parts[#parts + 1] = "not visited" end
     local s = table.concat(parts, ", ")
+    if hidden then return s end
     if info.recs and #info.recs > 0 then s = s .. ". Recommended: " .. table.concat(info.recs, "; ")
     elseif info.dest then
         -- every story destination is marked; with no recommendation, say whose chapters
@@ -1695,9 +1700,12 @@ M.wm_describe = function(info, where)
     end
     return s
 end
--- the places, nearest to where you are first
+-- the places the map shows, nearest to where you are first. The map holds an icon for
+-- each of its 147 places (WorldMap_C.IconList); it shows only the visited ones and the
+-- story destinations (11 of them in Cyrus' chapter 1, user report 2026-11-15: "only one
+-- region"). All of them, sorted the same way, go to M.WM.all for the region lists.
 M.wm_build_list = function(wm)
-    local list, here = {}, nil
+    local list, all, here = {}, {}, nil
     pcall(function()
         wm.IconList:ForEach(function(_, v)
             local icon = v:get()
@@ -1705,15 +1713,19 @@ M.wm_build_list = function(wm)
             local info = M.wm_icon_info(icon)
             info.icon = icon
             if info.here then here = info end
-            if info.visible ~= false then list[#list + 1] = info end
+            all[#all + 1] = info
         end)
     end)
     local hx, hy = here and here.x, here and here.y
-    for _, e in ipairs(list) do
+    for _, e in ipairs(all) do
         e.d = (hx and e.x) and math.sqrt((e.x - hx) ^ 2 + (e.y - hy) ^ 2) or 0
     end
-    table.sort(list, function(a, b) return a.d < b.d end)
-    log(string.format("WORLDMAP list: %d places, here=%s", #list, tostring(here and here.name)))
+    table.sort(all, function(a, b) return a.d < b.d end)
+    for _, e in ipairs(all) do
+        if e.visible ~= false then list[#list + 1] = e end
+    end
+    M.WM.all, M.WM.shown = all, list
+    log(string.format("WORLDMAP list: %d places shown of %d, here=%s", #list, #all, tostring(here and here.name)))
     for i, e in ipairs(list) do
         pcall(M.town_events, e.town)   -- (logs each town's chapters once)
         if i <= 60 then
@@ -1778,9 +1790,13 @@ M.wm_cycle = function(delta)
     if not WM.open then return false end
     local wm = M.wm_find()
     if not wm then return false end
-    if not WM.list then WM.list, WM.here = M.wm_build_list(wm); WM.idx = 0 end
+    if not WM.list then
+        -- (built when the map opened; again only if that failed)
+        if WM.shown then WM.list = WM.shown else WM.list, WM.here = M.wm_build_list(wm) end
+        WM.idx = 0
+    end
     local n = #WM.list
-    if n == 0 then speak("No places on the map"); return true end
+    if n == 0 then speak((WM.reg or 0) > 0 and "No places" or "No places on the map"); return true end
     if WM.idx < 1 then WM.idx = (delta > 0) and 1 or n   -- the first press: first or last
     else WM.idx = ((WM.idx - 1 + delta) % n) + 1 end
     local e = WM.list[WM.idx]
@@ -1788,8 +1804,74 @@ M.wm_cycle = function(delta)
     if WM.here and e ~= WM.here and e.x and WM.here.x then
         where = string.format("%s, %d", M.wm_dir(e.x - WM.here.x, e.y - WM.here.y), math.floor(e.d + 0.5))
     end
-    speak(string.format("%d of %d: %s", WM.idx, n, M.wm_describe(e, where)), true)
-    pcall(M.wm_jump, wm, e)
+    speak(string.format("%d of %d: %s", WM.idx, n, M.wm_describe(e, where, (WM.reg or 0) > 0)), true)
+    -- the cursor goes only to places the map shows: on a hidden one its name plate would
+    -- name whatever shown place is nearest
+    if e.visible ~= false then pcall(M.wm_jump, wm, e) end
+    return true
+end
+-- THE EIGHT REGIONS (user request 2026-11-15: "there are 8 regions, many seem to be
+-- missing"). The map shows only what you have found, so Home / End on the map go through
+-- the regions in the game's order (GameText eAREA_NAME_00..07: Frostland, Flachland,
+-- Küstenland, Hochland, Sonnenland, Flussland, Klippenland, Waldland) and back to the
+-- places the map shows; Page Up / Page Down then go through EVERY place of that region,
+-- nearest first, the ones the map doesn't show yet as "not discovered" (their danger
+-- level is known all the same). The first press goes to the region you are in.
+M.wm_regions = function()
+    local out = {}
+    for i = 0, 7 do
+        local nm = M.gt_label(string.format("eAREA_NAME_%02d", i))
+        if nm and nm ~= "" then out[#out + 1] = nm end
+    end
+    return out
+end
+-- a region's places, nearest first; a place the table has twice (two versions of one
+-- dungeon, "_A"/"_B") once, the shown copy if there is one
+M.wm_region_list = function(region)
+    local out, at = {}, {}
+    for _, e in ipairs(M.WM.all or {}) do
+        if e.region == region then
+            local k = tostring(e.name or e.row) .. "|" .. tostring(e.what)
+            local i = at[k]
+            if not i then
+                out[#out + 1] = e
+                at[k] = #out
+            elseif out[i].visible == false and e.visible ~= false then
+                out[i] = e
+            end
+        end
+    end
+    return out
+end
+M.wm_region_cycle = function(delta)
+    local WM = M.WM
+    if M.explore_now == true then WM.open = false end
+    if not WM.open then return false end
+    local wm = M.wm_find()
+    if not wm then return false end
+    if not WM.all then WM.list, WM.here = M.wm_build_list(wm); WM.idx = 0 end
+    local regs = M.wm_regions()
+    if #regs == 0 then speak("No regions"); return true end
+    -- 0 = the places the map shows, 1..8 the regions
+    local cur = WM.reg or 0
+    if cur == 0 and WM.here and WM.here.region then
+        local mine
+        for i, r in ipairs(regs) do if r == WM.here.region then mine = i end end
+        cur = mine or ((delta > 0) and 1 or #regs)
+    else
+        cur = (cur + delta) % (#regs + 1)
+    end
+    WM.reg, WM.idx = cur, 0
+    if cur == 0 then
+        WM.list = WM.shown or {}
+        speak(string.format("Places on the map, %d", #WM.list), true)
+        return true
+    end
+    WM.list = M.wm_region_list(regs[cur])
+    local shown = 0
+    for _, e in ipairs(WM.list) do if e.visible ~= false then shown = shown + 1 end end
+    log(string.format("WORLDMAP region %s: %d places, %d shown", regs[cur], #WM.list, shown))
+    speak(string.format("%s, %d places, %d of them on your map", regs[cur], #WM.list, shown), true)
     return true
 end
 nav_keys = nav_keys or {}
@@ -1820,6 +1902,7 @@ M.poll_worldmap = function()
             if M.explore_now ~= true and acls == "MainMenuWidget_C" then pcall(M.mainmenu_reannounce) end
         end
         WM.open, WM.list, WM.area = false, nil, nil
+        WM.reg, WM.all, WM.shown = nil, nil, nil
         return
     end
     local lbl
@@ -1828,7 +1911,7 @@ M.poll_worldmap = function()
     pcall(function() area = lbl.TextAreaName:GetText():ToString() end)
     pcall(function() region = lbl.TextRegionName:GetText():ToString() end)
     if not WM.open then
-        WM.open, WM.list, WM.idx, WM.jump, WM.skip = true, nil, 0, nil, nil
+        WM.open, WM.list, WM.idx, WM.jump, WM.skip, WM.reg = true, nil, 0, nil, nil, nil
         local cx, cy
         pcall(function() cx, cy = wm.CursorPosition.X, wm.CursorPosition.Y end)
         log(string.format("WORLDMAP opened, cursor (%s,%s)", tostring(cx), tostring(cy)))
@@ -5896,6 +5979,8 @@ end
 
 local function nav_cat_cycle(delta)
     NV.ctrlkey_t = os.clock()
+    -- on the world map Home / End go through the regions
+    if M.wm_region_cycle and M.wm_region_cycle(delta) then return end
     if world_susp then speak(M.battle_now and "In battle" or "Scene running"); return end
     for _ = 1, #NAV_CLASSES do
         NV.cat = ((NV.cat - 1 + delta) % #NAV_CLASSES) + 1
