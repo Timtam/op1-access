@@ -5014,6 +5014,10 @@ local function announce_interactions()
     local names, raw = read_active_commands(mgr)
     log(string.format("FCMD via %s: n=%d types=[%s]", how, #raw, table.concat(raw, ",")))
     if #names == 0 then speak("Nothing to interact with"); return end
+    -- the path actions by the game's own names ("Studieren"); 0 stays "Talk"
+    for i, b in ipairs(raw) do
+        if b ~= 0 and M.fc_type_name then names[i] = M.fc_type_name(b) end
+    end
     speak(table.concat(names, ", "))
 end
 do
