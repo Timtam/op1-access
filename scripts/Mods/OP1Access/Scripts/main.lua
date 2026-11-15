@@ -6075,13 +6075,52 @@ end
 -- plane is clear (box offset >= 3 from the door actor).
 -- Returns door, how -- or nil. Room boxes are cached per door until the area changes.
 M.house_cache, M.plane_cache, M.house_cache_area = {}, {}, nil
+-- The room box of a door: its Actor_Room actor positions (min/max and mean), or false
+-- (cached per door).
+M.house_box = function(door, daddr, dx, dy)
+    local box = M.house_cache[daddr]
+    if box ~= nil then return box end
+    box = false
+    local n = 0
+    local b = { minx = 1e9, maxx = -1e9, miny = 1e9, maxy = -1e9, minz = 1e9, maxz = -1e9, sx = 0, sy = 0 }
+    pcall(function()
+        door.Actor_Room:ForEach(function(_, v)
+            local a = v:get()
+            if a then
+                local ax, ay, az = read_actor_pos(a)
+                -- only room parts near the door: some rooms also list actors 16000 away
+                -- (academy "IvonRoom"), which made a box that swallowed the whole hall
+                if ax and math.sqrt((ax - dx) ^ 2 + (ay - dy) ^ 2) < 2000 then
+                    n = n + 1
+                    b.sx, b.sy = b.sx + ax, b.sy + ay
+                    b.minx, b.maxx = math.min(b.minx, ax), math.max(b.maxx, ax)
+                    b.miny, b.maxy = math.min(b.miny, ay), math.max(b.maxy, ay)
+                    b.minz, b.maxz = math.min(b.minz, az), math.max(b.maxz, az)
+                end
+            end
+        end)
+    end)
+    -- a box that is flat in X or Y is a wall/facade plane (the academy rooms' parts all
+    -- sit on one line), not the room: don't use it
+    if n > 0 and b.maxx - b.minx >= 200 and b.maxy - b.miny >= 200 then
+        b.n, b.mx, b.my = n, b.sx / n, b.sy / n
+        box = b
+    end
+    M.house_cache[daddr] = box
+    return box
+end
 -- The doorway plane of a door (its BorderBox): center and the unit normal pointing INTO
--- the house. The box's thin axis is the normal, turned with the component; the box
--- sits a few units inside the door actor, which gives the side. nil if unreadable.
+-- the house. The box's thin axis is the normal, turned with the component. The side:
+-- where the room's own parts are (their mean), when that is clearly off the plane; else
+-- the box sitting a few units inside the door actor (library). The box alone was wrong
+-- at a house in lower Felsfall: it sits 10 units OUTSIDE that door, so the street in
+-- front counted as the room and the walker led out of a house you weren't in
+-- (2026-11-15). pl.sure: the side is known. nil if unreadable.
 M.house_plane = function(door, daddr, dx, dy)
     local pl = M.plane_cache[daddr]
     if pl ~= nil then return pl or nil end
     pl = false
+    local box = M.house_box(door, daddr, dx, dy)
     pcall(function()
         local bb = door.BorderBox
         local c = bb:K2_GetComponentLocation()
@@ -6096,10 +6135,27 @@ M.house_plane = function(door, daddr, dx, dy)
         nx, ny = nx / nl, ny / nl
         local off = (c.X - dx) * nx + (c.Y - dy) * ny
         if off < 0 then nx, ny, off = -nx, -ny, -off end
-        pl = { cx = c.X, cy = c.Y, cz = c.Z, nx = nx, ny = ny, off = off }
+        local side, sure = "box", off >= 3
+        if box and box.mx then
+            local m = (box.mx - c.X) * nx + (box.my - c.Y) * ny
+            if math.abs(m) >= 150 then
+                if m < 0 then nx, ny = -nx, -ny end
+                side, sure = "room", true
+            end
+        end
+        pl = { cx = c.X, cy = c.Y, cz = c.Z, nx = nx, ny = ny, off = off, side = side, sure = sure }
     end)
     M.plane_cache[daddr] = pl
     return pl or nil
+end
+-- HouseEnterTriggerBP_C.IsHouseEnter (bool, +0x4B2 in the object dump): the game's own
+-- "the player is in this house" -- set as you walk in (SetupHouseIn), cleared as you
+-- leave. Raw read by address; nil if unreadable.
+M.house_entered = function(daddr)
+    if not (shim and shim.Peek and daddr and daddr ~= 0) then return nil end
+    local v = shim.Peek(daddr + 0x4B2, "u8")
+    if v == nil then return nil end
+    return v ~= 0
 end
 M.house_door_for = function(tx, ty, tz, px, py, pz, dolog, allow_plane)
     if M.house_cache_area ~= M.area_said then
@@ -6117,34 +6173,7 @@ M.house_door_for = function(tx, ty, tz, px, py, pz, dolog, allow_plane)
         if okv then pcall(function() daddr = door:GetAddress() end) end
         if daddr ~= 0 then
             local dx, dy, dz = read_actor_pos(door)
-            -- the room box: Actor_Room actor positions, padded (cached)
-            local box = M.house_cache[daddr]
-            if box == nil and dx then
-                box = false
-                local n = 0
-                local b = { minx = 1e9, maxx = -1e9, miny = 1e9, maxy = -1e9, minz = 1e9, maxz = -1e9 }
-                pcall(function()
-                    door.Actor_Room:ForEach(function(_, v)
-                        local a = v:get()
-                        if a then
-                            local ax, ay, az = read_actor_pos(a)
-                            -- only room parts near the door: some rooms also list actors
-                            -- 16000 away (academy "IvonRoom"), which made a box that
-                            -- swallowed the whole hall
-                            if ax and math.sqrt((ax - dx) ^ 2 + (ay - dy) ^ 2) < 2000 then
-                                n = n + 1
-                                b.minx, b.maxx = math.min(b.minx, ax), math.max(b.maxx, ax)
-                                b.miny, b.maxy = math.min(b.miny, ay), math.max(b.maxy, ay)
-                                b.minz, b.maxz = math.min(b.minz, az), math.max(b.maxz, az)
-                            end
-                        end
-                    end)
-                end)
-                -- a box that is flat in X or Y is a wall/facade plane (the academy rooms'
-                -- parts all sit on one line), not the room: don't use it
-                if n > 0 and b.maxx - b.minx >= 200 and b.maxy - b.miny >= 200 then b.n = n; box = b end
-                M.house_cache[daddr] = box
-            end
+            local box = dx and M.house_box(door, daddr, dx, dy) or nil
             local function inroom(x, y, z)
                 return box and x >= box.minx - 250 and x <= box.maxx + 250 and y >= box.miny - 250
                     and y <= box.maxy + 250 and (z or box.minz) >= box.minz - 300 and (z or box.minz) <= box.maxz + 300
@@ -6153,11 +6182,14 @@ M.house_door_for = function(tx, ty, tz, px, py, pz, dolog, allow_plane)
             -- distance in front of (> 0: inside) the doorway plane
             local function along(x, y) return (x - pl.cx) * pl.nx + (y - pl.cy) * pl.ny end
             local function inner(x, y)     -- not clearly outside the door
-                return not (pl and pl.off >= 3) or along(x, y) > -40
+                return not (pl and pl.sure) or along(x, y) > -40
             end
             local ipb = inroom(px, py, pz)        -- in the padded box: inside or at the door
             local it, how = inroom(tx, ty, tz) and inner(tx, ty), "room"
-            local ip = ipb and inner(px, py)      -- really inside
+            -- really inside: the game's own flag; the box and the plane only if unreadable
+            local entered = M.house_entered(daddr)
+            local ip
+            if entered ~= nil then ip = entered else ip = ipb and inner(px, py) end
             -- fallback: the doorway plane alone, only after a failed route
             if not it and allow_plane and pl then
                 local side = math.abs((tx - pl.cx) * pl.ny - (ty - pl.cy) * pl.nx)
@@ -6169,26 +6201,26 @@ M.house_door_for = function(tx, ty, tz, px, py, pz, dolog, allow_plane)
             if dolog and dx and math.sqrt((dx - tx) ^ 2 + (dy - ty) ^ 2) < 3000 then
                 local nm = "?"
                 pcall(function() nm = door:GetFName():ToString() end)
-                log(string.format("HOUSE %s door=(%.0f,%.0f,%.0f) room=%s plane=%s target_in=%s(%s) player_in=%s/%s",
+                log(string.format("HOUSE %s door=(%.0f,%.0f,%.0f) room=%s plane=%s target_in=%s(%s) player_in=%s/%s entered=%s",
                     nm, dx, dy, dz or 0,
-                    box and string.format("%d actors x%.0f..%.0f y%.0f..%.0f z%.0f..%.0f", box.n, box.minx, box.maxx,
-                        box.miny, box.maxy, box.minz, box.maxz) or "none",
-                    pl and string.format("n(%.2f,%.2f) off=%.0f t%.0f p%.0f", pl.nx, pl.ny, pl.off, along(tx, ty),
-                        along(px, py)) or "none",
-                    tostring(it), how, tostring(ipb), tostring(ip)))
+                    box and string.format("%d actors x%.0f..%.0f y%.0f..%.0f z%.0f..%.0f mean(%.0f,%.0f)", box.n,
+                        box.minx, box.maxx, box.miny, box.maxy, box.minz, box.maxz, box.mx, box.my) or "none",
+                    pl and string.format("n(%.2f,%.2f) off=%.0f side=%s t%.0f p%.0f", pl.nx, pl.ny, pl.off,
+                        tostring(pl.side), along(tx, ty), along(px, py)) or "none",
+                    tostring(it), how, tostring(ipb), tostring(ip), tostring(entered)))
             end
             -- a house's door is near its room: ignore doors far from the target (a door
             -- 17000 away whose room actors spread over half the map matched Russell)
             local dt = dx and math.sqrt((dx - tx) ^ 2 + (dy - ty) ^ 2) or 1e9
             local dp = dx and math.sqrt((dx - px) ^ 2 + (dy - py) ^ 2) or 1e9
-            if it and ipb and dt < 2500 then
+            if it and (ipb or ip) and dt < 2500 then
                 -- the player is in the target's house ("same"), or just outside its door
                 -- ("atdoor", with the door: it may still be shut -- the walk goes to it
                 -- first when it's more than 250 away)
                 if ip then return nil, "same" end
                 return door, "atdoor"
             end
-            if it and not ipb and dt < 2500 and dt < bestd then
+            if it and not (ipb or ip) and dt < 2500 and dt < bestd then
                 best, bestd, besthow = door, dt, how                -- the door nearest the TARGET
             end
             if ip and not it and dp < 2500 and dp < pbestd then
