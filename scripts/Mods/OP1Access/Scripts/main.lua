@@ -10613,6 +10613,9 @@ radar_pump = function(src)
             log("ACTIVE screen: " .. tostring(acls) .. (acls and BLOCKING_CLASSES[acls] and " (blocking)" or ""))
         end
         if acls and BLOCKING_CLASSES[acls] then menu_open = true end
+        -- the title screen: after a game over the old field's player still exists there,
+        -- so the radar counted the title as exploring (rescans, wall traces; 2026-11-15)
+        if acls and (acls:find("^Title") or acls == "UIMainTitle_C") then menu_open = true end
         -- choosing an action in the J menu leaves ~1 s with no focused screen before
         -- the first bubble: keep the radar down across that gap
         if acls == "FieldCommandMenu_C" then M.fc_menu_t = now end
