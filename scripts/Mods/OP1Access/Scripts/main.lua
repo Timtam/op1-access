@@ -9750,20 +9750,32 @@ M.marker_watch = function(px, py)
         for k in pairs(cur) do W.seen[k] = true end
         W.pend = {}
     else
-        local confirm, pend = {}, {}
+        local confirm, pend, tseen = {}, {}, now
         for _, ic in ipairs(list) do
             if not W.seen[ic.key] then
-                if W.pend[ic.key] then confirm[#confirm + 1] = ic else pend[ic.key] = true end
+                if W.pend[ic.key] then
+                    confirm[#confirm + 1] = ic
+                    if W.pend[ic.key] < tseen then tseen = W.pend[ic.key] end
+                else
+                    pend[ic.key] = now   -- (when first seen)
+                end
             end
         end
         W.pend = pend
         for _, ic in ipairs(confirm) do W.seen[ic.key] = true end
         if #confirm > 0 then
             -- the marker list pins icons to people, chests and event spots: scan those
-            -- afresh in case the game made a new one for this marker
+            -- afresh in case the game made a new one for this marker, and let the radar
+            -- pick it up too (a revealed hidden item's chest rang only after it was
+            -- opened: the next rescan came after the "Erhalten" dialog; user 2026-11-15).
+            -- Lists made after the icon showed have it already (the end of a path action
+            -- drops them too): those stay, so the game doesn't stall twice.
+            local dropped = false
             for _, k in ipairs({ "KSFieldNPCCharacter_C", "TreasureBoxBP_C", "EventTriggerBP_C" }) do
-                M.fa_cache[k] = nil
+                local c = M.fa_cache[k]
+                if c and c.t < tseen - 0.5 then M.fa_cache[k] = nil; dropped = true end
             end
+            if dropped and beacon_on then beacon_rescan_at = now + 0.2 end
         end
         if #confirm >= 3 then
             log("MARKER " .. #confirm .. " new icons at once: a changed map, not said")
@@ -10408,6 +10420,13 @@ radar_pump = function(src)
                 M.fc_busy_since = M.fc_busy_since or now
                 if not menu_open and now - M.fc_busy_since < 30 then menu_open = true end
             else
+                if M.fc_busy_since and M.fa_cache then
+                    -- a path action ended: it may have made a hidden item's chest
+                    -- (Scrutinize) or taken a person along (Allure, Guide). The radar's
+                    -- rescan when exploring resumes then scans these afresh.
+                    M.fa_cache["TreasureBoxBP_C"] = nil
+                    M.fa_cache["KSFieldNPCCharacter_C"] = nil
+                end
                 M.fc_busy_since = nil
             end
         end
