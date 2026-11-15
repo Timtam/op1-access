@@ -4379,7 +4379,11 @@ poll_dialog = function()
         -- before the dialog), so the screen/item pollers would dedup it and stay silent.
         -- Clear their dedup so it re-announces.
         if dlg_visible then
-            last_polled_class = nil
+            -- ...except the character select left with "Ja": the adventure starts, and
+            -- "Choose your character" came again before the first scene (2026-11-15)
+            if not (last_polled_class == "TitlePlayerSelect_C" and dlg_last_focus == 0) then
+                last_polled_class = nil
+            end
             last_select_owner, last_select_value = nil, nil
             M.dlg_closed_t = os.clock()
         end
@@ -4534,7 +4538,7 @@ poll_character_select = function()
                 if px ~= nil then rd = rd + 1 end
             end
         end
-        if n > 0 or instance then
+        if vis > 0 or instance then     -- not once a second for the whole game after it
             log(string.format("CS hb: cands=%d vis=%d readable=%d picked=%s",
                 n, vis, rd, tostring(instance ~= nil)))
         end
