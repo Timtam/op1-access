@@ -97,7 +97,8 @@ By hand: in `Octopath_Traveler\Binaries\Win64`, delete the folder
 | Key | Action |
 |-----|--------|
 | **F5** | Check for an update; press twice to install a newer version |
-| **Page Up / Page Down** | On the world map (main menu, Weltkarte): every place, nearest first, with its direction; the map's cursor goes there, so Enter fast travels to a visited town |
+| **Page Up / Page Down** | On the world map (main menu, Weltkarte): every place the map shows, nearest first, with its direction; the map's cursor goes there, so Enter fast travels to a visited town |
+| **Home / End** | On the world map: go through the eight regions (and back to the places the map shows); Page Up/Down then name every place of that region, also the ones not discovered yet |
 | **Ctrl + Backspace** | On the world map: the route to the place picked with Page Up/Down, area by area; in the field the exit on that route then says "on the way to …" |
 | **Ctrl + F10** | Announce the menu / screen you are currently on |
 | **Ctrl + F11** | *(dev)* Dump UHT-compatible headers to `UHTHeaderDump/` |
@@ -105,7 +106,9 @@ By hand: in `Octopath_Traveler\Binaries\Win64`, delete the folder
 
 Everything else is automatic: screens and menus are announced as they open, the
 highlighted entry is read as you move through title menus, and system dialogs
-are read out (caption, body, and button labels). Shops and inns are read too.
+are read out (caption, body, and button labels). Shops and inns are read too. When you
+face someone, you hear which path actions you can use on them and whether one is done
+already; the path-action screens of all eight travelers are read.
 Money is spoken as a word in the game's language ("50 Blätter"). The game itself
 only shows a ⑳ sign, which screen readers can't read.
 

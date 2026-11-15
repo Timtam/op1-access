@@ -47,7 +47,15 @@ what it found.
 Since 2026-11-14 (ac9584a, a053db5, e6b92ef, 0442d86), tested from the user's save in the
 Östliche Atlasdamm-Ebenen after Cyrus' chapter 1 (11 places): Page Up/Down moved the
 cursor to Atlasdamm and Enter offered the fast travel; the route to Kammbruch (9 areas) and
-"on the way to Kammbruch" at the right exit. Open:
+"on the way to Kammbruch" at the right exit. Since 2026-11-15 (bfe7faa) Home and End go
+through the eight regions with all 147 places. Tested from the academy autosave:
+Flachland 16 places, Küstenland and Frostland 19 each, back to the shown places. A route
+to a place not discovered yet also worked (Der Pfeifende Wald, 3 areas). Open:
+
+- **Ctrl+Backspace closed the map in the tests** after the route was said: the game got
+  the Backspace too. The test keys were synthetic (keybd_event). It is not known whether a
+  real key press does the same; the 2026-11-14 test did it as well.
+- **A region's places are ordered by distance**, not by the roads between them.
 
 - **The route ignores story locks.** It is the fewest exits by the level files
   (`Scripts/worldlinks.lua`); an exit the story still keeps shut (LevelTriggerTable flags)
@@ -166,15 +174,30 @@ against one Eissentinel in the study dungeon. Not yet seen or checked:
 
 ## Path actions
 
-Tested 2026-11-11 with Cyrus' Scrutinize ("Studieren") only. The hint, the radar gate
-and the result reading are verified for that one action.
+Tested with Cyrus' Scrutinize ("Studieren") only. The hint, the radar gate and the result
+reading are verified for that one action. Since 2026-11-15 (feb83b5) the hint and the J
+menu say "done" or "not possible yet". Checked in the game: the old woman at the academy
+("Studieren, done", a check mark on her balloon) and a guard (no mark, no "done"). Open:
 
-- **Other path actions' result screens are not read.** Only Scrutinize's panel
-  (`FieldCommandSearch_C` → `SearchDetailPartsWidget_C`) is read when its dialog opens.
-  Purchase/Steal (`FieldCommandPurchase_C`, item lists), Guide/Allure
-  (`FieldCommandLure_C`), Inquire (`FieldCommandJudge_C`?) and Provoke
-  (`FieldCommandMonster_C`) need their own readers once a save with those travelers
-  exists. The radar gate already covers them (it uses the manager's flags).
+- **The other seven travelers' screens are read, but none was tried** (feb83b5, built
+  from the object dump and the blueprints' name tables). Only Cyrus is in the party so
+  far. Each one logs what it read; check these lines the first time:
+  - Purchase and Steal (`FieldCommandPurchase_C`): the row layout is guessed from the
+    shop (col1 item, col3 price or chance with the unit, col2 how many you have).
+    `FCSCREEN row:` shows the real columns.
+  - Strength stars: counted by the RankEnable texture on each star (`FCRANK`). If that
+    count stays 0, the strength isn't said.
+  - The person's panel (`FCSCREEN person:`): which text block holds the caption and
+    which the value is guessed (TextRank, NameAbility/TextAbility, NameLimit/TextLimit).
+  - Questions over these screens get the item or the person in front
+    (`FCSCREEN question over ...`). For that the dialog has to sit in the screen's widget
+    tree, or the screen reader has to have seen the screen first.
+  - Inquire (Alfyn) uses Scrutinize's result panel (`FieldCommandSearch_C`,
+    SearchMode false); its header "Alfyn: Erkundigen" isn't said.
+  - "not possible yet" comes from the balloon's Imp icon. Which cases show it (the level
+    for noble actions, a bad reputation?) is not known.
+  - Not read: the follower's own status ("Untersuchen") beyond the screens above, and
+    H'aanit's capture in battle.
 - **"Talk, ???" for a figure you cannot talk to** (user report 2026-11-13) — FIXED, not
   confirmed: at the academy entrance the game picked an invisible helper from the
   always-loaded ResidentGame level; Enter did nothing. Without a path action the talk
@@ -186,8 +209,9 @@ and the result reading are verified for that one action.
   talk-only branch only ran for the save point ("Save point" + the generated pop,
   cue 9). By the generator formulas the pop was ~6.5 dB below the chime; since
   2026-11-14 it is ~2.7 dB below (louder, a bit longer). Whether that is right needs ears.
-- **Ctrl+F9 action names** for enum values 5–7 (Guide/Allure/Inquire) are inferred from
-  the event class names, not observed. 8 = Scrutinize is confirmed ("Studieren").
+- **Ctrl+F9 still says English action names.** The hint and the screens use the game's
+  own texts (eFC_NAME_*). The game's own enum EFIELDCOMMAND_TYPE (eGeneric, ePurchase,
+  eSteal, eBattle, eMonster, eBlessing, eLure, eExamination, eSearch) confirms the order.
 
 ## Threads
 

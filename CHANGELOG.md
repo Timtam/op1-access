@@ -24,15 +24,21 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
 - World map: the place under the cursor (town, path or dungeon, region, danger level, not
   visited) and the chapters recommended there; Page Up and Page Down go through every place,
   nearest first, with its direction from where you are, and move the cursor there for fast
-  travel. Ctrl+Backspace says the route to that place area by area; in the field the exit on
-  that route says "on the way to …".
+  travel. Home and End go through the eight regions; Page Up and Page Down then name every
+  place of that region, also those not discovered yet. Ctrl+Backspace says the route to
+  that place area by area; in the field the exit on that route says "on the way to …".
 - The game over menu.
 - Shops and inns: the shop's name and your money, its commands, the goods with price and how
   many you have, and the amount to buy or sell with the total.
 
 ### Story and exploration
 
-- Dialogue with speaker names, area names, door and action prompts, path actions (J).
+- Dialogue with speaker names, area names, door and action prompts.
+- Path actions (J): facing someone tells you which path actions you can use on them and
+  whether one is done already or not possible yet; the J menu says the same. The screens
+  of all eight travelers' path actions are read: what a person carries with price or
+  chance (Purchase, Steal), the opponent (Challenge, Provoke), H'aanit's monsters, the
+  person who would follow you (Guide, Allure), and what Scrutinize and Inquire find out.
 - A 3D radar (Steam Audio) for chests, exits, people, buildings and shops, a wall radar and
   bump sounds.
 - A navigator: categories with Home and End, targets with Page Up and Page Down, Ctrl+Backspace
