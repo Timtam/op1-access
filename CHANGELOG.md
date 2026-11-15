@@ -51,6 +51,10 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   for directions. It says which chests are opened, which targets can't be reached, where exits
   lead and how dangerous the area behind them is, and what kind of shop a shop is. A
   tavern leads to its barkeep, not to the door.
+- The minimap's markers: what each one is (side story with the person's name, hidden item,
+  objective, exit toward the objective, save point, traveler to recruit) and whether a
+  hidden item was picked up already. A new marker is said when it comes up, for example
+  when Scrutinize reveals a hidden item: "New marker: hidden item, right, 3872".
 - A walker: Backspace walks to the target over a computed route, also up and down narrow
   stairs and around people, opens doors on the way and frees itself when stuck. When
   someone blocks the only way, it says who ("Armer is in the way").

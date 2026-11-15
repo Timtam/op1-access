@@ -47,10 +47,14 @@ Open:
 
 ## Game over
 
-Read since 2026-11-14 (8e180e2) from the object dump and a screenshot of the screen
-("Weiter ab letztem Speicherpunkt", "Zum Titelbildschirm"), but **not heard in the game
-yet**: there was no second defeat in the test. The "GAMEOVER items=[...]" log line shows
-what it found.
+Read since 2026-11-14 (8e180e2) from the object dump and a screenshot of the screen.
+Heard on 2026-11-15 (Cyrus alone lost a battle on the flats): "Cyrus down", "Game over",
+"Weiter ab letztem Speicherpunkt", Down "Zum Titelbildschirm". Then loading the autosave
+from the title crashed the game once, see Threads.
+
+- **After "Zum Titelbildschirm" the radar ran on the title screen** ("RADAR live
+  (exploring)", a rescan with 0 objects): the old player object still exists there.
+  Nothing was heard from it, but arrow keys there might give bump sounds. Not fixed.
 
 ## World map, route finder and danger levels
 
@@ -81,7 +85,6 @@ to a place not discovered yet also worked (Der Pfeifende Wald, 3 areas). Open:
 - **Story destinations list all of a town's chapters**, also of travelers not in the
   party: Kammbruch said "Tressa, chapter 2; Cyrus, chapter 2" with Cyrus alone.
   `DestinationFlag` is set on every unvisited town, not only on the next goal.
-- **Marker type 7** (seen at an NPC on the flats, 2026-11-14) is read as "marker type 7".
 
 ## Installer and updates
 
@@ -302,6 +305,19 @@ Open:
   Same signature as the known exit crash: `RtlLeaveCriticalSection` on a lock the thread
   doesn't own, under `HookUStructLink` and nested Lua calls, no shim frames. Since
   05ce7cc the screen polls call GetActiveStack once per run instead of up to 15 times.
+- **The game crashed once loading a save from the title after a game over**
+  (2026-11-15, test run; `build/user-logs/crash-20261115-203100.*`). 6 s into the load
+  the game thread faulted in UE4SS's `UObjectBase::IsA` inside a UFunction call made from
+  Lua: the object's class pointer was garbage, so it had been freed. The likeliest caller
+  was the pump's battle check, which asked the game for the player and called
+  GetBattleMode with it on every pump, loads included. Since 9cad67c it doesn't while
+  the screen fade is up, and the kept player controller is checked by the shim first.
+  Not reproduced, so not proven.
+- **After a dialogue or on arrival the radar stalls the game ~390 ms** (5 object
+  searches of ~78 ms each: chests, exits, doors, shops, people). It did so before too;
+  since d1f4b25 the lists are kept per level and the navigator reuses them, so category
+  presses take 0-2 ms. A scene or transition still drops them (a story scene may add or
+  remove people), so the rescan after each dialogue stays.
 - **The game hung once after a won battle** (2026-11-15, H'aanit's new game; dump and
   stacks in `build/user-logs/hang-20261115-1459*`). The game thread waited in
   `RtlEnterCriticalSection` under UE4SS's `process_lua_function`; the lock's
@@ -362,6 +378,28 @@ Open:
 
 ## Navigation
 
+- **New markers: tried with one hidden item.** Since ea8078c the minimap's icons are
+  compared every 2 s while you explore, and a new hidden item, objective, side story,
+  exit toward the objective or traveler to recruit is said ("New marker: hidden item,
+  right, 3872"). Tried in Atlasdam (2026-11-15, twice): Studieren on the tavern guest
+  ("Ein verborgenes Objekt") made the game add the "!" at once and create its chest; the
+  mod said it 2 s later and the walker led there. In Atlasdam, Studieren reveals a "new
+  treasure" with three people (two tavern guests, a girl); the others give discounts or
+  cheaper rooms. Not tried: a new side story, objective or traveler marker (the game
+  adds them the same way), and a marker that comes up in another part of a level. Not
+  said on purpose: what an area shows when you arrive, anything within 6 s of a teleport
+  or level change, several icons changing at once.
+- **A picked-up hidden item stays on the minimap.** Its "!" was still there a minute
+  later, so the marker list keeps it, as "hidden item, collected" (the chest's open
+  flag).
+- **The walker can stop on the wrong side of a hidden item.** The tavern guest's item in
+  Atlasdam lies behind a ledge: coming from the tavern the walk said "Arrived" 138 away
+  and no "Untersuchen, E" came (blocked to the right and down); coming from upstairs it
+  stopped 151 away with the prompt. The first time it also worked from the tavern side.
+  The walk ends by distance; it doesn't check the action prompt or try another side.
+- **Side stories are named, not explained.** Since ea8078c the marker list says "Kit,
+  side story" (icon type 7, seen on the flats); "traveler to recruit" (17) wasn't seen yet.
+  What a side story is about is only in its dialogue.
 - **Chests: opened or not is said, the purple ones are not told apart.** Since
   2026-11-14 (252661f) the list says "opened" and the category counts them, from the
   chest's own IsOpenFlag; checked in the study, with Slot 1 (all open), the older
