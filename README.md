@@ -106,7 +106,7 @@ By hand: in `Octopath_Traveler\Binaries\Win64`, delete the folder
 
 Everything else is automatic: screens and menus are announced as they open, the
 highlighted entry is read as you move through title menus, and system dialogs
-are read out (caption, body, and button labels). Shops and inns are read too. When you
+are read out (caption, body, and button labels). Shops, inns and taverns are read too. When you
 face someone, you hear which path actions you can use on them and whether one is done
 already; the path-action screens of all eight travelers are read.
 Money is spoken as a word in the game's language ("50 Blätter"). The game itself

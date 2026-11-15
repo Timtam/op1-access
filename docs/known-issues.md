@@ -3,37 +3,37 @@
 Problems noticed in existing features that are not fixed yet. Newest first. When one
 gets fixed, delete its entry (the commit message keeps the history).
 
-## Shops and inns
+## Shops, inns and the tavern
 
-Read since 2026-11-14 (9d527b9, d5c749f, 0b87f8e, 31b89bf). Heard in the game: the title
-and the money, the goods ("Heiltraube, 50 Blätter, Zur Hand 0"), the amount picker
-("Anzahl: 1, Gesamtkosten: 50 Blätter", then "11, 550 Blätter"), the buy dialog, the
-shop names in the navigator, and the radar stays quiet. Open:
+Read since 2026-11-14 (9d527b9, d5c749f, 0b87f8e, 31b89bf, 2f44879, 990724e). Heard in
+the game:
+- the title and the money, the goods ("Heiltraube, 50 Blätter, Zur Hand 0"), the amount
+  picker, the buy dialog, the shop names in the navigator (the tavern counter "Wirtshaus");
+- selling ("Alte Münze, 1.500 Blätter, Zur Hand 1", then "Anzahl: 1, Gesamtwert: 1.500
+  Blätter");
+- the tavern keeper's menu ("Gruppe wechseln, Ausrüstung, Geschichte lauschen, Ruf
+  wiederherstellen, Weiterreisen"), its equipment screen, and since bfd782e "Gruppe
+  wechseln" and "Geschichte lauschen";
+- in a weapon and armor shop, what the piece changes for each traveler (ebe05b3: "Cyrus:
+  Phys. Angr. 78 to 85, ..."; "can't equip" for a glaive).
 
-- When selling, the picker's label should say "Gesamtwert:"; the "SHOP picker:" log
-  line shows it.
-- The top menu by the shop's command list, mapped to the texts (31b89bf): the tavern
-  said "Verlassen" twice before. Checked against the log and a screenshot, not heard.
-  The "SHOP open" line also logs TopMenuItemList's panels.
-- The tavern counter in the navigator says "Wirtshaus" (the game's table calls it
-  "Gasthaus").
-- Screens opened from the tavern, which runs inside the talk event:
-  - The equipment screen is read since 2f44879 (the list reader stood down during
-    events); not heard yet.
-  - **"Gruppe wechseln" (ListCharacterWidget_C) and "Geschichte lauschen"
-    (BarMenuStorySelect_C) are not read at all.**
+Open:
+
+- **Opening "Geschichte lauschen" stalls the game once for ~80 ms** ("FAST polls slow:
+  [tavern=80]"), each time it opens. The reader's own part takes under 20 ms; a "TAVERN
+  story read" line breaks it down when it is slow.
+- **The story select when you enter a town** (where a traveler's chapter can begin) is
+  the same screen, but wasn't seen there. Party change with more than one traveler (the
+  waiting ones, "chosen") wasn't tried: Cyrus is alone.
+- **Buying equipment**: the question to equip what you bought wasn't seen (nothing was
+  bought).
+- **What the inn says after "Bleiben"** wasn't seen.
 - The currency word for the ⑳ sign ("3.246 Blätter" heard). The game has no word for
   it, so the mod picks one by the game's text language. Where the words come from:
   - German "Blätter": the user's choice.
   - French: the game's own text.
   - Japanese and Korean: Tressa's skill name.
   - Spanish, Italian and Chinese: guesses.
-
-Not seen at all:
-
-- Selling.
-- Weapon and armor shops, which offer to equip what you buy.
-- What the inn says after "Bleiben".
 
 ## Game over
 
@@ -52,10 +52,10 @@ through the eight regions with all 147 places. Tested from the academy autosave:
 Flachland 16 places, Küstenland and Frostland 19 each, back to the shown places. A route
 to a place not discovered yet also worked (Der Pfeifende Wald, 3 areas). Open:
 
-- **Ctrl+Backspace closed the map in the tests** after the route was said: the game got
-  the Backspace too. The test keys were synthetic (keybd_event). It is not known whether a
-  real key press does the same; the 2026-11-14 test did it as well.
 - **A region's places are ordered by distance**, not by the roads between them.
+- (Ctrl+Backspace closed the map only in tests: the key guard lets synthetic keys
+  through on purpose, `LLKHF_INJECTED`, so the game saw the test's Backspace. A real key
+  press is swallowed.)
 
 - **The route ignores story locks.** It is the fewest exits by the level files
   (`Scripts/worldlinks.lua`); an exit the story still keeps shut (LevelTriggerTable flags)
@@ -209,9 +209,6 @@ menu say "done" or "not possible yet". Checked in the game: the old woman at the
   talk-only branch only ran for the save point ("Save point" + the generated pop,
   cue 9). By the generator formulas the pop was ~6.5 dB below the chime; since
   2026-11-14 it is ~2.7 dB below (louder, a bit longer). Whether that is right needs ears.
-- **Ctrl+F9 still says English action names.** The hint and the screens use the game's
-  own texts (eFC_NAME_*). The game's own enum EFIELDCOMMAND_TYPE (eGeneric, ePurchase,
-  eSteal, eBattle, eMonster, eBlessing, eLure, eExamination, eSearch) confirms the order.
 
 ## Threads
 
@@ -228,14 +225,24 @@ menu say "done" or "not possible yet". Checked in the game: the old woman at the
   UI-manager search at boot, and one search when the load dialog opened. Work another
   thread still takes is logged as "GT: queued work on a foreign thread"; none happened
   after the polls moved.
-  **Opening the main menu stalls the game once for 75-86 ms** (`[mainmenu=76]`): 7 of
-  the 10 slow runs in a 20-minute session on 2026-11-14 came from it, one per opening;
-  another was a single 159 ms `[active]` run. Not looked into yet; probably a search the
-  main-menu poll does when the menu appears.
+  Opening the main menu stalled the game for 75-86 ms every time: the objective reader
+  searched all objects. Since c4502cc the search runs once per session (the list it
+  found is kept); later openings had no `[mainmenu]` slow run. Still slow once per
+  opening: the world map (~125 ms, building all 147 places), a dialog over the map
+  (~90 ms `[active]`) and the tavern's story select (~80 ms).
+- **UE4SS's c0000264 crash happened once in the middle of play** (2026-11-15, after
+  leaving a shop, on the End key; dump `build/user-logs/crash-20261115-130952.dmp`).
+  Same signature as the known exit crash: `RtlLeaveCriticalSection` on a lock the thread
+  doesn't own, under `HookUStructLink` and nested Lua calls, no shim frames. Since
+  05ce7cc the screen polls call GetActiveStack once per run instead of up to 15 times.
 - **Q says "No objective" until the menu was opened once.** The objective comes from
   the menu's party panel (`PartyCharacterList_C.NowPlayingStoryPanel`), which is filled
   when the menu opens. After a load, Q in the field had nothing to read; after opening
   and closing the menu it read "Objective: Zum unterirdischen Studierzimmer gehen."
+  The game picks it from /Game/Mission/Database/NextPurposeData by story flags
+  (IsEventFlagCheck, ShowStartFlag/ShowEndFlag); reading those flags from Lua would mean
+  calling Blueprint functions with out parameters, which crashed before. Between
+  chapters there is no objective at all (Slot 1 after Cyrus' chapter 1).
 
 ## Menus
 
@@ -260,12 +267,13 @@ menu say "done" or "not possible yet". Checked in the game: the old woman at the
   - Accessories with a special effect.
   - Several travelers (the tab should say "Olberic, tab 2 of 4").
   - A greyed category's "can't equip": the cursor skips those rows.
-- **Menus inside events are only read for save/load and confirm dialogs.** The save
-  point's screen is read since 2026-11-14 ("Save", "Slot 1, empty", "An ausgewähltem
-  Speicherplatz abspeichern? Nein") by a reader that runs on the game thread while an
-  event is up. Other screens a game event might open are not known yet; if one stays
-  silent, add its class to `M.poll_event_menus`. (Shops and inns are no events: their
-  reader runs in the normal screen poll.)
+- **Menus inside events: only the known ones are read.** The save point's screen
+  ("Save", "Slot 1, empty", "An ausgewähltem Speicherplatz abspeichern? Nein") is read by
+  `M.poll_event_menus` on the game thread while an event is up. The tavern keeper's menu
+  also runs inside his talk event; it and its screens (equipment, party change, story
+  select) are read by the normal screen polls, which run in events too. Other screens a
+  game event might open are not known yet; if one stays silent, check its class in the
+  "EVENT screen:" log line.
 
 ## Navigation
 

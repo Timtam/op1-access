@@ -29,7 +29,10 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   that place area by area; in the field the exit on that route says "on the way to …".
 - The game over menu.
 - Shops and inns: the shop's name and your money, its commands, the goods with price and how
-  many you have, and the amount to buy or sell with the total.
+  many you have, the amount to buy or sell with the total, and for weapons and armor what
+  they would change for each traveler.
+- The tavern: the keeper's menu, the equipment screen, changing the party and choosing whose
+  story to continue.
 
 ### Story and exploration
 
