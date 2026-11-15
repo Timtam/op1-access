@@ -3409,6 +3409,18 @@ M.bt_enemy_text = function(en)
             table.remove(st, i)
         end
     end
+    -- H'aanit's capture (and stealing in battle): the success rate over the enemy,
+    -- BattleSuccessRate_C (TitleText "Erfolgschance", RateValue "60 %"), seen
+    -- 2026-11-15 on screen while nothing was said
+    local sr
+    pcall(function() sr = w.BattleSuccessRate end)
+    local sv = sr and M.wvis(sr)
+    if sr and (sv == 0 or sv == 3 or sv == 4) then
+        local t, r = M.wtext(sr.TitleText), M.wtext(sr.RateValue)
+        if r and not M.placeholder(r) then
+            s = s .. ", " .. ((t and not M.placeholder(t)) and (t .. " ") or "") .. r
+        end
+    end
     if #st > 0 then s = s .. ". " .. table.concat(st, "; ") end
     return s
 end
@@ -3514,7 +3526,9 @@ M.bt_targets = function()   -- addresses under a visible target cursor, sorted
     for _, c in ipairs(M.bt_list("BattleTargetCursor_C")) do
         local cv = false
         pcall(function() cv = c.CursorVisible end)
-        if cv and M.wvis(c) == 0 then
+        -- (any shown state: the capture cursor said nothing, 2026-11-15)
+        local v = cv and M.wvis(c)
+        if cv and (v == 0 or v == 3 or v == 4) then
             local a = M.peekp(c, 0x208)   -- TargetCharacter
             if a then t[#t + 1] = a end
         end
@@ -3615,6 +3629,20 @@ M.poll_battle = function()
     end
     bt.primed = true
     local tg = M.bt_targets()
+    -- H'aanit's capture (and stealing in battle) picks its target without a target cursor
+    -- (all cursors hidden, 2026-11-15): the enemy whose success rate shows is the target
+    if #tg == 0 then
+        for _, en in ipairs(M.bt_enemies()) do
+            local sr
+            pcall(function() sr = en.w.BattleSuccessRate end)
+            local v = sr and M.wvis(sr)
+            if v == 0 or v == 3 or v == 4 then
+                if not bt.rate_logged then bt.rate_logged = true; log("BATTLE rate target " .. tostring(en.name)) end
+                tg = { en.addr }
+                break
+            end
+        end
+    end
     -- our own input (menu or target cursor): the next action is that character's
     local mm = (#tg == 0) and M.bt_menu() or nil
     local input = (#tg > 0) or (mm ~= nil)
@@ -3724,7 +3752,10 @@ M.poll_battle_result = function(w)
         bt.result_said = true
         local ex, jp, mo
         pcall(function() ex, jp, mo = w.GetTotalExp, w.GetTotalJobPoint, w.GetTotalMoney end)
-        local parts = { string.format("Victory. %s leaves, %s EXP, %s JP", tostring(mo), tostring(ex), tostring(jp)) }
+        -- (the money sign: speak() says it in the game's language -- "leaves" was fixed
+        -- English, "20 leaves" in a German game, 2026-11-15)
+        local parts = { string.format("Victory. %s %s, %s EXP, %s JP", tostring(mo), M.MONEY_SIGN, tostring(ex),
+            tostring(jp)) }
         for _, u in ipairs(ups) do parts[#parts + 1] = u end
         local drops = {}
         for _, d in ipairs(M.bt_list("BattleDropItemWidget_C")) do
@@ -3799,7 +3830,8 @@ M.bt_actor = function()
     -- came out as the enemy's)
     if bt.menu_who and (bt.input_was or (bt.menu_closed_t and os.clock() - bt.menu_closed_t < 4)) then
         bt.menu_closed_t, bt.input_was = nil, false
-        for _, pm in ipairs(M.bt_party()) do if pm.addr == bt.menu_who then return pm.name end end
+        -- (second value: it came from our own input)
+        for _, pm in ipairs(M.bt_party()) do if pm.addr == bt.menu_who then return pm.name, true end end
     end
     local en = M.bt_enemies()
     if #en == 1 then return en[1].name end
@@ -3817,7 +3849,20 @@ M.act_hook = function(ctx)
         local s = M.wtext(ctx:get().CommandName)
         if not s or M.placeholder(s) then return end
         M.act_hook_ok = true
-        local who = M.bt_actor()
+        local who, mine = M.bt_actor()
+        -- a message, not an action ("Ihr habt die Bestie gefangen!" came out as the
+        -- marmot's, 2026-11-15): no one in front
+        if s:find("[%.!%?]$") and s:find(" ") then who, mine = nil, false end
+        -- a called beast's own attack: H'aanit's "Linde", then "Feger" came out as the
+        -- enemy's (2026-11-15). The beast's skills are in the help line of the command
+        -- that called it ("Feger (Schwertangriff). Anspringen ..."), said just before.
+        local bt = M.bt
+        local prev = bt.prev_act
+        if prev and prev.mine and os.clock() - prev.t < 8 and prev.help and s ~= prev.name
+            and prev.help:find(s, 1, true) then
+            who, mine = prev.name, false
+        end
+        bt.prev_act = { name = s, mine = mine == true, t = os.clock(), help = bt.help_said }
         M.bt.act_pending = (who and (who .. ": ") or "") .. s
         M.bt.action = s
         log("ACTION " .. M.bt.act_pending)
