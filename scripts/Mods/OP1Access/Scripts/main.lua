@@ -7883,6 +7883,28 @@ NV.face_goal = function(retry)
     local px, py = read_actor_pos(p); if not px then return end
     local tx, ty = g.x, g.y
     local t = nav_target()
+    if g.face then
+        -- arrived at another side of a chest / hidden item (NV.iapproach): face the item,
+        -- then nav_tick looks for its prompt again
+        tx, ty = g.face.x, g.face.y
+        local ia = NV.iapproach
+        if ia then ia.px, ia.py, ia.next = px, py, os.clock() + 1.0 end
+        t = nil
+    elseif not retry and t and g.key and NV.tkey(t) == g.key and t.actor
+        and class_name_of(t.actor) == "TreasureBoxBP_C" then
+        -- a chest or a hidden item (its chest): its "Öffnen, E" / "Untersuchen, E" prompt
+        -- must show, which depends on the side you stand at -- the hidden item behind a
+        -- ledge in Atlasdam said "Arrived" 138 away without it (2026-11-15). nav_tick
+        -- waits for the prompt and else tries other sides (NV.iapproach).
+        local a = 0
+        pcall(function() a = t.actor:GetAddress() end)
+        local okc, opened = pcall(M.chest_state, { addr = a })
+        if a ~= 0 and not (okc and opened) then
+            local x, y, z = read_actor_pos(t.actor)
+            NV.iapproach = { addr = a, tries = 0, next = os.clock() + 1.0, x = x or tx, y = y or ty,
+                z = z or g.z, px = px, py = py, spots = {} }
+        end
+    end
     if t and g.key and NV.tkey(t) == g.key then   -- a wandering NPC: where it is now
         local x, y = NV.tpos(t)
         if x then tx, ty = x, y end
@@ -7931,6 +7953,43 @@ NV.face_goal = function(retry)
     M.face_t = os.clock()   -- bump_step: this tap is ours, no wall thud
     NV.face = { till = os.clock() + dur, u = u, d = d, l = l, r = r,
         held = { UP_ARROW = u or nil, DOWN_ARROW = d or nil, LEFT_ARROW = l or nil, RIGHT_ARROW = r or nil } }
+end
+
+-- Another side of a chest / hidden item to stand at (NV.iapproach): of 16 spots around
+-- it (8 directions, 90 and 130 away) one with ground at about the item's height and a
+-- clear line from there to just short of it at waist height (the capsule's own trace,
+-- so ledges and invisible walls count), nearest to you, not where you stand and not
+-- tried before. nil: none.
+NV.item_spot = function(ia, p, px, py)
+    local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+    if not (ksl and p and px) then return nil end
+    local best, bestd = nil, 1e9
+    for k = 0, 7 do
+        local ang = k * math.pi / 4
+        for _, r in ipairs({ 90, 130 }) do
+            local cx, cy = ia.x + r * math.cos(ang), ia.y + r * math.sin(ang)
+            local d = math.sqrt((cx - px) ^ 2 + (cy - py) ^ 2)
+            local fresh = d > 70
+            for _, s in ipairs(ia.spots) do
+                if math.sqrt((cx - s.x) ^ 2 + (cy - s.y) ^ 2) < 60 then fresh = false end
+            end
+            if fresh and d < bestd then
+                local ok, hit, oh = line_blocked(ksl, p, cx, cy, ia.z + 160, cx, cy, ia.z - 200)
+                local gz
+                if ok and hit then
+                    local dist
+                    pcall(function() if type(oh.Distance) == "number" then dist = oh.Distance end end)
+                    gz = dist and (ia.z + 160 - dist)
+                end
+                if gz and math.abs(gz - ia.z) < 120 then
+                    local ex, ey = ia.x + (cx - ia.x) / r * 30, ia.y + (cy - ia.y) / r * 30
+                    local ok2, hit2 = line_blocked(ksl, p, cx, cy, gz + 50, ex, ey, gz + 50, NV_TRACE)
+                    if ok2 and not hit2 then best, bestd = { x = cx, y = cy, z = gz + 90 }, d end
+                end
+            end
+        end
+    end
+    return best
 end
 
 -- STUCK: free ourselves instead of asking the player to step aside (user 2026-11-14).
@@ -8068,7 +8127,7 @@ local function nav_walk_start(quiet)
     NV.retries = 0
     NV.bestgoal = nil
     NV.noimprove = 0
-    NV.escapes, NV.last_escape, NV.approach = 0, nil, nil
+    NV.escapes, NV.last_escape, NV.approach, NV.iapproach = 0, nil, nil, nil
     -- INSIDE A BUILDING you're not in: walk to its door first (the closed door blocks
     -- every route). At the door the game says "Öffnen, E"; after E, Backspace again
     -- walks inside (then you stand at the door, so this leg is skipped).
@@ -8213,7 +8272,8 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
     local wp = NV.path[NV.wp]
     while wp do
         local dx, dy = wp.x - px, wp.y - py
-        local reach = (NV.wp == #NV.path) and 110 or (wp.reach or 40)   -- tight at turns (nav_walk_begin_path)
+        -- tight at turns (nav_walk_begin_path), and at a chest's other side (NV.item_spot)
+        local reach = (NV.wp == #NV.path) and ((NV.goal and NV.goal.cat == "spot") and 35 or 110) or (wp.reach or 40)
         local dist = math.sqrt(dx * dx + dy * dy)
         if dist >= reach then
             -- ...or already PAST it: within 60 and beyond the line through it square to
@@ -8434,6 +8494,12 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
             if gd < 45 and math.abs(pz - (NV.goal.z or pz)) < LEVEL_THRESH then
                 nav_walk_stop("Arrived"); return
             end
+        elseif NV.goal.cat == "spot" then
+            -- another side of a chest / hidden item (NV.iapproach): the spot itself, not
+            -- "close enough at 170" -- that ended the walk where it started (2026-11-15)
+            if gd < 35 and math.abs(pz - (NV.goal.z or pz)) < LEVEL_THRESH then
+                nav_walk_stop("Arrived"); pcall(NV.face_goal); return
+            end
         elseif gd < 170 and math.abs(pz - (NV.goal.z or pz)) < LEVEL_THRESH then
             -- (not when the goal is a floor up or down: in the academy hall a walk to
             -- a door upstairs said "Arrived" passing beneath it)
@@ -8510,8 +8576,10 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
             NV.noimprove = (NV.noimprove or 0) + 1
         end
         local gdz = (NV.goal and NV.goal.z) and math.abs(pz - NV.goal.z) or 0
-        -- (an event's spot must be stepped into: stuck 200 short of it is not there)
-        local reach = (NV.goal and NV.goal.cat == "event") and 60 or 220
+        -- (an event's spot must be stepped into: stuck 200 short of it is not there; a
+        -- chest's other side (NV.item_spot) likewise)
+        local gc = NV.goal and NV.goal.cat
+        local reach = (gc == "event") and 60 or (gc == "spot") and 50 or 220
         if gd >= 0 and gd < reach and gdz < LEVEL_THRESH then
             speak("Arrived")                       -- close enough to interact
             pcall(NV.face_goal)
@@ -8571,6 +8639,45 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
             a.tries = a.tries + 1        -- odd tries step sideways (NV.face_goal)
             a.next = os.clock() + 0.7
             pcall(NV.face_goal, a.tries)
+        end
+    end
+    -- after "Arrived" at a chest / hidden item: its prompt must show (M.popup_said = a
+    -- prompt on screen now). If not: one more step toward it, then up to three other sides
+    -- with a clear line to it (NV.item_spot), then say so. You walking off ends it.
+    local ia = NV.iapproach
+    if ia and not nav_walking and not NV.face and not NV.route and os.clock() >= ia.next then
+        local p = get_player_obj()
+        local px, py
+        if p then px, py = read_actor_pos(p) end
+        local okc, opened = pcall(M.chest_state, { addr = ia.addr })
+        if M.popup_said then
+            log("NAVWALK item prompt: " .. tostring(M.popup_said))
+            NV.iapproach = nil
+        elseif (okc and opened) or not px or math.sqrt((px - ia.px) ^ 2 + (py - ia.py) ^ 2) > 80 then
+            NV.iapproach = nil                -- opened, or you walked off
+        elseif ia.tries == 0 then
+            ia.tries, ia.next = 1, os.clock() + 1.0
+            pcall(NV.face_goal, 2)            -- one more step toward it
+        elseif ia.tries <= 3 then
+            ia.tries = ia.tries + 1
+            local oks, spot = pcall(NV.item_spot, ia, p, px, py)
+            if oks and spot then
+                ia.spots[#ia.spots + 1] = spot
+                ia.next = os.clock() + 1.0
+                log(string.format("NAVWALK item: no prompt at (%.0f,%.0f), trying (%.0f,%.0f)", px, py, spot.x, spot.y))
+                speak("No prompt here, trying another side")
+                NV.goal = { x = spot.x, y = spot.y, z = spot.z, cat = "spot", key = NV.goal and NV.goal.key,
+                    face = { x = ia.x, y = ia.y } }
+                NV.retries, NV.bestgoal, NV.noimprove = 0, nil, 0
+                nav_route_begin("walk", spot.x, spot.y, spot.z)
+            else
+                if not oks then log("NAVWALK item spot error: " .. tostring(spot)) end
+                speak("No prompt here, and no other side found")
+                NV.iapproach = nil
+            end
+        else
+            speak("No prompt at this item")
+            NV.iapproach = nil
         end
     end
     pcall(NV.door_auto_step)          -- opening a door on the route (E, wait, walk on)
