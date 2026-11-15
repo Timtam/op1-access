@@ -141,8 +141,11 @@ M.join_text = function(parts)
             if line ~= "" then
                 if out == "" then
                     out = line
-                elseif out:find("[%.!%?:;,]$") or out:find("\226\128\166$") or line:find("^%l")
-                    or line:find("^\195[\159-\191]") or (inner and M.ends_lower_word(out)) then
+                -- (also after a sentence closed in brackets, "... misslingt.)", and before a
+                -- bracket that goes on the line before: "Nach Atlasdamm\n(Flachland) reisen?")
+                elseif out:find("[%.!%?:;,]$") or out:find("[%.!%?]%)$") or out:find("\226\128\166$")
+                    or line:find("^%l") or line:find("^\195[\159-\191]")
+                    or (inner and (M.ends_lower_word(out) or line:find("^%("))) then
                     out = out .. " " .. line
                 else
                     out = out .. ". " .. line
