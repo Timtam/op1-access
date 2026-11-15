@@ -15,6 +15,11 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   shows its own ⑳ sign, which screen readers can't read.
 - Keys the tutorials name as circled letters ("Drückt die Ⓞ-Taste", "Ⓙ drücken") are said
   as plain letters ("O-Taste", "J").
+- The mod's own words follow the game's language: German and English for now ("Truhe 1 von
+  5", "chest 1 of 5"). More languages are a text file each (gettext .po, see
+  docs/translations.md).
+- A speech history: comma and period read the last 100 lines again (back and forward), the
+  dialogue too; Shift+comma and Shift+period jump to the first and the last.
 
 ### Menus
 
@@ -54,16 +59,20 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
 - The minimap's markers: what each one is (side story with the person's name, hidden item,
   objective, exit toward the objective, save point, traveler to recruit) and whether a
   hidden item was picked up already. A new marker is said when it comes up, for example
-  when Scrutinize reveals a hidden item: "New marker: hidden item, right, 3872".
+  when Scrutinize reveals a hidden item: "New marker: hidden item, right, 3872"; the radar
+  rings for it right away.
 - A walker: Backspace walks to the target over a computed route, also up and down narrow
   stairs and around people, opens doors on the way and frees itself when stuck. When
-  someone blocks the only way, it says who ("Armer is in the way").
+  someone blocks the only way, it says who ("Armer is in the way"). At a chest or a hidden
+  item it waits for the game's prompt and tries another side when none comes.
 
 ### Battles
 
 - Commands, skills and items with costs, targets, the boost level, actions with their actor,
   damage and healing, breaks, status effects and the results. Keys 1 to 5 read an enemy (shield,
   weaknesses), 6 to 9 a party member, 0 the turn order.
+- Weaknesses come in the game's own tile order with the unknown ones in place ("weak to
+  2 unknown, Dunkelheit"), so you can tell what an unknown one can still be.
 
 ### Installation
 

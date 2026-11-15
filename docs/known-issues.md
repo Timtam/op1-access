@@ -3,6 +3,21 @@
 Problems noticed in existing features that are not fixed yet. Newest first. When one
 gets fixed, delete its entry (the commit message keeps the history).
 
+## Speech and languages
+
+- **Only German was heard.** Since 7d483f2 the mod's own words follow the game's text
+  language (Scripts/lang/<language>.po, docs/translations.md); de.po covers all 414
+  texts and a whole German session logged no "I18N missing" line. English is the text
+  in the code (unit-tested fallback), but no game in English was played. Other
+  languages say English until someone adds a .po.
+- **Some German words are guesses at the game's own terms**: "Speer" for the polearm
+  weakness (the user says "Lanze"), "EXP" and "JP" in the battle result, "HP", "SP" and
+  "BP" kept as they are, "Wege-Aktion" from the tutorials. Each is one line in de.po.
+- **The speech history keeps the dialogue lines from the pump's PollTalk**: two lines
+  within one pump would keep only the last. Navigator and menu lines were checked
+  (comma, period, Shift+comma, Shift+period); dialogue lines in the history were not
+  listened to yet. A line said twice in a row is kept once.
+
 ## Shops, inns and the tavern
 
 Read since 2026-11-14 (9d527b9, d5c749f, 0b87f8e, 31b89bf, 2f44879, 990724e). Heard in
@@ -49,12 +64,14 @@ Open:
 
 Read since 2026-11-14 (8e180e2) from the object dump and a screenshot of the screen.
 Heard on 2026-11-15 (Cyrus alone lost a battle on the flats): "Cyrus down", "Game over",
-"Weiter ab letztem Speicherpunkt", Down "Zum Titelbildschirm". Then loading the autosave
-from the title crashed the game once, see Threads.
+"Weiter ab letztem Speicherpunkt", Down "Zum Titelbildschirm". Loading a save from the
+title after that crashed the game every time until 2b0e87f (kept title widgets touched
+after the load freed them); three runs since loaded fine, the last with the radar idle
+on the title (0212d98; before, it went "live" there).
 
-- **After "Zum Titelbildschirm" the radar ran on the title screen** ("RADAR live
-  (exploring)", a rescan with 0 objects): the old player object still exists there.
-  Nothing was heard from it, but arrow keys there might give bump sounds. Not fixed.
+- **Between "Ja" and the load's fade the radar is live for a moment** ("RADAR live" then
+  "suspended" in the same second, 2026-11-15): the title's screen is gone, the fade not
+  up yet. Nothing was heard and nothing crashed.
 
 ## World map, route finder and danger levels
 
@@ -111,8 +128,12 @@ the update check with F5 (see docs/build-and-release.md). Not yet checked:
 Read since 2026-11-14 (84bfbf6, ece7854): command menus, skill and item lists with
 cost or count and help line, boost level, targets, action names, the result screen.
 Keys 1-5 read an enemy, 6-9 a party member, 0 the turn order. Tested with Cyrus alone
-against one Eissentinel in the study dungeon. Not yet seen or checked:
+against one Eissentinel in the study dungeon. Weaknesses in the game's tile order
+(1c473c0) heard on the flats: "weak to Bogen, 2 unknown", then "weak to Bogen, Eis,
+1 unknown". Not yet seen or checked:
 
+- **More than five weaknesses, locked tiles.** The panel has five tiles; an enemy with
+  more is logged ("WEAK"). A locked tile (WeakLocked) is said "locked". Neither seen.
 - **Several enemies or party members.** Enemies are numbered in the order of their
   panels (widget order), the turn order lists icons in widget order. Whether both match
   the screen's left-to-right order needs a fight with more than one enemy. Party keys
@@ -305,14 +326,12 @@ Open:
   Same signature as the known exit crash: `RtlLeaveCriticalSection` on a lock the thread
   doesn't own, under `HookUStructLink` and nested Lua calls, no shim frames. Since
   05ce7cc the screen polls call GetActiveStack once per run instead of up to 15 times.
-- **The game crashed once loading a save from the title after a game over**
-  (2026-11-15, test run; `build/user-logs/crash-20261115-203100.*`). 6 s into the load
-  the game thread faulted in UE4SS's `UObjectBase::IsA` inside a UFunction call made from
-  Lua: the object's class pointer was garbage, so it had been freed. The likeliest caller
-  was the pump's battle check, which asked the game for the player and called
-  GetBattleMode with it on every pump, loads included. Since 9cad67c it doesn't while
-  the screen fade is up, and the kept player controller is checked by the shim first.
-  Not reproduced, so not proven.
+- **Other kept UE4SS objects are still touched without the shim's check.** 2b0e87f
+  guards the title widgets and the UI manager (the load crash); others are kept as bare
+  UE4SS objects with only IsValid in front: the area banner, the action prompt, KSFade,
+  the balloon manager, the save manager, the dialog widgets. None crashed so far.
+  `M.trace = true` (the test build sets it) logs every pump and poll step, so the last
+  line before a crash names the step.
 - **After a dialogue or on arrival the radar stalls the game ~390 ms** (5 object
   searches of ~78 ms each: chests, exits, doors, shops, people). It did so before too;
   since d1f4b25 the lists are kept per level and the navigator reuses them, so category
@@ -392,17 +411,17 @@ Open:
 - **A picked-up hidden item stays on the minimap.** Its "!" was still there a minute
   later, so the marker list keeps it, as "hidden item, collected" (the chest's open
   flag).
-- **A revealed hidden item makes no chest sound until it is opened** (user report
-  2026-11-15). The game creates its chest during the path action, which counts as a
-  menu, not a scene: the radar's rescan after it uses the kept chest list or runs before
-  the chest exists, and the new-marker check drops that list 2 s later without a new
-  rescan. The next rescan comes after the "Erhalten" dialog, so the usual chest sound
-  starts only then. Not fixed yet.
-- **The walker can stop on the wrong side of a hidden item.** The tavern guest's item in
-  Atlasdam lies behind a ledge: coming from the tavern the walk said "Arrived" 138 away
-  and no "Untersuchen, E" came (blocked to the right and down); coming from upstairs it
-  stopped 151 away with the prompt. The first time it also worked from the tavern side.
-  The walk ends by distance; it doesn't check the action prompt or try another side.
+- **The walker's "another side" is tried at one item only.** Since 37a2b95 it waits for
+  the prompt at an unopened chest or hidden item and else tries up to three other sides
+  ("No prompt here, trying another side"). Tried from behind the ledge at Atlasdam's
+  hidden item (dev teleport): it went around and got "Untersuchen, E". Not tried at a
+  normal chest, nor where no side works ("No prompt at this item").
+- **From the underground study's entrance the walker finds no way out.** That spot is
+  inside the academy building (its door's IsHouseEnter is set), so every walk first heads
+  for the academy's door, 2184 away and a floor up ("Leaving the building first. Routing
+  to its door"), and the router gives up after 45000 traces, widened and shifted
+  ("Not reachable, no route found"; seen 2026-11-15 after loading the autosave there).
+  The way in from outside was found the same day. Walking by hand works.
 - **Side stories are named, not explained.** Since ea8078c the marker list says "Kit,
   side story" (icon type 7, seen on the flats); "traveler to recruit" (17) wasn't seen yet.
   What a side story is about is only in its dialogue.
