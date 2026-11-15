@@ -13,6 +13,8 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   (OneCore, SAPI) when none runs. Restarting the screen reader while the game runs is fine.
 - Money is said as a word in the game's language ("50 Blätter", "50 leaves"). The game only
   shows its own ⑳ sign, which screen readers can't read.
+- Keys the tutorials name as circled letters ("Drückt die Ⓞ-Taste", "Ⓙ drücken") are said
+  as plain letters ("O-Taste", "J").
 
 ### Menus
 

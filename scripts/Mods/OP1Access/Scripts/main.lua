@@ -42,6 +42,10 @@ local function speak(text, interrupt)
         local okm, t2 = pcall(M.money_text, text)
         if okm and t2 then text = t2 end
     end
+    if M.key_glyphs then
+        local okk, t3 = pcall(M.key_glyphs, text)
+        if okk and t3 then text = t3 end
+    end
     if not (shim and shim.Speak) then
         log("speak (NO SHIM): " .. text)
         return
@@ -98,6 +102,21 @@ M.money_text = function(s)
     -- the sign alone: "(⑳)", "⑳ Wurf"
     s = s:gsub(M.MONEY_SIGN, w[2])
     return s
+end
+
+-- KEY GLYPHS: tutorials and the battle's boost help name keyboard keys as circled
+-- letters, which the game's font draws as key caps: "Drückt die Ⓞ-Taste, um das Radar
+-- ein- und auszuschalten", "Versucht, vor einem Stadtbewohner Ⓙ zu drücken!", "mit den
+-- Richtungsknöpfen ⒶⒹ" (U+24B6-24CF, ⓐ-ⓩ U+24D0-24E9). Screen readers name the
+-- character or skip it, so the letter is said instead; keys side by side get a space
+-- ("A D"). Every spoken line goes through it (2026-11-15).
+M.key_glyphs = function(s)
+    if not s:find("\226[\146\147]") then return s end
+    local function key(n) return "\1" .. string.char(65 + n) .. "\2" end
+    s = s:gsub("\226\146([\182-\191])", function(c) return key(c:byte() - 182) end)
+    s = s:gsub("\226\147([\128-\143])", function(c) return key(c:byte() - 128 + 10) end)
+    s = s:gsub("\226\147([\144-\169])", function(c) return key(c:byte() - 144) end)
+    return (s:gsub("\2\1", " "):gsub("[\1\2]", ""))
 end
 
 -- One spoken line from text pieces that may hold line breaks: a skill's help is
