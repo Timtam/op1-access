@@ -106,6 +106,9 @@ Copy-Item -LiteralPath (Join-Path $source 'enabled.txt') -Destination $mod
 Copy-Item -LiteralPath (Join-Path $source 'Scripts\main.lua') -Destination (Join-Path $mod 'Scripts')
 # the area links for the world map's route finder (scripts/level-links.py)
 Copy-Item -LiteralPath (Join-Path $source 'Scripts\worldlinks.lua') -Destination (Join-Path $mod 'Scripts')
+# the mod's own texts in other languages (scripts/i18n.py): Scripts\lang\<language>.po + the template
+New-Item -ItemType Directory -Force -Path (Join-Path $mod 'Scripts\lang') | Out-Null
+Copy-Item -Path (Join-Path $source 'Scripts\lang\*.po'), (Join-Path $source 'Scripts\lang\*.pot') -Destination (Join-Path $mod 'Scripts\lang')
 Copy-Item -LiteralPath $shim -Destination (Join-Path $mod 'Scripts')
 Copy-Item -LiteralPath (Join-Path $source 'Assets') -Destination (Join-Path $mod 'Assets') -Recurse
 $buildInfo = @"

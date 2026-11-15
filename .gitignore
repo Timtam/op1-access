@@ -37,6 +37,12 @@ desktop.ini
 # user's local cue staging folder (canonical copies live in scripts/Mods/OP1Access/Assets/)
 /Assets/
 
+# Python caches (scripts/i18n.py, level-links.py)
+__pycache__/
+
+# the mod's remembered game language (written next to the .po files at run time)
+scripts/Mods/OP1Access/Scripts/lang/last.txt
+
 # Release builds
 dist/
 installer/**/bin/

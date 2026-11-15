@@ -74,7 +74,7 @@ M.hist_say = function(i)
     local n = #H.list
     local text
     if n == 0 then
-        text = "No messages yet"
+        text = tr("No messages yet")
     else
         if i < 1 then i = 1 elseif i > n then i = n end
         H.pos = i
@@ -120,14 +120,159 @@ do
     local lang, lang_t = nil, -99
     M.game_lang = function()
         local now = os.clock()
-        if now - lang_t < (lang and 30 or 2) then return lang or "en" end
+        if now - lang_t < (lang and 30 or 2) then return lang or M.lang_last or "en" end
         lang_t = now
         local s
         if M.gt_label then s = M.gt_label("BASIC_COMMAND_001") end
         local l = s and M.LANG_BY_NONE[s]
-        if l and l ~= lang then log("LANG: game text language " .. l) end
+        if l and l ~= lang then
+            log("LANG: game text language " .. l)
+            if l ~= M.lang_last and M.lang_save then pcall(M.lang_save, l) end
+        end
         lang = l or lang
-        return lang or "en"
+        return lang or M.lang_last or "en"
+    end
+end
+
+-- ===== LOCALIZATION (user request 2026-11-15) =====
+-- All of the mod's own words go through tr("English text") / trf("English %s", x) /
+-- trn("1 thing", "%d things", n) -- English is the key, like gettext. The translations
+-- are gettext .po files, Scripts/lang/<language>.po (de.po; Poedit or any text editor),
+-- made from Scripts/lang/op1access.pot, which scripts/i18n.py extracts from this file.
+-- The language follows the game's text language (M.game_lang, re-read every 30 s);
+-- English, or a language without a .po, says the English text. The last language seen
+-- is kept in lang/last.txt, so the first lines after a start ("OP1 Access loaded") are
+-- in it too. N_("text") only marks a text for the .pot (tables of labels: translated
+-- where they are said). A translation whose %-codes don't fit falls back to English.
+M.LANG_DIR = "Mods\\OP1Access\\Scripts\\lang\\"
+M.i18n = { cats = {}, missing = {} }
+M.po_unescape = function(s)
+    return (s:gsub("\\(.)", function(c)
+        if c == "n" then return "\n" elseif c == "t" then return "\t" elseif c == "r" then return "\r" end
+        return c   -- \" \\ and anything else: the character itself
+    end))
+end
+-- .po text -> { msgid = msgstr, msgid = { singular, plural } }; fuzzy and empty entries
+-- are left out (they stay English)
+M.po_parse = function(text)
+    local cat = {}
+    local cur, field = {}, nil
+    local function flush()
+        if cur.msgid and cur.msgid ~= "" and not cur.fuzzy then
+            if cur.plural then
+                if cur.str0 and cur.str0 ~= "" then cat[cur.msgid] = { cur.str0, cur.str1 ~= "" and cur.str1 or cur.str0 } end
+            elseif cur.str and cur.str ~= "" then
+                cat[cur.msgid] = cur.str
+            end
+        end
+        cur, field = {}, nil
+    end
+    for line in (text .. "\n"):gmatch("([^\n]*)\n") do
+        line = line:gsub("\r$", "")
+        if line:match("^%s*$") then
+            flush()
+        elseif line:match("^#,") then
+            if line:find("fuzzy", 1, true) then cur.fuzzy = true end
+        elseif line:match("^#") then
+            -- a comment, a source reference or an obsolete entry (#~)
+        else
+            local key, rest = line:match('^(msg[%w_%[%]]+)%s+"(.*)"%s*$')
+            if key then
+                local names = { msgid = "msgid", msgid_plural = "plural", msgstr = "str",
+                    ["msgstr[0]"] = "str0", ["msgstr[1]"] = "str1", msgctxt = "ctxt" }
+                field = names[key]
+                if key == "msgid" and cur.msgid and (cur.str or cur.str0) then flush(); field = "msgid" end
+                if field then cur[field] = M.po_unescape(rest) end
+            else
+                local cont = line:match('^%s*"(.*)"%s*$')
+                if cont and field then cur[field] = (cur[field] or "") .. M.po_unescape(cont) end
+            end
+        end
+    end
+    flush()
+    return cat
+end
+-- the catalog of the game's language, or nil (English, or no .po for it)
+M.i18n_cat = function()
+    local l = M.game_lang and M.game_lang() or "en"
+    if l == "en" then return nil end
+    local c = M.i18n.cats[l]
+    if c == nil then
+        c = false
+        local f = io.open(M.LANG_DIR .. l .. ".po", "rb")
+        if f then
+            local text = f:read("a")
+            f:close()
+            local ok, cat = pcall(M.po_parse, text)
+            if ok and cat then
+                c = cat
+                local n = 0
+                for _ in pairs(cat) do n = n + 1 end
+                log(string.format("I18N %s.po: %d translations", l, n))
+            else
+                log("I18N " .. l .. ".po unreadable: " .. tostring(cat))
+            end
+        end
+        M.i18n.cats[l] = c
+    end
+    return c or nil
+end
+M.i18n_miss = function(s)   -- one log line per text without a translation
+    if not M.i18n.missing[s] then
+        M.i18n.missing[s] = true
+        log("I18N missing: " .. s)
+    end
+end
+function tr(s)
+    if type(s) ~= "string" then return s end
+    local c = M.i18n_cat()
+    if not c then return s end
+    local t = c[s]
+    if type(t) == "string" then return t end
+    if type(t) == "table" then return t[1] end
+    M.i18n_miss(s)
+    return s
+end
+function trf(fmt, ...)
+    local t = tr(fmt)
+    if t ~= fmt then
+        local ok, s = pcall(string.format, t, ...)
+        if ok then return s end
+        log("I18N bad format in the translation of: " .. fmt)
+    end
+    return string.format(fmt, ...)
+end
+-- n = 1: the singular, else the plural. Formatted with the extra arguments, or with n
+-- alone when there are none: trn("%d hour", "%d hours", h), trn("%s, %d target. ",
+-- "%s, %d targets. ", n, name, n)
+function trn(s, p, n, ...)
+    local c = M.i18n_cat()
+    local t = c and c[s]
+    local fmt = (n == 1) and s or p
+    local args = table.pack(...)
+    if args.n == 0 then args = table.pack(n) end
+    if type(t) == "table" then
+        local tt = (n == 1) and t[1] or t[2]
+        local ok, out = pcall(string.format, tt, table.unpack(args, 1, args.n))
+        if ok then return out end
+        log("I18N bad format in the translation of: " .. s)
+    elseif c then
+        M.i18n_miss(s)
+    end
+    return string.format(fmt, table.unpack(args, 1, args.n))
+end
+function N_(s) return s end
+M.lang_save = function(l)
+    M.lang_last = l
+    local f = io.open(M.LANG_DIR .. "last.txt", "wb")
+    if f then f:write(l); f:close() end
+end
+do
+    local f = io.open(M.LANG_DIR .. "last.txt", "rb")
+    if f then
+        local l = (f:read("a") or ""):match("^%s*([%w_]+)")
+        f:close()
+        if l and M.MONEY_WORDS[l] then M.lang_last = l end
     end
 end
 M.money_text = function(s)
@@ -335,49 +480,49 @@ M.speak = speak; M.silence = silence; M.log = log
 -- the real menus and would steal the spoken slot.
 local SCENE_LABELS = {
     -- Title-screen flow
-    UIMainTitle_C            = "Title",
-    TitleMainMenu_00_C       = "Press any button",
-    TitleMainMenu_01_C       = "Title menu",
-    TitleOptionScene_C       = "Options",
-    TitleLoadScene_C         = "Load game",
-    TitlePlayerSelect_C      = "Choose your character",
+    UIMainTitle_C            = N_("Title"),
+    TitleMainMenu_00_C       = N_("Press any button"),
+    TitleMainMenu_01_C       = N_("Title menu"),
+    TitleOptionScene_C       = N_("Options"),
+    TitleLoadScene_C         = N_("Load game"),
+    TitlePlayerSelect_C      = N_("Choose your character"),
     -- Top-level in-game menus (route via KSUIManager too, kept as fallback)
-    MainMenuWidget_C         = "Main menu",
-    MainMenuItemListWidget_C = "Items",
-    MainMenuAbilityWidget_C  = "Abilities",
-    MainMenuJobWidget_C      = "Jobs",
-    MainMenuTutorialListWidget_C = "Tutorials",
-    MainMenuMissionRecord_C  = "Mission record",
-    MainMenuEtcWidget_C      = "Other",
-    EquipmentMenuWidget_C    = "Equipment",
-    StatusMenuWidget_C       = "Character status",
-    JobStatusWidget_C        = "Job status",
+    MainMenuWidget_C         = N_("Main menu"),
+    MainMenuItemListWidget_C = N_("Items"),
+    MainMenuAbilityWidget_C  = N_("Abilities"),
+    MainMenuJobWidget_C      = N_("Jobs"),
+    MainMenuTutorialListWidget_C = N_("Tutorials"),
+    MainMenuMissionRecord_C  = N_("Mission record"),
+    MainMenuEtcWidget_C      = N_("Other"),
+    EquipmentMenuWidget_C    = N_("Equipment"),
+    StatusMenuWidget_C       = N_("Character status"),
+    JobStatusWidget_C        = N_("Job status"),
     -- Save / load
-    MenuSaveLoad_C           = "Save and load",
+    MenuSaveLoad_C           = N_("Save and load"),
     -- Options. On this (Steam) build the ACTUAL options screen the UI manager focuses is
     -- OptionMenuSteamWBP_C (confirmed via GetActiveStack); OptionMenuWBP_C is the non-Steam
     -- variant. Both carry the option-menu fields directly (IsActive/CursorIndex/
     -- OptItemVerticalBox/TitleText/OptionKindArray) and are read the same way in poll_options.
-    OptionMenuWBP_C          = "Options",
-    OptionMenuSteamWBP_C     = "Options",
+    OptionMenuWBP_C          = N_("Options"),
+    OptionMenuSteamWBP_C     = N_("Options"),
     -- Field command (the path-action menu opened with J near an NPC/object)
-    FieldCommandMenu_C       = "Path action",
+    FieldCommandMenu_C       = N_("Path action"),
     -- Battle
-    BattleCommandMenu_C      = "Battle command menu",
-    BattleResultPanelWidget_C= "Battle results",
+    BattleCommandMenu_C      = N_("Battle command menu"),
+    BattleResultPanelWidget_C= N_("Battle results"),
     -- Story / dialog / narration
-    ChatWidget_C             = "Conversation",
+    ChatWidget_C             = N_("Conversation"),
     -- UICommonDialogBP_C is intentionally not in this list: it constructs
     -- alongside the title screen as part of the framework, and its
     -- announcement would steal the slot from the actual title widgets.
     -- Real dialog content is announced via the KSUIManager:OpenDialog hook
     -- with caption + detail + buttons, which is far more useful.
-    NarrationWidget_C        = "Narration",
-    NarrationMessageWidget_C = "Narration message",
-    NarrationNoteWidget_C    = "Narration note",
+    NarrationWidget_C        = N_("Narration"),
+    NarrationMessageWidget_C = N_("Narration message"),
+    NarrationNoteWidget_C    = N_("Narration note"),
     -- Misc
-    StaffCreditWBP_C         = "Staff credits",
-    PartyChat_C              = "Party chat",
+    StaffCreditWBP_C         = N_("Staff credits"),
+    PartyChat_C              = N_("Party chat"),
 }
 
 -- Suppression: avoid speaking very transient / decorative widgets that
@@ -389,21 +534,21 @@ local SCENE_LABELS = {
 -- EKSUIKind -> friendly name (post-title in-game menus)
 -- ---------------------------------------------------------------------------
 local UI_KIND_NAMES = {
-    [0] = "Title screen", [10] = "Main menu", [11] = "Shop",
-    [12] = "Dialog", [13] = "Field actions", [14] = "Purchase",
-    [15] = "Provoke", [16] = "Allure", [17] = "Inquire",
-    [18] = "Mini map", [19] = "Tutorial", [20] = "Game over",
-    [21] = "Narration", [22] = "World map", [23] = "Menu",
-    [24] = "Party chat", [25] = "Flashback", [26] = "Notification",
-    [27] = "Map notification", [28] = "Party chat available",
-    [29] = "Party change", [30] = "Staff credits",
-    [50] = "Options", [51] = "Equipment", [52] = "Save and load",
-    [53] = "Character status", [54] = "Items", [55] = "Abilities",
-    [56] = "Tutorials", [57] = "Change jobs", [58] = "Mission record",
-    [59] = "Story select", [60] = "Event battle", [61] = "Party split",
-    [62] = "Ability settings", [100] = "Action popup",
-    [101] = "Skip event", [102] = "Judge", [103] = "Auto saving",
-    [104] = "Help",
+    [0] = N_("Title screen"), [10] = N_("Main menu"), [11] = N_("Shop"),
+    [12] = N_("Dialog"), [13] = N_("Field actions"), [14] = N_("Purchase"),
+    [15] = N_("Provoke"), [16] = N_("Allure"), [17] = N_("Inquire"),
+    [18] = N_("Mini map"), [19] = N_("Tutorial"), [20] = N_("Game over"),
+    [21] = N_("Narration"), [22] = N_("World map"), [23] = N_("Menu"),
+    [24] = N_("Party chat"), [25] = N_("Flashback"), [26] = N_("Notification"),
+    [27] = N_("Map notification"), [28] = N_("Party chat available"),
+    [29] = N_("Party change"), [30] = N_("Staff credits"),
+    [50] = N_("Options"), [51] = N_("Equipment"), [52] = N_("Save and load"),
+    [53] = N_("Character status"), [54] = N_("Items"), [55] = N_("Abilities"),
+    [56] = N_("Tutorials"), [57] = N_("Change jobs"), [58] = N_("Mission record"),
+    [59] = N_("Story select"), [60] = N_("Event battle"), [61] = N_("Party split"),
+    [62] = N_("Ability settings"), [100] = N_("Action popup"),
+    [101] = N_("Skip event"), [102] = N_("Judge"), [103] = N_("Auto saving"),
+    [104] = N_("Help"),
 }
 
 local UI_KIND_SUPPRESSED = {
@@ -513,7 +658,7 @@ local function schedule_menu_announce(cls, label)
         local label_to_speak = pending_label
         pending_label = nil
         M.scr_said_t = os.clock()   -- the menu list reader queues its first line after this
-        speak(label_to_speak)
+        speak(tr(label_to_speak))
     end)
 end
 
@@ -606,7 +751,7 @@ local function on_widget_created(NewObject)
             last_polled_class = "TitlePlayerSelect_C"
             last_spoken_class = "TitlePlayerSelect_C"
             cs_coord_mute = CS_COORD_MUTE
-            speak(label)
+            speak(tr(label))
         end)
     end
 
@@ -632,7 +777,7 @@ local function on_ui_manager_open(Context, Kind)
     -- escape -> "Menu 1"). Real menus are read by poll_active_menu + the item readers;
     -- if a useful menu turns out to be unmapped, add its kind to UI_KIND_NAMES instead.
     local nm = UI_KIND_NAMES[k]
-    if nm then speak(nm) end
+    if nm then speak(tr(nm)) end
 end
 
 local function on_ui_manager_close(Context, Kind)
@@ -643,7 +788,7 @@ end
 
 local function on_ui_manager_open_dialog(Context, InParam)
     pcall(function()
-        if not InParam then speak("Dialog"); return end
+        if not InParam then speak(tr("Dialog")); return end
         local caption, detail, buttons = "", "", {}
         pcall(function() caption = ftext_to_string(InParam.CaptionText) end)
         pcall(function() detail  = ftext_to_string(InParam.DetailText) end)
@@ -656,8 +801,8 @@ local function on_ui_manager_open_dialog(Context, InParam)
         local parts = {}
         if caption ~= "" then parts[#parts + 1] = caption end
         if detail  ~= "" then parts[#parts + 1] = detail end
-        if #buttons > 0 then parts[#parts + 1] = "Buttons: " .. table.concat(buttons, ", ") end
-        speak(#parts > 0 and table.concat(parts, ". ") or "Dialog")
+        if #buttons > 0 then parts[#parts + 1] = trf("Buttons: %s", table.concat(buttons, ", ")) end
+        speak(#parts > 0 and table.concat(parts, ". ") or tr("Dialog"))
     end)
 end
 
@@ -993,7 +1138,7 @@ local function poll_title_selection(active_cls)
 
     local label = resolve_menu_item_label(instance, sel, cfg)
     log(string.format("Item selection: %s idx=%d label=%s", active_cls, sel, tostring(label)))
-    M.say_item(label or ("Item " .. tostring(sel)))
+    M.say_item(label or trf("Item %s", tostring(sel)))
 end
 
 local function poll_active_menu()
@@ -1067,7 +1212,7 @@ local function poll_active_menu()
             last_polled_class = best_class
             last_spoken_class = best_class
             M.scr_said_t = os.clock()
-            speak(best_label)              -- screen name (interrupts)
+            speak(tr(best_label))          -- screen name (interrupts)
             M.await_first_item = true      -- the next item queues after this name (open)
             cs_coord_mute = CS_COORD_MUTE   -- don't let coords step on the new screen name
             pending_polled_class, pending_polled_n = nil, 0
@@ -1194,7 +1339,7 @@ do
                 local save = false
                 pcall(function() save = (m.IsSaveMode == true) end)
                 log("SAVELOAD in event: save mode=" .. tostring(save))
-                speak(save and "Save" or "Load")
+                speak(save and tr("Save") or tr("Load"))
                 M.await_first_item = true      -- the slot queues after the name
             elseif not M.await_first_item then
                 -- On OPEN (first focused slot), hold until poll_active_menu has spoken
@@ -1221,7 +1366,7 @@ do
             pcall(function() sa = slot:GetAddress() end)
             pcall(function()
                 local a = m.SlotAuto
-                if a and a:GetAddress() == sa then label = "Auto save" end
+                if a and a:GetAddress() == sa then label = tr("Auto save") end
             end)
             if not label then
                 pcall(function()
@@ -1229,12 +1374,12 @@ do
                     m.NormalSlots:ForEach(function(_, v)
                         n = n + 1
                         local o = v:get()
-                        if not label and o and o:GetAddress() == sa then label = "Slot " .. n end
+                        if not label and o and o:GetAddress() == sa then label = trf("Slot %d", n) end
                     end)
                 end)
             end
         end
-        label = label or ((ci == 0) and "Auto save" or ("Slot " .. tostring(ci)))
+        label = label or ((ci == 0) and tr("Auto save") or trf("Slot %s", tostring(ci)))
         if not slot then M.say_item(label); return end
         -- IsEnabled = selectable, not "has a save": loading, empty slots are off; saving,
         -- the autosave is off (it can't be overwritten) though it holds a save. So
@@ -1246,7 +1391,7 @@ do
         local secs = nil; pcall(function() secs = slot.SaveSlotData.PlayTime end)
         local has = en
         if type(secs) == "number" then has = secs > 0 end
-        if not has then M.say_item(label .. ", empty"); return end
+        if not has then M.say_item(trf("%s, empty", label)); return end
         local function gt(name)                                       -- localized text of a bound widget
             local r = nil
             pcall(function()
@@ -1262,7 +1407,7 @@ do
         local pt = nil
         if type(secs) == "number" and secs > 0 then
             local h, mn = math.floor(secs / 3600), math.floor((secs % 3600) / 60)
-            pt = (h > 0 and (h .. " hours ") or "") .. mn .. " minutes"
+            pt = (h > 0 and (trn("%d hour", "%d hours", h) .. " ") or "") .. trn("%d minute", "%d minutes", mn)
         end
         local map, area = gt("TextMap"), gt("TextArea")
         local lvl, leader = gt("TextTopLevel"), gt("TextTopLevelName")
@@ -1270,10 +1415,10 @@ do
         local parts = { label }
         if map then parts[#parts + 1] = map end
         if area then parts[#parts + 1] = area end
-        if leader then parts[#parts + 1] = leader .. (lvl and (" level " .. lvl) or "") end
+        if leader then parts[#parts + 1] = lvl and trf("%s level %s", leader, lvl) or leader end
         if pt then parts[#parts + 1] = pt end
         if date then parts[#parts + 1] = date .. (tm and (" " .. tm) or "") end
-        if not en then parts[#parts + 1] = "can't be chosen" end
+        if not en then parts[#parts + 1] = tr("can't be chosen") end
         log(string.format("SAVELOAD slot %d enabled=%s map=%s pt=%s", ci, tostring(en), tostring(map), tostring(pt)))
         M.say_item(table.concat(parts, ", "))
     end
@@ -1316,8 +1461,8 @@ M.read_objective = function(queue)
             log(string.format("OBJECTIVE from party list %X (%d lists)", M.addr_of(w) or 0, #(lst or {})))
         end
     end
-    if txt then speak("Objective: " .. txt, not queue)
-    elseif not queue then speak("No objective") end
+    if txt then speak(trf("Objective: %s", txt), not queue)
+    elseif not queue then speak(tr("No objective")) end
 end
 -- (not in battle: there Q is the game's "lower the boost" key -- it said "No objective")
 pcall(RegisterKeyBind, Key.Q, function() if M.battle_now then return end M.read_objective(false) end)
@@ -1362,9 +1507,9 @@ do
         end)
         local say
         if not label or label == "" or label == "???" then
-            say = un and "Unavailable" or ("Category " .. tostring(ci))
+            say = un and tr("Unavailable") or trf("Category %s", tostring(ci))
         else
-            say = un and (label .. ", disabled") or label
+            say = un and trf("%s, disabled", label) or label
         end
         M.say_item(say)
         -- On open, also read the current objective (queued after the category). Q re-reads
@@ -1406,10 +1551,10 @@ do
             end
         end
         local label = items[ci + 1]
-        if not label or label == "" then label = "Item " .. tostring(ci + 1) end
+        if not label or label == "" then label = trf("Item %s", tostring(ci + 1)) end
         if opening then
             log(string.format("GAMEOVER items=[%s] cursor=%d", table.concat(items, "|"), ci))
-            speak("Game over", true)
+            speak(tr("Game over"), true)
             M.await_first_item = true
         end
         M.say_item(label)
@@ -1572,7 +1717,7 @@ do
             local okp, panels = pcall(sh.panels, w)
             log(string.format("SHOP open: %s mode=%s label=%s money=%s commands=[%s] panels=[%s]", tostring(title),
                 tostring(mode), tostring(label), tostring(money), table.concat(ct, " "), tostring(okp and panels)))
-            speak(((title and not M.placeholder(title)) and title or "Shop") .. (money and (", " .. money) or ""), true)
+            speak(((title and not M.placeholder(title)) and title or tr("Shop")) .. (money and (", " .. money) or ""), true)
             M.await_first_item = true
         end
         -- what the shop shows now (logged on change, to tell its states apart)
@@ -1626,8 +1771,8 @@ do
             -- that show every command from the first on)
             pcall(function() t = M.wtext(w[string.format("TopMenu_%02d", ci)].MenuText) end)
         end
-        t = (t and not M.placeholder(t)) and t or ("Item " .. (ci + 1))
-        if c and c.off then t = t .. ", unavailable" end
+        t = (t and not M.placeholder(t)) and t or trf("Item %s", ci + 1)
+        if c and c.off then t = trf("%s, unavailable", t) end
         M.say_item(t)
     end
 end
@@ -1670,10 +1815,12 @@ M.poll_party_change = function(w)
         n = M.fc_get(w, "SubCharacterMaxCount")
     end
     local who = (pc and M.fc_shown(pc)) and M.ml_member(pc) or nil
-    local s = string.format("%s %d%s: %s", main and "Party" or "Waiting", idx + 1,
-        (type(n) == "number" and n > 0) and (" of " .. n) or "", who or "empty")
+    local s = (type(n) == "number" and n > 0)
+        and (main and trf("Party %d of %d: %s", idx + 1, n, who or tr("empty"))
+            or trf("Waiting %d of %d: %s", idx + 1, n, who or tr("empty")))
+        or (main and trf("Party %d: %s", idx + 1, who or tr("empty")) or trf("Waiting %d: %s", idx + 1, who or tr("empty")))
     local dm, ds = M.fc_get(w, "DeclsionMainCursorIndex"), M.fc_get(w, "DeclsionSubCursorIndex")
-    if (main and dm == idx) or ((not main) and ds == idx) then s = s .. ", chosen" end   -- (idx >= 0)
+    if (main and dm == idx) or ((not main) and ds == idx) then s = trf("%s, chosen", s) end   -- (idx >= 0)
     local sig = "P" .. s
     if sig == T.said then return end
     if not T.opened then
@@ -1727,15 +1874,15 @@ M.poll_story_select = function(w)
         if f[k] then parts[#parts + 1] = f[k] end
     end
     if f.RecomandationLV and M.fc_shown(M.fc_get(item, "RecomandationRoot")) then
-        parts[#parts + 1] = (f.RecomandationText or "recommended level") .. " " .. f.RecomandationLV
+        parts[#parts + 1] = (f.RecomandationText or tr("recommended level")) .. " " .. f.RecomandationLV
     end
     for i = 1, 3 do
         local t = f["StoryProccesstext" .. i]
         if t and M.fc_shown(M.fc_get(item, "StoryProccess" .. i)) then parts[#parts + 1] = t end
     end
     if #parts == 0 then return end
-    local s = (n > 1 and string.format("%d of %d: ", cp + 1, n) or "") .. M.join_text(parts)
-    if en == false then s = s .. ", unavailable" end
+    local s = (n > 1 and trf("%d of %d: ", cp + 1, n) or "") .. M.join_text(parts)
+    if en == false then s = trf("%s, unavailable", s) end
     local sig = "S" .. s
     if sig == T.said then return end
     local key = table.concat(raw, " ")
@@ -1823,7 +1970,7 @@ end
 -- the row name's kind: eMAP_T_ town, eMAP_F_ a path (field), eMAP_D_ dungeon
 M.wm_what = function(row)
     local k = type(row) == "string" and row:match("^eMAP_(%u)_")
-    return (k == "T" and "town") or (k == "F" and "path") or (k == "D" and "dungeon") or nil
+    return (k == "T" and N_("town")) or (k == "F" and N_("path")) or (k == "D" and N_("dungeon")) or nil
 end
 M.wm_find = function()
     local w = M.wm_widget
@@ -1871,7 +2018,7 @@ M.town_events = function(town)
         raw[#raw + 1] = string.format("%s/%s", tostring(who), tostring(ch))
         if type(who) == "number" and who >= 1 and who <= 8 and type(ch) == "number" and ch > 0 then
             local name = M.gametext(M.fname_of(string.format("ePLAYABLE_CHARA_NAME_%02d", who - 1)))
-            out[#out + 1] = string.format("%s, chapter %d", name or ("traveler " .. who), ch)
+            out[#out + 1] = trf("%s, chapter %d", name or trf("traveler %d", who), ch)
         end
     end
     M.town_logged = M.town_logged or {}
@@ -1917,10 +2064,10 @@ M.wm_recs = function(icon)
             -- label and no chapter -- not a recommendation (Kammbruch, 2026-11-14)
             if (not lbl or lbl == "None" or lbl == "") and not (type(ch) == "number" and ch > 0) then return end
             if not who and tx.CharacterText then who = tx.CharacterText end
-            local s = (who or "someone")
-            if type(ch) == "number" and ch > 0 then s = s .. ", chapter " .. ch
+            local s = (who or tr("someone"))
+            if type(ch) == "number" and ch > 0 then s = trf("%s, chapter %d", s, ch)
             elseif tx.CapterText then s = s .. ", " .. tx.CapterText end
-            if type(lv) == "number" and lv > 0 then s = s .. ", level " .. lv
+            if type(lv) == "number" and lv > 0 then s = trf("%s, level %d", s, lv)
             elseif tx.LevelText then s = s .. ", " .. tx.LevelText end
             out[#out + 1] = s
         end)
@@ -1958,26 +2105,27 @@ end
 -- "Kammbruch, town, Flachland, levels 10 to 15, not visited. Recommended: ..."
 -- (noregion: in a region's own list the region goes unsaid)
 M.wm_describe = function(info, where, noregion)
-    local parts = { info.name or info.row or "unknown place" }
-    if info.what then parts[#parts + 1] = info.what end
+    local parts = { info.name or info.row or tr("unknown place") }
+    if info.what then parts[#parts + 1] = tr(info.what) end
     if info.region and info.region ~= info.name and not noregion then parts[#parts + 1] = info.region end
     if where then parts[#parts + 1] = where end
     if info.lmin then
         parts[#parts + 1] = (info.lmax and info.lmax > info.lmin)
-            and string.format("danger level %d to %d", info.lmin, info.lmax)
-            or string.format("danger level %d", info.lmin)
+            and trf("danger level %d to %d", info.lmin, info.lmax)
+            or trf("danger level %d", info.lmin)
     end
-    if info.here then parts[#parts + 1] = "you are here" end
+    if info.here then parts[#parts + 1] = tr("you are here") end
     -- a place the map does not show yet (only a region's list has those)
     local hidden = info.visible == false
-    if hidden then parts[#parts + 1] = "not discovered"
-    elseif info.unreached then parts[#parts + 1] = "not visited" end
+    if hidden then parts[#parts + 1] = tr("not discovered")
+    elseif info.unreached then parts[#parts + 1] = tr("not visited") end
     local s = table.concat(parts, ", ")
     if hidden then return s end
-    if info.recs and #info.recs > 0 then s = s .. ". Recommended: " .. table.concat(info.recs, "; ")
+    if info.recs and #info.recs > 0 then s = trf("%s. Recommended: %s", s, table.concat(info.recs, "; "))
     elseif info.dest then
         -- every story destination is marked; with no recommendation, say whose chapters
-        s = s .. ". Story destination" .. ((info.story and #info.story > 0) and (": " .. table.concat(info.story, "; ")) or "")
+        s = (info.story and #info.story > 0) and trf("%s. Story destination: %s", s, table.concat(info.story, "; "))
+            or trf("%s. Story destination", s)
     end
     return s
 end
@@ -2019,13 +2167,15 @@ M.wm_build_list = function(wm)
     return list, here
 end
 -- direction on the map (north up): from where you are to a place
+M.I18N_DIRS = { N_("north"), N_("south"), N_("east"), N_("west"), N_("north-east"), N_("north-west"),
+    N_("south-east"), N_("south-west") }   -- (for scripts/i18n.py: the words wm_dir says)
 M.wm_dir = function(dx, dy)
     local d = math.sqrt(dx * dx + dy * dy)
-    if d < 1 then return "here" end
+    if d < 1 then return tr("here") end
     local ns = (dy < -0.38 * d) and "north" or ((dy > 0.38 * d) and "south" or "")
     local ew = (dx > 0.38 * d) and "east" or ((dx < -0.38 * d) and "west" or "")
-    if ns ~= "" and ew ~= "" then return ns .. "-" .. ew end
-    return ns ~= "" and ns or ew
+    if ns ~= "" and ew ~= "" then return tr(ns .. "-" .. ew) end
+    return tr(ns ~= "" and ns or ew)
 end
 -- Send the map's cursor to a place, so Enter there fast travels to a visited town (user
 -- request 2026-11-14). WorldMap_C moves its cursor to MoveTargetPos when
@@ -2077,7 +2227,7 @@ M.wm_cycle = function(delta)
         WM.idx = 0
     end
     local n = #WM.list
-    if n == 0 then speak((WM.reg or 0) > 0 and "No places" or "No places on the map"); return true end
+    if n == 0 then speak((WM.reg or 0) > 0 and tr("No places") or tr("No places on the map")); return true end
     if WM.idx < 1 then WM.idx = (delta > 0) and 1 or n   -- the first press: first or last
     else WM.idx = ((WM.idx - 1 + delta) % n) + 1 end
     local e = WM.list[WM.idx]
@@ -2085,7 +2235,7 @@ M.wm_cycle = function(delta)
     if WM.here and e ~= WM.here and e.x and WM.here.x then
         where = string.format("%s, %d", M.wm_dir(e.x - WM.here.x, e.y - WM.here.y), math.floor(e.d + 0.5))
     end
-    speak(string.format("%d of %d: %s", WM.idx, n, M.wm_describe(e, where, (WM.reg or 0) > 0)), true)
+    speak(trf("%d of %d: %s", WM.idx, n, M.wm_describe(e, where, (WM.reg or 0) > 0)), true)
     -- the cursor goes only to places the map shows: on a hidden one its name plate would
     -- name whatever shown place is nearest
     if e.visible ~= false then pcall(M.wm_jump, wm, e) end
@@ -2132,7 +2282,7 @@ M.wm_region_cycle = function(delta)
     if not wm then return false end
     if not WM.all then WM.list, WM.here = M.wm_build_list(wm); WM.idx = 0 end
     local regs = M.wm_regions()
-    if #regs == 0 then speak("No regions"); return true end
+    if #regs == 0 then speak(tr("No regions")); return true end
     -- 0 = the places the map shows, 1..8 the regions
     local cur = WM.reg or 0
     if cur == 0 and WM.here and WM.here.region then
@@ -2145,14 +2295,14 @@ M.wm_region_cycle = function(delta)
     WM.reg, WM.idx = cur, 0
     if cur == 0 then
         WM.list = WM.shown or {}
-        speak(string.format("Places on the map, %d", #WM.list), true)
+        speak(trf("Places on the map, %d", #WM.list), true)
         return true
     end
     WM.list = M.wm_region_list(regs[cur])
     local shown = 0
     for _, e in ipairs(WM.list) do if e.visible ~= false then shown = shown + 1 end end
     log(string.format("WORLDMAP region %s: %d places, %d shown", regs[cur], #WM.list, shown))
-    speak(string.format("%s, %d places, %d of them on your map", regs[cur], #WM.list, shown), true)
+    speak(trf("%s, %d places, %d of them on your map", regs[cur], #WM.list, shown), true)
     return true
 end
 nav_keys = nav_keys or {}
@@ -2198,7 +2348,7 @@ M.poll_worldmap = function()
         log(string.format("WORLDMAP opened, cursor (%s,%s)", tostring(cx), tostring(cy)))
         local _, here = M.wm_build_list(wm)
         WM.here = here
-        speak("World map" .. (here and here.name and (". You are at " .. here.name) or ""), true)
+        speak((here and here.name) and trf("World map. You are at %s", here.name) or tr("World map"), true)
         M.await_first_item = true   -- the place under the cursor goes after it
     end
     pcall(M.wm_jump_check, wm)
@@ -2342,36 +2492,36 @@ M.wm_route_text = function(places)
     local parts = {}
     for _, nd in ipairs(places) do
         local s = nd.name or nd.row
-        if nd.what and nd.what ~= "town" then s = s .. ", " .. nd.what end
-        if nd.lmin then s = s .. ", danger level " .. nd.lmin end
+        if nd.what and nd.what ~= "town" then s = s .. ", " .. tr(nd.what) end
+        if nd.lmin then s = s .. ", " .. trf("danger level %d", nd.lmin) end
         parts[#parts + 1] = s
     end
-    return string.format("%d areas: %s", #places, table.concat(parts, "; "))
+    return trf("%d areas: %s", #places, table.concat(parts, "; "))
 end
 -- Ctrl+Backspace on the world map: the route to the place Page Up/Down picked
 M.wm_route_say = function()
     local WM = M.WM
     local e = WM.list and WM.list[WM.idx]
-    if not e then speak("Pick a place with page up and page down first"); return end
+    if not e then speak(tr("Pick a place with page up and page down first")); return end
     local g = M.wm_graph()
-    if not g then speak("No route data"); return end
+    if not g then speak(tr("No route data")); return end
     local to = e.row and g.byrow[e.row]
     local from = M.current_level()
     if not (from and to) then
         log(string.format("ROUTE from level %s to %s: unknown", tostring(from), tostring(e.row)))
-        speak("Can't tell where you are on the map")
+        speak(tr("Can't tell where you are on the map"))
         return
     end
     local path = M.wm_level_route(g, from, to)
     if not path then
         log(string.format("ROUTE from level %d to %s (levels %s): none", from, to.row, table.concat(to.levels, ",")))
-        speak("No route known to " .. tostring(to.name))
+        speak(trf("No route known to %s", tostring(to.name)))
         return
     end
-    if #path == 1 then speak("You are there"); return end
+    if #path == 1 then speak(tr("You are there")); return end
     M.route_goal = to
     log("ROUTE levels " .. table.concat(path, " > ") .. " to " .. to.row)
-    speak(string.format("Route to %s, %s. In each area the exit on the way says so.", to.name,
+    speak(trf("Route to %s, %s. In each area the exit on the way says so.", to.name,
         M.wm_route_text(M.wm_route_places(g, path))), true)
 end
 -- The exit that leads on along the route to M.route_goal: its destination is the next
@@ -2385,7 +2535,7 @@ M.route_exit_note = function(actor)
     if not path or #path < 2 then return nil end
     local id
     pcall(function() id = actor.m_nNextMapID end)
-    if id == path[2] then return "on the way to " .. tostring(goal.name) end
+    if id == path[2] then return trf("on the way to %s", tostring(goal.name)) end
     return nil
 end
 
@@ -2435,7 +2585,7 @@ do
         end)
         -- done already / not possible / not usable on this person (M.fc_item_state)
         local okx, extra = pcall(M.fc_item_state, btn, label)
-        speak((label or ("Action " .. tostring(ci))) .. ((okx and extra) and (", " .. extra) or ""))
+        speak((label or trf("Action %s", tostring(ci))) .. ((okx and extra) and (", " .. extra) or ""))
     end
 end
 
@@ -3013,7 +3163,7 @@ M.eq_changes = function(owner)
         if type(vb) == "number" and type(va) == "number" and vb ~= va then
             local name = M.wtext(p.ParamName)
             if name and not M.placeholder(name) then
-                out[#out + 1] = string.format("%s %d to %d", name, vb, va)
+                out[#out + 1] = trf("%s %d to %d", name, vb, va)
             end
         end
     end
@@ -3101,7 +3251,7 @@ M.shop_party_changes = function(owner)
                             a, b = M.wtext(pc["EquipParam" .. n .. "_0"]), M.wtext(pc["EquipParam" .. n .. "_1"])
                         end)
                         if nm and a and b and not M.placeholder(a) and not M.placeholder(nm) then
-                            rows[#rows + 1] = (a == b) and (nm .. " " .. a) or string.format("%s %s to %s", nm, a, b)
+                            rows[#rows + 1] = (a == b) and (nm .. " " .. a) or trf("%s %s to %s", nm, a, b)
                         end
                     end
                 end
@@ -3109,7 +3259,7 @@ M.shop_party_changes = function(owner)
                 -- a piece the traveler can't use shows only the name (a glaive for Cyrus);
                 -- one they can use shows its rows (two shields: 2 and 1 rows)
                 if eqv ~= 1 and eqv ~= 2 then
-                    out[#out + 1] = name .. ": " .. (#rows > 0 and table.concat(rows, ", ") or "can't equip")
+                    out[#out + 1] = name .. ": " .. (#rows > 0 and table.concat(rows, ", ") or tr("can't equip"))
                 end
             end
         end
@@ -3124,10 +3274,10 @@ M.ml_member = function(pc)
     if not name or M.placeholder(name) then return nil end
     local s = name
     local lv = M.wtext(pc.LevelValue)
-    if lv and not M.placeholder(lv) then s = s .. ", level " .. lv end
+    if lv and not M.placeholder(lv) then s = trf("%s, level %s", s, lv) end
     local hp, hpm, sp, spm = M.wtext(pc.HPValue), M.wtext(pc.HPMax), M.wtext(pc.MPValue), M.wtext(pc.MPMax)
-    if hp and hpm then s = s .. ", HP " .. hp .. " of " .. hpm end
-    if sp and spm then s = s .. ", SP " .. sp .. " of " .. spm end
+    if hp and hpm then s = trf("%s, HP %s of %s", s, hp, hpm) end
+    if sp and spm then s = trf("%s, SP %s of %s", s, sp, spm) end
     return s
 end
 M.poll_menu_list = function()
@@ -3205,7 +3355,7 @@ M.poll_menu_list = function()
         local ntab = 0
         pcall(function() w.CategoryWidgetList:ForEach(function() ntab = ntab + 1 end) end)
         sig = string.format("C%X:%s:%s", addr or 0, tostring(ccur), tostring(title))
-        say = (title or ("Tab " .. (ccur + 1))) .. (ntab > 1 and string.format(", tab %d of %d", ccur + 1, ntab) or "")
+        say = (title or trf("Tab %d", ccur + 1)) .. (ntab > 1 and trf(", tab %d of %d", ccur + 1, ntab) or "")
         if scr == "abilities" then
             -- the traveler's job, LBP and the next skill's price (the list header)
             local hd
@@ -3217,7 +3367,7 @@ M.poll_menu_list = function()
                 if job and not M.placeholder(job) then say = say .. ", " .. job end
                 if jp and not M.placeholder(jp) and not jp:match("^9999") then say = say .. ", " .. jp .. " LBP" end
                 if cost and not M.placeholder(cost) and not cost:match("^9999") then
-                    say = say .. ", next skill " .. cost .. " LBP"
+                    say = trf("%s, next skill %s LBP", say, cost)
                 end
             end
             -- the support-skill rows, as the "help" line after the header
@@ -3261,21 +3411,21 @@ M.poll_menu_list = function()
                 say = say .. ", " .. c3 .. " " .. ((un and not M.placeholder(un)) and un or M.MONEY_SIGN)
             end
             if c2 and not M.placeholder(c2) then
-                say = say .. ", " .. (M.gt_label("eSHOP_EQUIP_AFTER_BUY_NUM") or "on hand") .. " " .. c2
+                say = say .. ", " .. (M.gt_label("eSHOP_EQUIP_AFTER_BUY_NUM") or tr("on hand")) .. " " .. c2
             end
-            if stv == 1 then say = say .. ", unavailable" end
+            if stv == 1 then say = trf("%s, unavailable", say) end
         elseif c2 and not M.placeholder(c2) then
             say = say .. ", " .. c2
         end
-        if scr == "items" and stv == 1 then say = say .. ", not usable here" end
+        if scr == "items" and stv == 1 then say = trf("%s, not usable here", say) end
         if scr == "abilities" then
-            if c1 == "???" then say = "Locked skill"
-            elseif stv == 1 then say = say .. ", learned" end
+            if c1 == "???" then say = tr("Locked skill")
+            elseif stv == 1 then say = trf("%s, learned", say) end
         end
         -- equipment: a greyed category is one this traveler can't use (swords for
         -- Cyrus); in an item list the greyed row is the piece worn now
         if scr == "equip" and stv == 1 then
-            say = say .. ((which == "right") and ", equipped" or ", can't equip")
+            say = (which == "right") and trf("%s, equipped", say) or trf("%s, can't equip", say)
         end
         sig = string.format("R%X:%s:%s", addr or 0, tostring(idx), say)
     end
@@ -3363,9 +3513,9 @@ end
 -- Unused widget copies carry placeholder texts ("0123456", "0124", "ああ..."): skipped.
 -- Weaknesses: only REVEALED ones (WeakStatusIcon_0x.IconOpened) -- the icon textures
 -- under the "?" cover already show the real ones, a sighted player sees only "?".
-M.WEAK_DE = { sword = "Schwert", spear = "Speer", dagger = "Dolch", ax = "Axt", arrow = "Bogen",
-    cane = "Stab", Flame = "Feuer", FIre = "Feuer", Fire = "Feuer", Ice = "Eis", Thunder = "Blitz",
-    Wind = "Wind", Light = "Licht", Dark = "Dunkelheit" }
+M.WEAK_DE = { sword = N_("Sword"), spear = N_("Spear"), dagger = N_("Dagger"), ax = N_("Axe"), arrow = N_("Bow"),
+    cane = N_("Staff"), Flame = N_("Fire"), FIre = N_("Fire"), Fire = N_("Fire"), Ice = N_("Ice"), Thunder = N_("Lightning"),
+    Wind = N_("Wind"), Light = N_("Light"), Dark = N_("Dark") }   -- (said through tr)
 M.bt = {}
 M.addr_of = function(o)
     local a
@@ -3429,9 +3579,9 @@ M.placeholder = function(s)
 end
 -- a command's extra text: a skill's SP cost ("8") or an item's count ("x 4")
 M.bt_addinfo = function(a)
-    if a:match("^%d+$") then return a .. " SP" end
+    if a:match("^%d+$") then return trf("%s SP", a) end
     local n = a:match("^x%s*(%d+)$")
-    if n then return n .. " left" end
+    if n then return trf("%s left", n) end
     return a
 end
 -- FindAllOf for the battle widgets, kept 3 s (the copies live as long as the battle UI)
@@ -3482,29 +3632,29 @@ M.weak_tiles_text = function(tiles)
     if #tiles == 0 then return nil end
     local out, run = {}, 0
     local function flush()
-        if run > 0 then out[#out + 1] = run .. " unknown"; run = 0 end
+        if run > 0 then out[#out + 1] = trf("%d unknown", run); run = 0 end
     end
     for _, t in ipairs(tiles) do
         if t.name then
             flush()
-            out[#out + 1] = t.name .. (t.locked and " locked" or "")
+            out[#out + 1] = t.locked and trf("%s locked", t.name) or t.name
         elseif t.locked then
             flush()
-            out[#out + 1] = "1 unknown locked"
+            out[#out + 1] = tr("1 unknown locked")
         else
             run = run + 1
         end
     end
     flush()
-    return "weak to " .. table.concat(out, ", ")
+    return trf("weak to %s", table.concat(out, ", "))
 end
 M.bt_enemy_text = function(en)
     local w = en.w
     local parts = { en.name }
     local sh
     pcall(function() sh = M.wtext(w.BreakStatusIcon.Text_BreakGauge) end)
-    if sh == "0" then parts[#parts + 1] = "broken"
-    elseif sh then parts[#parts + 1] = "shield " .. sh end
+    if sh == "0" then parts[#parts + 1] = tr("broken")
+    elseif sh then parts[#parts + 1] = trf("shield %s", sh) end
     -- The tiles in the game's own order (Schwert, Lanze, Dolch, Axt, Bogen, Stab, Feuer,
     -- Eis, Blitz, Wind, Licht, Dunkelheit): a revealed weakness opens in ITS tile, the
     -- others stay "?", so where an unknown one sits tells what it can still be (user,
@@ -3522,7 +3672,7 @@ M.bt_enemy_text = function(en)
             if opened then
                 local res = M.icon_tex(ic, 0x248)   -- AttributeIcon's texture
                 local key = res and res:match("Icon_(%a+)$")
-                t.name = (key and M.WEAK_DE[key]) or key or "?"
+                t.name = (key and M.WEAK_DE[key] and tr(M.WEAK_DE[key])) or key or "?"
                 nknown = nknown + 1
             end
             tiles[#tiles + 1] = t
@@ -3541,9 +3691,11 @@ M.bt_enemy_text = function(en)
     local s = table.concat(parts, ", ")
     local st = M.bt_enemy_statuses(w)
     -- "broken" is already said from the shield; its icon only adds the turns
+    local bw = tr("broken")
     for i = #st, 1, -1 do
-        if st[i]:match("^broken") then
-            if sh == "0" and st[i]:find(",") then s = s:gsub(", broken", ", " .. st[i], 1) end
+        if st[i]:sub(1, #bw) == bw then
+            local p = s:find(", " .. bw, 1, true)
+            if sh == "0" and st[i]:find(",") and p then s = s:sub(1, p + 1) .. st[i] .. s:sub(p + 2 + #bw) end
             table.remove(st, i)
         end
     end
@@ -3566,20 +3718,20 @@ end
 -- "UiTX_Battle_IconStatus_Up_PAttack" / "..._Down_Poison"; TurnNum = turns left.
 -- Party panel: BuffIcon_00..03 and DebuffIcon_00..03. Enemy panel: StateIcon01/02 (the
 -- two shown, cycling) and DiseaseIconList (all of them).
-M.STATUS_UP = { AbilityAll = "abilities hit all", AttackAll = "attacks hit all", Avoid = "evasion up",
-    BPBoost = "BP boost", Counter = "counter", Critical = "critical up", CriticalContinu = "criticals continue",
-    Dark = "dark enchant", DDefense = "damage guard", EAvoid = "elemental evasion up", Fire = "fire enchant",
-    Health = "health up", Hit = "accuracy up", Ice = "ice enchant", Invincible = "invincible",
-    ItemAll = "items hit all", Light = "light enchant", MAttack = "elemental attack up",
-    MContinu = "spells continue", MConverge = "spells converge", MCritical = "spell criticals",
-    Mdefense = "elemental defense up", PAttack = "physical attack up", PDefense = "physical defense up",
-    Provoke = "provoke", Reflec = "reflect", Regene = "HP regeneration", Reraise = "auto revive",
-    Speed = "speed up", SPRegene = "SP regeneration", Thunder = "lightning enchant", Wind = "wind enchant" }
-M.STATUS_DOWN = { Adhesive = "stuck", Avoid = "evasion down", Break = "broken", BuffUnavailable = "buffs blocked",
-    Confu = "confused", Critical = "critical down", Dark = "blinded", Faint = "unconscious", Fear = "terrified",
-    Hit = "accuracy down", MAttack = "elemental attack down", MDefense = "elemental defense down",
-    MSealed = "abilities sealed", PAttack = "physical attack down", Pdefense = "physical defense down",
-    Poison = "poisoned", Silence = "silenced", Sleep = "asleep", Speed = "speed down", Spoison = "badly poisoned" }
+M.STATUS_UP = { AbilityAll = N_("abilities hit all"), AttackAll = N_("attacks hit all"), Avoid = N_("evasion up"),
+    BPBoost = N_("BP boost"), Counter = N_("counter"), Critical = N_("critical up"), CriticalContinu = N_("criticals continue"),
+    Dark = N_("dark enchant"), DDefense = N_("damage guard"), EAvoid = N_("elemental evasion up"), Fire = N_("fire enchant"),
+    Health = N_("health up"), Hit = N_("accuracy up"), Ice = N_("ice enchant"), Invincible = N_("invincible"),
+    ItemAll = N_("items hit all"), Light = N_("light enchant"), MAttack = N_("elemental attack up"),
+    MContinu = N_("spells continue"), MConverge = N_("spells converge"), MCritical = N_("spell criticals"),
+    Mdefense = N_("elemental defense up"), PAttack = N_("physical attack up"), PDefense = N_("physical defense up"),
+    Provoke = N_("provoke"), Reflec = N_("reflect"), Regene = N_("HP regeneration"), Reraise = N_("auto revive"),
+    Speed = N_("speed up"), SPRegene = N_("SP regeneration"), Thunder = N_("lightning enchant"), Wind = N_("wind enchant") }
+M.STATUS_DOWN = { Adhesive = N_("stuck"), Avoid = N_("evasion down"), Break = N_("broken"), BuffUnavailable = N_("buffs blocked"),
+    Confu = N_("confused"), Critical = N_("critical down"), Dark = N_("blinded"), Faint = N_("unconscious"), Fear = N_("terrified"),
+    Hit = N_("accuracy down"), MAttack = N_("elemental attack down"), MDefense = N_("elemental defense down"),
+    MSealed = N_("abilities sealed"), PAttack = N_("physical attack down"), Pdefense = N_("physical defense down"),
+    Poison = N_("poisoned"), Silence = N_("silenced"), Sleep = N_("asleep"), Speed = N_("speed down"), Spoison = N_("badly poisoned") }
 M.bt_icon_status = function(ic)   -- -> "poisoned, 2 turns" or nil
     -- an icon in use has IconIN set: the 54 unused copies in a test were "visible" (4)
     -- with the default texture (Up_MAttack) and "8" turns, but IconIN false
@@ -3592,10 +3744,10 @@ M.bt_icon_status = function(ic)   -- -> "poisoned, 2 turns" or nil
     local dir, key = (res or ""):match("IconStatus_(%a+)_(%w+)$")
     if not dir then return nil end
     local name = (dir == "Up" and M.STATUS_UP[key]) or (dir == "Down" and M.STATUS_DOWN[key])
-        or (key .. (dir == "Up" and " up" or " down"))
+    name = name and tr(name) or (dir == "Up" and trf("%s up", key) or trf("%s down", key))
     local t = M.wtext(ic.TurnNum)
     if t and t:match("^%d+$") and not M.placeholder(t) then
-        name = name .. ", " .. t .. (t == "1" and " turn" or " turns")
+        name = name .. ", " .. trn("%d turn", "%d turns", tonumber(t))
     end
     return name
 end
@@ -3642,10 +3794,10 @@ M.bt_party_text = function(pm)
     local w = pm.w
     local dead
     pcall(function() dead = w.IsDead end)
-    local s = string.format("%s, HP %s of %s, SP %s of %s, BP %d", pm.name, tostring(M.wtext(w.TextHPValue)),
+    local s = trf("%s, HP %s of %s, SP %s of %s, BP %d", pm.name, tostring(M.wtext(w.TextHPValue)),
         tostring(M.wtext(w.TextHPMaxValue)), tostring(M.wtext(w.TextMPValue)), tostring(M.wtext(w.TextMPMaxValue)),
         M.bt_bp(w))
-    if dead then s = s .. ", down" end
+    if dead then s = trf("%s, down", s) end
     local st = M.bt_party_statuses(w)
     if #st > 0 then s = s .. ". " .. table.concat(st, "; ") end
     return s
@@ -3729,9 +3881,9 @@ M.poll_battle = function()
         pcall(function() sh = M.wtext(en.w.BreakStatusIcon.Text_BreakGauge) end)
         local old = bt.shields[en.addr]
         if sh and old and sh ~= old then
-            if sh == "0" then M.dmg_push(en.name .. " broken")
-            elseif old == "0" then M.dmg_push(en.name .. " recovers, shield " .. sh)
-            else M.dmg_push(en.name .. " shield " .. sh) end
+            if sh == "0" then M.dmg_push(trf("%s broken", en.name))
+            elseif old == "0" then M.dmg_push(trf("%s recovers, shield %s", en.name, sh))
+            else M.dmg_push(trf("%s shield %s", en.name, sh)) end
         end
         if sh then bt.shields[en.addr] = sh end
     end
@@ -3745,7 +3897,7 @@ M.poll_battle = function()
         if dead ~= nil then
             local old = bt.down[pm.name]
             if old ~= nil and dead ~= old then
-                M.dmg_push(pm.name .. (dead and " down" or " back up"))
+                M.dmg_push(dead and trf("%s is down", pm.name) or trf("%s is back up", pm.name))
             end
             bt.down[pm.name] = dead
         end
@@ -3763,7 +3915,7 @@ M.poll_battle = function()
             bt.started = true
             local names = {}
             for _, e in ipairs(en) do names[#names + 1] = e.name end
-            speak("Battle: " .. table.concat(names, ", "))
+            speak(trf("Battle: %s", table.concat(names, ", ")))
         end
     end
     -- an action's name banner (BattleActionInfo_C, "Feuerball", an enemy's "Angriff"):
@@ -3809,8 +3961,8 @@ M.poll_battle = function()
         local sig = "T" .. table.concat(tg, ",")
         if sig ~= bt.said then
             bt.said = sig
-            if #tg == 1 then speak(M.bt_describe(tg[1]) or "target")
-            else speak(#tg .. " targets") end
+            if #tg == 1 then speak(M.bt_describe(tg[1]) or tr("target"))
+            else speak(trf("%d targets", #tg)) end
         end
         return
     end
@@ -3824,7 +3976,7 @@ M.poll_battle = function()
             else
                 local s = m.text
                 if m.add and not M.placeholder(m.add) then s = s .. ", " .. M.bt_addinfo(m.add); bt.add_said = sig end
-                if not m.usable then s = s .. ", unavailable" end
+                if not m.usable then s = trf("%s, unavailable", s) end
                 -- a new turn (the top menu just opened): whose
                 if m.floor == 1 and fresh then
                     local who
@@ -3840,7 +3992,7 @@ M.poll_battle = function()
         -- the boost level: say each change while the menu is up; the first time, also
         -- the keys from the boost help (BtR_Enable_Text "Ⓞ" raises, BtL_Text "Ⓠ" lowers)
         if bt.boost ~= nil and m.boost ~= bt.boost then
-            local s = m.boost > 0 and ("Boost " .. m.boost) or "No boost"
+            local s = m.boost > 0 and trf("Boost %d", m.boost) or tr("No boost")
             if not M.boost_keys_said then
                 M.boost_keys_said = true
                 local function key_of(g)
@@ -3851,7 +4003,7 @@ M.poll_battle = function()
                 end
                 for _, h in ipairs(M.bt_list("BattleCommandBoostHelp_C")) do
                     local up, down = key_of(M.wtext(h.BtR_Enable_Text)), key_of(M.wtext(h.BtL_Text))
-                    if up and down then s = s .. ". " .. up .. " raises, " .. down .. " lowers"; break end
+                    if up and down then s = trf("%s. %s raises, %s lowers", s, up, down); break end
                 end
             end
             speak(s)
@@ -3898,7 +4050,7 @@ M.poll_battle_result = function(w)
         pcall(function() lv, up = pw.PlayerLevel, pw.PlayLevelUp end)
         if up and not M.placeholder(name) and not bt.lv_said[name] then
             bt.lv_said[name] = true
-            ups[#ups + 1] = string.format("%s reaches level %s", name, tostring(lv))
+            ups[#ups + 1] = trf("%s reaches level %s", name, tostring(lv))
         end
     end
     if not bt.result_said then
@@ -3907,7 +4059,7 @@ M.poll_battle_result = function(w)
         pcall(function() ex, jp, mo = w.GetTotalExp, w.GetTotalJobPoint, w.GetTotalMoney end)
         -- (the money sign: speak() says it in the game's language -- "leaves" was fixed
         -- English, "20 leaves" in a German game, 2026-11-15)
-        local parts = { string.format("Victory. %s %s, %s EXP, %s JP", tostring(mo), M.MONEY_SIGN, tostring(ex),
+        local parts = { trf("Victory. %s %s, %s EXP, %s JP", tostring(mo), M.MONEY_SIGN, tostring(ex),
             tostring(jp)) }
         for _, u in ipairs(ups) do parts[#parts + 1] = u end
         local drops = {}
@@ -3915,7 +4067,7 @@ M.poll_battle_result = function(w)
             local n, c = M.wtext(d.Text_Name), M.wtext(d.Text_Num)
             if n and not M.placeholder(n) and M.wvis(d) == 0 then drops[#drops + 1] = c and (n .. " " .. c) or n end
         end
-        if #drops > 0 then parts[#parts + 1] = "Items: " .. table.concat(drops, ", ") end
+        if #drops > 0 then parts[#parts + 1] = trf("Items: %s", table.concat(drops, ", ")) end
         speak(table.concat(parts, ". "))
     elseif #ups > 0 then
         speak(table.concat(ups, ". "), false)
@@ -3953,16 +4105,16 @@ M.dmg_hook = function(kind)
                 pcall(function() t = p2:get() end)
                 local who = M.dmg_who(ctx, p3)
                 log(string.format("DMG %s %s type=%s", tostring(who), tostring(v), tostring(t)))
-                M.dmg_push((who and (who .. " ") or "") .. tostring(v) .. ((t == 3 or t == 5) and " weak" or ""))
+                M.dmg_push((who and (who .. " ") or "") .. tostring(v) .. ((t == 3 or t == 5) and (" " .. tr("weak")) or ""))
             elseif kind == "miss" or kind == "break" then
                 local who = M.dmg_who(ctx, p1)
                 log(string.format("DMG %s %s", kind, tostring(who)))
-                M.dmg_push((who and (who .. " ") or "") .. kind)
+                M.dmg_push((who and (who .. " ") or "") .. (kind == "miss" and tr("miss") or tr("break")))
             else   -- recovery: "hp" / "sp" / "bp"
                 local v = p1:get()
                 local who = M.dmg_who(ctx, nil)
                 log(string.format("DMG %s +%s %s", tostring(who), tostring(v), kind))
-                M.dmg_push((who and (who .. " ") or "") .. "+" .. tostring(v) .. " " .. kind:upper())
+                M.dmg_push((who and (who .. " ") or "") .. "+" .. tostring(v) .. " " .. tr(({ hp = N_("HP"), sp = N_("SP"), bp = N_("BP") })[kind] or kind:upper()))
             end
         end)
     end
@@ -4045,11 +4197,11 @@ M.bt_key = function(n)
     if not M.battle_now then return end
     if n >= 1 and n <= 5 then
         local en = M.bt_enemies()
-        if en[n] then speak(string.format("Enemy %d of %d: %s", n, #en, M.bt_enemy_text(en[n])))
-        else speak(#en == 0 and "No enemies" or string.format("Only %d enemies", #en)) end
+        if en[n] then speak(trf("Enemy %d of %d: %s", n, #en, M.bt_enemy_text(en[n])))
+        else speak(#en == 0 and tr("No enemies") or trn("Only %d enemy", "Only %d enemies", #en)) end
     elseif n >= 6 and n <= 9 then
         local pa = M.bt_party()
-        if pa[n - 5] then speak(M.bt_party_text(pa[n - 5])) else speak("No party member " .. (n - 5)) end
+        if pa[n - 5] then speak(M.bt_party_text(pa[n - 5])) else speak(trf("No party member %d", n - 5)) end
     elseif n == 0 then
         pcall(M.bt_order)
     end
@@ -4069,13 +4221,13 @@ M.bt_order = function()
         if en and a and names[a] and M.wvis(ic) == 0 then
             local nx, brk = false, false
             pcall(function() nx, brk = ic.IsNextOrder, ic.IsBreak end)
-            local s = names[a] .. (brk and " (broken)" or "")
+            local s = brk and trf("%s (broken)", names[a]) or names[a]
             if nx then next_l[#next_l + 1] = s else now_l[#now_l + 1] = s end
         end
     end
-    if #now_l == 0 and #next_l == 0 then speak("Turn order unknown"); return end
-    local s = "This round: " .. (#now_l > 0 and table.concat(now_l, ", ") or "none")
-    if #next_l > 0 then s = s .. ". Next: " .. table.concat(next_l, ", ") end
+    if #now_l == 0 and #next_l == 0 then speak(tr("Turn order unknown")); return end
+    local s = trf("This round: %s", #now_l > 0 and table.concat(now_l, ", ") or tr("none"))
+    if #next_l > 0 then s = trf("%s. Next: %s", s, table.concat(next_l, ", ")) end
     speak(s)
 end
 for n = 0, 9 do
@@ -4146,12 +4298,12 @@ M.update_poll = function()
     if status == 404 then
         M.upd.latest = nil
         log("UPDATE no release published yet")
-        if manual then speak("No release of OP1 Access is published yet") end
+        if manual then speak(tr("No release of OP1 Access is published yet")) end
         return
     end
     if status ~= 200 or type(body) ~= "string" then
         log("UPDATE check failed: " .. tostring(status) .. " " .. tostring(status == false and body or ""))
-        if manual then speak("Could not check for updates") end
+        if manual then speak(tr("Could not check for updates")) end
         return
     end
     local tag = body:match('"tag_name"%s*:%s*"([^"]+)"')
@@ -4161,10 +4313,10 @@ M.update_poll = function()
     if tag and M.version_newer(tag, M.build.version) then
         if manual or M.upd.announced ~= tag then
             M.upd.announced = tag
-            speak(string.format("OP1 Access %s is available. Press F5 twice to install it.", (tag:gsub("^[vV]", ""))), manual)
+            speak(trf("OP1 Access %s is available. Press F5 twice to install it.", (tag:gsub("^[vV]", ""))), manual)
         end
     elseif manual then
-        speak("OP1 Access is up to date, version " .. tostring(M.build.version))
+        speak(trf("OP1 Access is up to date, version %s", tostring(M.build.version)))
     end
 end
 M.update_key = function()
@@ -4174,10 +4326,10 @@ M.update_key = function()
         if ctrl or shift or alt then return end
     end
     if not M.has_update_source() then
-        speak("This copy of OP1 Access has no update source")
+        speak(tr("This copy of OP1 Access has no update source"))
         return
     end
-    if M.upd.pending then speak("Checking for updates"); return end
+    if M.upd.pending then speak(tr("Checking for updates")); return end
     local tag = M.upd.latest
     if tag and M.version_newer(tag, M.build.version) then
         if os.clock() <= M.upd.confirm_until then
@@ -4186,12 +4338,12 @@ M.update_key = function()
             return
         end
         M.upd.confirm_until = os.clock() + 10
-        speak(string.format("Version %s. Press F5 again to install it. The game closes without saving and starts again.",
+        speak(trf("Version %s. Press F5 again to install it. The game closes without saving and starts again.",
             (tag:gsub("^[vV]", ""))), true)
         return
     end
-    speak("Checking for updates")
-    if not M.update_check(true) then speak("Could not check for updates") end
+    speak(tr("Checking for updates"))
+    if not M.update_check(true) then speak(tr("Could not check for updates")) end
 end
 M.update_install = function()
     -- ...\OCTOPATH TRAVELER\Octopath_Traveler\Binaries\Win64\Octopath_Traveler-Win64-Shipping.exe
@@ -4206,13 +4358,13 @@ M.update_install = function()
     end
     if not ok then
         log("UPDATE could not start the installer: " .. tostring(err))
-        speak("Could not start the installer. Opening the download page.", true)
+        speak(tr("Could not start the installer. Opening the download page."), true)
         local page = M.upd.page or ("https://github.com/" .. M.build.repo .. "/releases/latest")
         pcall(shim.StartProcess, (os.getenv("SystemRoot") or "C:\\Windows") .. "\\explorer.exe", '"' .. page .. '"')
         return
     end
     log("UPDATE installer started for " .. tostring(M.upd.latest) .. ", closing the game")
-    speak("Installing the update. The game closes now.", true)
+    speak(tr("Installing the update. The game closes now."), true)
     -- after a moment for the speech; the installer waits until the game has ended
     local okc, closing = pcall(shim.CloseGame, 1500)
     log("UPDATE closing the game: " .. tostring(okc and closing))
@@ -4293,20 +4445,20 @@ if shim and shim.IsSpeakingSupported then
     local backend = shim.DetectScreenReader and shim.DetectScreenReader()
     log("speech backend: " .. tostring(backend) .. ", can speak: " .. tostring(shim.IsSpeakingSupported()))
 end
-speak("OP1 Access loaded")
+speak(tr("OP1 Access loaded"))
 
 -- ---------------------------------------------------------------------------
 -- Dev key bindings
 -- ---------------------------------------------------------------------------
 pcall(RegisterKeyBind, Key.F11, { ModifierKey.CONTROL }, function()
-    speak("Dumping headers")
+    speak(tr("Dumping headers"))
     local ok = pcall(GenerateUHTCompatibleHeaders)
-    speak(ok and "Dump complete" or "Dump failed")
+    speak(ok and tr("Dump complete") or tr("Dump failed"))
 end)
 pcall(RegisterKeyBind, Key.F12, { ModifierKey.CONTROL }, function()
-    speak("Dumping objects")
+    speak(tr("Dumping objects"))
     local ok = pcall(DumpAllObjects)
-    speak(ok and "Object dump complete" or "Dump failed")
+    speak(ok and tr("Object dump complete") or tr("Dump failed"))
 end)
 
 -- ---------------------------------------------------------------------------
@@ -4490,21 +4642,21 @@ end
 local function cs_direction_word(dx, dy)
     if not CS_MAP_Y_DOWN then dy = -dy end  -- normalize so +dy points south
     local ax, ay = math.abs(dx), math.abs(dy)
-    if ax < 0.5 and ay < 0.5 then return "here" end
+    if ax < 0.5 and ay < 0.5 then return tr("here") end
     local horiz = (dx >= 0) and "east" or "west"
     local vert  = (dy >= 0) and "south" or "north"
-    if ax > ay * 2.5 then return horiz end
-    if ay > ax * 2.5 then return vert end
-    return vert .. "-" .. horiz
+    if ax > ay * 2.5 then return tr(horiz) end
+    if ay > ax * 2.5 then return tr(vert) end
+    return tr(vert .. "-" .. horiz)
 end
 
 -- Distance word relative to the map's own scale; nil => mid-range, omitted.
 local function cs_distance_word(d)
     if not cs_pos_diag then return nil end
     local frac = d / cs_pos_diag
-    if frac < 0.10 then return "very near"
-    elseif frac < 0.22 then return "near"
-    elseif frac >= 0.45 then return "far" end
+    if frac < 0.10 then return tr("very near")
+    elseif frac < 0.22 then return tr("near")
+    elseif frac >= 0.45 then return tr("far") end
     return nil
 end
 
@@ -4824,7 +4976,7 @@ poll_character_select = function()
     if cs_coord_mute <= 0 and cell ~= cs_last_cell
         and (cs_settle_n == CS_SETTLE_TICKS or cs_gap >= CS_GAP_TICKS) then
         cs_last_cell, cs_gap = cell, 0
-        speak(string.format("%d, %d", cx, cy))
+        speak(trf("%d, %d", cx, cy))
     end
 end
 
@@ -4875,7 +5027,7 @@ local function cycle_player_select(direction)
     -- after a load, the old gate left Page Up/Down dead even on the screen.
     local instance = cs_live_instance()
     if not instance then
-        speak("Character cycle is only active on character select")
+        speak(tr("Character cycle is only active on character select"))
         return
     end
 
@@ -4884,7 +5036,7 @@ local function cycle_player_select(direction)
     pcall(function() instance[fn_name](instance); called = true end)
     if not called then
         log("cycle: " .. fn_name .. " call failed (BP function not callable)")
-        speak("Cycle unavailable")
+        speak(tr("Cycle unavailable"))
         return
     end
 
@@ -4983,7 +5135,7 @@ local function cs_announce(instance, x, y)
         cs_last_char = nil
         if cell ~= cs_last_cell then
             cs_last_cell = cell
-            speak(string.format("%d, %d", cx, cy))
+            speak(trf("%d, %d", cx, cy))
         end
     end
 end
@@ -5051,8 +5203,8 @@ local function on_arrow_log(kname)
         if not i2 or not x2 or not y2 then return end
         local cx2, cy2 = math.floor(x2 + 0.5), math.floor(y2 + 0.5)
         if cx2 == px and cy2 == py then                  -- cursor never moved
-            local label = (cs_move_key and pressed == CS_OPP[cs_move_key]) and "reversing" or "blocked"
-            speak(string.format("%s, %d, %d", label, cx2, cy2))
+            local label = (cs_move_key and pressed == CS_OPP[cs_move_key]) and tr("reversing") or tr("blocked")
+            speak(trf("%s, %d, %d", label, cx2, cy2))
         else
             cs_announce(i2, x2, y2)       -- moved: announce where we landed (works w/o the loop)
         end
@@ -5131,7 +5283,7 @@ local function announce_nearest()
     local cand = {}
     for _, c in pairs(by_name) do cand[#cand + 1] = c end
     if #cand == 0 then
-        speak("No characters mapped yet. Give it a second, then try again.")
+        speak(tr("No characters mapped yet. Give it a second, then try again."))
         return
     end
 
@@ -5140,17 +5292,17 @@ local function announce_nearest()
         local d = math.sqrt((c.x - cx) ^ 2 + (c.y - cy) ^ 2)
         if not bD or d < bD then bN, bD, tx, ty = c.name, d, c.x, c.y end
     end
-    local who = (bN and bN ~= "" and bN ~= "nil") and bN or "Character"
-    if bD < 30 then speak(who .. ", here"); return end
+    local who = (bN and bN ~= "" and bN ~= "nil") and bN or tr("Character")
+    if bD < 30 then speak(trf("%s, here", who)); return end
     local dx, dy = tx - cx, ty - cy
     local parts = {}
-    if math.abs(dy) >= 20 then local kw = cs_key_toward("y", dy > 0 and 1 or -1); if kw then parts[#parts + 1] = CS_KEYWORD[kw] end end
-    if math.abs(dx) >= 20 then local kw = cs_key_toward("x", dx > 0 and 1 or -1); if kw then parts[#parts + 1] = CS_KEYWORD[kw] end end
+    if math.abs(dy) >= 20 then local kw = cs_key_toward("y", dy > 0 and 1 or -1); if kw then parts[#parts + 1] = tr(CS_KEYWORD[kw]) end end
+    if math.abs(dx) >= 20 then local kw = cs_key_toward("x", dx > 0 and 1 or -1); if kw then parts[#parts + 1] = tr(CS_KEYWORD[kw]) end end
     if #parts > 0 then
-        speak(string.format("%s, %s. At %d, %d", who,
-            table.concat(parts, " and "), math.floor(tx + 0.5), math.floor(ty + 0.5)))
+        speak(trf("%s, %s. At %d, %d", who,
+            table.concat(parts, tr(" and ")), math.floor(tx + 0.5), math.floor(ty + 0.5)))
     else
-        speak(string.format("%s, at %d, %d", who, math.floor(tx + 0.5), math.floor(ty + 0.5)))
+        speak(trf("%s, at %d, %d", who, math.floor(tx + 0.5), math.floor(ty + 0.5)))
     end
 end
 do
@@ -5179,9 +5331,9 @@ pcall(RegisterKeyBind, Key.F10, { ModifierKey.CONTROL }, function()
         last_polled_class = result_class
         speak(result_label)
     elseif last_spoken_class then
-        speak(SCENE_LABELS[last_spoken_class] or last_spoken_class)
+        speak(tr(SCENE_LABELS[last_spoken_class] or last_spoken_class))
     else
-        speak("No menu detected")
+        speak(tr("No menu detected"))
     end
 end)
 
@@ -5227,7 +5379,7 @@ local function read_active_commands(mgr)
                 if type(b) ~= "number" then pcall(function() b = v end) end
                 if type(b) == "number" then
                     raw[#raw + 1] = b
-                    names[#names + 1] = FIELD_CMD_NAME[b] or ("command " .. b)
+                    names[#names + 1] = FIELD_CMD_NAME[b] or trf("command %s", b)
                 end
             end)
         end
@@ -5236,10 +5388,10 @@ local function read_active_commands(mgr)
 end
 local function announce_interactions()
     local mgr, how = get_fcmd_mgr()
-    if not mgr then log("FCMD: no manager"); speak("No interaction here"); return end
+    if not mgr then log("FCMD: no manager"); speak(tr("No interaction here")); return end
     local names, raw = read_active_commands(mgr)
     log(string.format("FCMD via %s: n=%d types=[%s]", how, #raw, table.concat(raw, ",")))
-    if #names == 0 then speak("Nothing to interact with"); return end
+    if #names == 0 then speak(tr("Nothing to interact with")); return end
     -- the path actions by the game's own names ("Studieren"); 0 stays "Talk"
     for i, b in ipairs(raw) do
         if b ~= 0 and M.fc_type_name then names[i] = M.fc_type_name(b) end
@@ -5522,20 +5674,24 @@ end
 local function nav_dir(dx, dy)
     local ax, ay = math.abs(dx), math.abs(dy)
     local parts = {}
-    if ax >= 0.4 * ay then parts[#parts + 1] = (dx > 0) and "up" or "down" end
-    if ay >= 0.4 * ax then parts[#parts + 1] = (dy > 0) and "right" or "left" end
-    if #parts == 0 then return "here" end
-    return table.concat(parts, " ")
+    if ax >= 0.4 * ay then parts[#parts + 1] = (dx > 0) and N_("up") or N_("down") end
+    if ay >= 0.4 * ax then parts[#parts + 1] = (dy > 0) and N_("right") or N_("left") end
+    if #parts == 0 then return tr("here") end
+    return tr(table.concat(parts, " "))   -- "up left": one text, the order per language
 end
 M.nav_dir = nav_dir   -- (for M.marker_watch)
+-- (for scripts/i18n.py: texts said through tr(variable) -- nav_dir's pairs and the
+-- navigator's category names, NAV_CLASSES[].name / t.cat)
+M.I18N_NAV = { N_("up left"), N_("up right"), N_("down left"), N_("down right"), N_("chest"), N_("exit"),
+    N_("building"), N_("shop"), N_("npc"), N_("marker") }
 local nav_last_px, nav_last_py = nil, nil
 local LEVEL_THRESH = 250  -- |dz| beyond this = another floor (one floor measured ~502 units; 250 clears same-floor jitter)
 local function nav_probe()
-    if world_susp then speak(M.battle_now and "In battle" or "Scene running"); return end
+    if world_susp then speak(M.battle_now and tr("In battle") or tr("Scene running")); return end
     local p, phow = get_player_obj()
-    if not p then log("NAV: no player object"); speak("No player position"); return end
+    if not p then log("NAV: no player object"); speak(tr("No player position")); return end
     local px, py, pz, pposhow = read_actor_pos(p)
-    if not px then log("NAV: player pos unreadable (" .. phow .. ")"); speak("Player position unreadable"); return end
+    if not px then log("NAV: player pos unreadable (" .. phow .. ")"); speak(tr("Player position unreadable")); return end
     log(string.format("NAV player via %s/%s = (%.0f, %.0f, %.0f)", phow, pposhow or "?", px, py, pz))
     if nav_last_px then
         log(string.format("NAVDELTA since last Ctrl+F8: dX=%.0f dY=%.0f", px - nav_last_px, py - nav_last_py))
@@ -5583,12 +5739,12 @@ local function nav_probe()
         log(string.format("NAV %s: list=%s readable=%d nearest=%s", c.name,
             list and "ok" or "nil", n, near and string.format("%.0f", near) or "-"))
     end
-    if not bestd then speak("No objects found"); return end
+    if not bestd then speak(tr("No objects found")); return end
     log(string.format("NAV nearest=%s d=%.0f dx=%.0f dy=%.0f dz=%.0f", bestcat, bestd, bdx, bdy, bdz or 0))
     local lvl = ""
-    if bdz and bdz > LEVEL_THRESH then lvl = ", above"
-    elseif bdz and bdz < -LEVEL_THRESH then lvl = ", below" end
-    speak(string.format("%s%s, %s, distance %d", bestcat, lvl, nav_dir(bdx, bdy), math.floor(bestd + 0.5)))
+    if bdz and bdz > LEVEL_THRESH then lvl = ", " .. tr("above")
+    elseif bdz and bdz < -LEVEL_THRESH then lvl = ", " .. tr("below") end
+    speak(trf("%s%s, %s, distance %d", tr(bestcat), lvl, nav_dir(bdx, bdy), math.floor(bestd + 0.5)))
 end
 do
     local ok = pcall(RegisterKeyBind, Key.F8, { ModifierKey.CONTROL }, nav_probe)
@@ -5608,7 +5764,7 @@ do
         M.in_gt(function()
             local done = false
             pcall(function() if shim and shim.Screenshot then done = shim.Screenshot(SHOT_PATH) end end)
-            speak(done and "Screenshot saved" or "Screenshot failed")
+            speak(done and tr("Screenshot saved") or tr("Screenshot failed"))
             log("SCREENSHOT (shim) -> " .. tostring(done))
         end)
     end)
@@ -5627,32 +5783,32 @@ local audio_inited = false
 -- = off. Run with the radars off (the world test borrows beacon slot 0).
 local audio_test_phase = 0
 local AUDIO_TESTS = {
-    { say = "engine right",                       sa = 0 },
-    { say = "engine left",                        sa = 1 },
-    { say = "engine front",                       sa = 2 },
-    { say = "engine behind",                      sa = 3 },
-    { say = "world right, the right arrow side",  dx = 0,    dy = 300 },
-    { say = "world left, the left arrow side",    dx = 0,    dy = -300 },
-    { say = "world front, the up arrow side",     dx = 300,  dy = 0 },
-    { say = "world behind, the down arrow side",  dx = -300, dy = 0 },
-    { say = "bump sound",                         bump = true },   -- direct one-shot playback check
+    { say = N_("engine right"),                       sa = 0 },
+    { say = N_("engine left"),                        sa = 1 },
+    { say = N_("engine front"),                       sa = 2 },
+    { say = N_("engine behind"),                      sa = 3 },
+    { say = N_("world right, the right arrow side"),  dx = 0,    dy = 300 },
+    { say = N_("world left, the left arrow side"),    dx = 0,    dy = -300 },
+    { say = N_("world front, the up arrow side"),     dx = 300,  dy = 0 },
+    { say = N_("world behind, the down arrow side"),  dx = -300, dy = 0 },
+    { say = N_("bump sound"),                         bump = true },   -- direct one-shot playback check
 }
 local function audio_test_cycle()
-    if not (shim and shim.AudioInit) then speak("Audio module not loaded"); return end
+    if not (shim and shim.AudioInit) then speak(tr("Audio module not loaded")); return end
     if not audio_inited then
         local ok = false
         pcall(function() ok = shim.AudioInit() end)
         audio_inited = ok and true or false
         local st = "?"; pcall(function() st = shim.AudioStatus() end)
         log("AudioInit: " .. tostring(ok) .. " status=" .. tostring(st))
-        if not audio_inited then speak("Audio init failed: " .. tostring(st)); return end
+        if not audio_inited then speak(trf("Audio init failed: %s", tostring(st))); return end
         load_cues()
     end
     audio_test_phase = (audio_test_phase % (#AUDIO_TESTS + 1)) + 1
     pcall(function() shim.AudioTest(4) end)                          -- engine test off
     pcall(function() shim.AudioSetSource(0, false, 0, 0, 0, 0) end)  -- world test off
     local t = AUDIO_TESTS[audio_test_phase]
-    if not t then speak("test off"); return end
+    if not t then speak(tr("test off")); return end
     if t.bump then
         pcall(function() shim.AudioPlayCue(BUMP_CUE) end)
     elseif t.sa then
@@ -5661,11 +5817,11 @@ local function audio_test_cycle()
         local p = get_player_obj()
         local px, py, pz
         if p then px, py, pz = read_actor_pos(p) end
-        if not px then speak("No player position"); return end
+        if not px then speak(tr("No player position")); return end
         pcall(function() shim.AudioSetListener(px, py, pz) end)
         pcall(function() shim.AudioSetSource(0, true, px + t.dx, py + t.dy, pz, 2) end)
     end
-    speak(t.say)
+    speak(tr(t.say))
 end
 do
     local ok = pcall(RegisterKeyBind, Key.F7, { ModifierKey.CONTROL }, audio_test_cycle)
@@ -5885,7 +6041,7 @@ local function beacon_step()   -- driven by radar_pump while beacon_on
             local o = M.idle_from
             local far = not (o and x) or math.sqrt((x - o.x) ^ 2 + (y - o.y) ^ 2) > 600
             if far or #beacon_objs ~= o.n then
-                speak(string.format("%d objects here", #beacon_objs))
+                speak(trf("%d objects here", #beacon_objs))
             end
         end
         beacon_rescan_say = false
@@ -5978,7 +6134,7 @@ M.trace_setup = function(ksl, p)
     if not (shim and shim.TraceSetup and shim.Trace) then
         M.tr_native = false
         log("TRACE: the shim has no Trace -- no walls, no routes")
-        speak("Navigation traces unavailable")
+        speak(tr("Navigation traces unavailable"))
         return
     end
     local a = {}
@@ -6008,7 +6164,7 @@ M.trace_setup = function(ksl, p)
             tostring(res), tostring(okf), tostring(hitf), tostring(df)))
         if not M.tr_warned then
             M.tr_warned = true
-            speak("Navigation traces failed, retrying")
+            speak(tr("Navigation traces failed, retrying"))
         end
         return
     end
@@ -6071,12 +6227,12 @@ M.chan_probe = function(tag)
 end
 pcall(RegisterKeyBind, Key.F6, { ModifierKey.CONTROL }, function() M.in_gt(function() pcall(M.chan_probe, "key") end) end)
 local function wall_probe()
-    if world_susp then speak(M.battle_now and "In battle" or "Scene running"); return end
+    if world_susp then speak(M.battle_now and tr("In battle") or tr("Scene running")); return end
     local p = get_player_obj()
-    if not p then speak("No player"); return end
+    if not p then speak(tr("No player")); return end
     local px, py, pz = read_actor_pos(p)
     local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
-    if not (ksl and px) then speak("No Kismet/pos"); return end
+    if not (ksl and px) then speak(tr("No Kismet/pos")); return end
     local LEN = 230
     local blocked = {}
     for _, d in ipairs(WALL_DIRS) do
@@ -6086,9 +6242,9 @@ local function wall_probe()
         local dist = "-"
         if type(oh) == "table" then pcall(function() if oh.Distance then dist = string.format("%.0f", oh.Distance) end end) end
         log(string.format("WALL %s: ok=%s hit=%s dist=%s", d.name, tostring(ok), tostring(hit), dist))
-        if ok and hit then blocked[#blocked + 1] = d.name end
+        if ok and hit then blocked[#blocked + 1] = tr(d.name) end
     end
-    if #blocked == 0 then speak("No walls near") else speak("Blocked: " .. table.concat(blocked, ", ")) end
+    if #blocked == 0 then speak(tr("No walls near")) else speak(trf("Blocked: %s", table.concat(blocked, ", "))) end
 end
 -- ===== Wall radar (phase 4 / A6): continuous panned wall tones =====
 -- Each tick, trace the 4 cardinals; a blocked direction gets a subtle continuous
@@ -6590,32 +6746,32 @@ end
 
 local function nav_announce(prefix)
     local t = nav_target()
-    if not t then speak("No target"); return end
+    if not t then speak(tr("No target")); return end
     pcall(NV.bg_front, t)   -- the background check looks at this one next
-    local p = get_player_obj(); if not p then speak("No player"); return end
-    local px, py, pz = read_actor_pos(p); if not px then speak("No position"); return end
+    local p = get_player_obj(); if not p then speak(tr("No player")); return end
+    local px, py, pz = read_actor_pos(p); if not px then speak(tr("No position")); return end
     local ox, oy, oz = NV.tpos(t)
-    if not ox then speak("Target lost"); return end
+    if not ox then speak(tr("Target lost")); return end
     local dx, dy, dz = ox - px, oy - py, (oz or pz) - pz
     local d = math.floor(math.sqrt(dx * dx + dy * dy) + 0.5)
     local lvl = ""
-    if dz > LEVEL_THRESH then lvl = ", above" elseif dz < -LEVEL_THRESH then lvl = ", below" end
+    if dz > LEVEL_THRESH then lvl = ", " .. tr("above") elseif dz < -LEVEL_THRESH then lvl = ", " .. tr("below") end
     -- reachability note: inside a building you're not in, or the router failed here,
     -- or the background check found the way only through a shut door
     local key = NV.tkey(t)
     local noted = false
     if t.cat ~= "building" then
         local okd, door, how = pcall(M.house_door_for, ox, oy, oz or pz, px, py, pz)
-        if okd and (door or how == "atdoor") then lvl = lvl .. ", inside a building"; noted = true
+        if okd and (door or how == "atdoor") then lvl = lvl .. ", " .. tr("inside a building"); noted = true
         elseif NV.is_noroute(key, px, py) then
-            lvl = lvl .. (NV.noroute[key].door and ", inside a building" or ", not reachable"); noted = true
+            lvl = lvl .. ", " .. (NV.noroute[key].door and tr("inside a building") or tr("not reachable")); noted = true
         end
     elseif NV.is_noroute(key, px, py) then
-        lvl = lvl .. ", not reachable"; noted = true
+        lvl = lvl .. ", " .. tr("not reachable"); noted = true
     end
     local rr = key and NV.reach[key]
     if not noted and rr and rr.ok and rr.viadoor and NV.bg_valid(key, px, py) then
-        lvl = lvl .. ", behind a door"
+        lvl = lvl .. ", " .. tr("behind a door")
     end
     -- Name the focused NPC: first from the learned cache (talked-to NPCs), then
     -- from STATIC data (NV.resolve_name -> placement label via GetGameTextString)
@@ -6630,13 +6786,13 @@ local function nav_announce(prefix)
         -- 156" by the save point, 2026-11-14) -- its minimap marker names it
         if not t.name then
             local okk, kind = pcall(M.marker_kind_of, t.actor)
-            if okk and kind then t.name = kind end
+            if okk and kind then t.name = tr(kind) end
         end
     end
     -- an exit says where it leads (M.exit_dest: the game's level tables), per focus
     if t.cat == "exit" and t.name == nil and t.actor then
         local okd, dest, lv = pcall(M.exit_dest, t.actor)
-        t.name = (okd and dest) and ("to " .. dest .. (lv and (", " .. lv) or "")) or false
+        t.name = (okd and dest) and (trf("to %s", dest) .. (lv and (", " .. lv) or "")) or false
     end
     -- a shop says what it is ("Gasthaus", "Händler": M.shop_name), per focus
     if t.cat == "shop" and t.name == nil and t.actor then
@@ -6652,17 +6808,17 @@ local function nav_announce(prefix)
     -- a chest says whether it was opened already (emptied: OT chests hold one thing)
     if t.cat == "chest" then
         local okc, opened = pcall(M.chest_state, t)
-        if okc and opened then who = who .. "opened, " end
+        if okc and opened then who = who .. tr("opened") .. ", " end
     end
-    speak(string.format("%s%s %d of %d: %s%s, %d%s",
-        prefix or "", t.cat, NV.idx, #NV.list, who, nav_dir(dx, dy), d, lvl))
+    speak(trf("%s%s %d of %d: %s%s, %d%s",
+        prefix or "", tr(t.cat), NV.idx, #NV.list, who, nav_dir(dx, dy), d, lvl))
 end
 
 local function nav_cat_cycle(delta)
     NV.ctrlkey_t = os.clock()
     -- on the world map Home / End go through the regions
     if M.wm_region_cycle and M.wm_region_cycle(delta) then return end
-    if world_susp then speak(M.battle_now and "In battle" or "Scene running"); return end
+    if world_susp then speak(M.battle_now and tr("In battle") or tr("Scene running")); return end
     local t0 = os.clock()
     for _ = 1, #NAV_CLASSES do
         NV.cat = ((NV.cat - 1 + delta) % #NAV_CLASSES) + 1
@@ -6679,14 +6835,14 @@ local function nav_cat_cycle(delta)
                     kinds[#kinds + 1] = string.format("%s/%s", tostring(okc and opened), tostring(otype))
                 end
                 log("CHESTS opened/type: " .. table.concat(kinds, " "))
-                extra = string.format(", %d opened", nopen)
+                extra = trf(", %d opened", nopen)
             end
-            nav_announce(string.format("%s, %d targets%s. ", NAV_CLASSES[NV.cat].name, #NV.list, extra))
+            nav_announce(trn("%s, %d target%s. ", "%s, %d targets%s. ", #NV.list, tr(NAV_CLASSES[NV.cat].name), #NV.list, extra))
             log(string.format("NAVCAT %s: %.0f ms", NAV_CLASSES[NV.cat].name, (os.clock() - t0) * 1000))
             return
         end
     end
-    speak("No targets in any category")
+    speak(tr("No targets in any category"))
 end
 
 -- AFTER A TELEPORT (a door, or an exit between two parts of one level: M.jump_t from the
@@ -6724,14 +6880,14 @@ end
 
 local function nav_obj_cycle(delta)
     NV.ctrlkey_t = os.clock()
-    if world_susp then speak(M.battle_now and "In battle" or "Scene running"); return end
+    if world_susp then speak(M.battle_now and tr("In battle") or tr("Scene running")); return end
     if #NV.list > 0 and NV.list_stale() and NV.list_refresh() then
-        if #NV.list == 0 then speak("No targets here, control left or right for categories"); return end
-        nav_announce(string.format("%s, %d targets. ", NAV_CLASSES[NV.cat].name, #NV.list))
+        if #NV.list == 0 then speak(tr("No targets here, control left or right for categories")); return end
+        nav_announce(trn("%s, %d target. ", "%s, %d targets. ", #NV.list, tr(NAV_CLASSES[NV.cat].name), #NV.list))
         return
     end
     if #NV.list == 0 then nav_build_list() end
-    if #NV.list == 0 then speak("No targets here, control left or right for categories"); return end
+    if #NV.list == 0 then speak(tr("No targets here, control left or right for categories")); return end
     if NV.idx < 1 then NV.idx = (delta > 0) and 1 or #NV.list   -- none selected: first or last
     else NV.idx = ((NV.idx - 1 + delta) % #NV.list) + 1 end
     nav_announce()
@@ -6782,9 +6938,9 @@ local function nav_describe_path(pts)
     local parts, total = {}, 0
     for i, s in ipairs(segs) do
         total = total + s.len
-        if i <= 8 then parts[#parts + 1] = string.format("%s %d", s.dir, math.floor(s.len / 10 + 0.5) * 10) end
+        if i <= 8 then parts[#parts + 1] = string.format("%s %d", tr(s.dir), math.floor(s.len / 10 + 0.5) * 10) end
     end
-    if #segs > 8 then parts[#parts + 1] = "and more" end
+    if #segs > 8 then parts[#parts + 1] = tr("and more") end
     return table.concat(parts, ", "), math.floor(total + 0.5)
 end
 
@@ -6812,7 +6968,7 @@ local function nav_walk_begin_path(pts, label)
         total = total + math.sqrt((pts[i].x - pts[i - 1].x) ^ 2 + (pts[i].y - pts[i - 1].y) ^ 2)
     end
     log(string.format("NAVWALK start mode=%s wps=%d total=%d", label, #pts, math.floor(total)))
-    speak(string.format("Walking, %s, total %d", label, math.floor(total + 0.5)))
+    speak(trf("Walking, %s, total %d", label, math.floor(total + 0.5)))
 end
 
 -- ===== Trace-grid A*: own pathfinding, since the game ships no navmesh =====
@@ -6891,7 +7047,7 @@ local function nav_route_finish(goalnode)
                 end
             end
             if clear then
-                nav_walk_begin_path({ { x = R.px, y = R.py }, { x = R.ox, y = R.oy } }, "direct")
+                nav_walk_begin_path({ { x = R.px, y = R.py }, { x = R.ox, y = R.oy } }, tr("direct"))
             else
                 -- standing in an OPEN doorway with the target beyond it: the room
                 -- behind may not be solid yet seen from outside (the game swaps it in
@@ -6901,9 +7057,9 @@ local function nav_route_finish(goalnode)
                 if thr and NV.goal then
                     log(string.format("NAVWALK step through door %s", tostring(thr.door.name)))
                     NV.goal = { x = thr.x2, y = thr.y2, z = R.pz, cat = "through", key = NV.goal.key }
-                    speak("Through the door first")
+                    speak(tr("Through the door first"))
                     nav_walk_begin_path({ { x = R.px, y = R.py }, { x = thr.x1, y = thr.y1 },
-                        { x = thr.x2, y = thr.y2 } }, "through the door")
+                        { x = thr.x2, y = thr.y2 } }, tr("through the door"))
                     return
                 end
                 -- no route: maybe behind a house door (doorway-plane test, see
@@ -6912,7 +7068,7 @@ local function nav_route_finish(goalnode)
                 local g = NV.goal
                 if g and g.samehouse then
                     -- at (or in) the target's house: the shut door blocked the search
-                    speak("The door is shut. Open it with E, then backspace again")
+                    speak(tr("The door is shut. Open it with E, then backspace again"))
                     return
                 end
                 if (NV.retries or 0) > 0 or boxed then
@@ -6928,7 +7084,7 @@ local function nav_route_finish(goalnode)
                         NV.escapes = (NV.escapes or 0) + 1
                         return
                     end
-                    speak("Stuck, no way on from here. Step aside, then backspace again")
+                    speak(tr("Stuck, no way on from here. Step aside, then backspace again"))
                     return
                 end
                 if g and g.key and g.cat ~= "door" then
@@ -6940,15 +7096,15 @@ local function nav_route_finish(goalnode)
                     NV.noroute[g.key] = { x = R.px, y = R.py, area = M.area_said, door = dx and door or nil }
                     if dx and math.sqrt((dx - R.px) ^ 2 + (dy - R.py) ^ 2) > NV.ATDOOR and NV.route_begin then
                         NV.goal = { x = dx, y = dy, z = dz or R.pz, cat = "door", key = g.key }
-                        speak("Probably inside a building. Routing to its door")
+                        speak(tr("Probably inside a building. Routing to its door"))
                         NV.route_begin("walk", dx, dy, dz or R.pz)
                         return
                     end
                 end
-                speak("Not reachable, no route found")
+                speak(tr("Not reachable, no route found"))
             end
         else
-            speak("No route found")
+            speak(tr("No route found"))
         end
         return
     end
@@ -6991,10 +7147,10 @@ local function nav_route_finish(goalnode)
     if door then
         log(string.format("ROUTE through door %s at (%.0f,%.0f)", tostring(door.name), door.x, door.y))
         if R.mode == "walk" then
-            local tr = {}
-            for j = 1, math.max(1, cut - 1) do tr[#tr + 1] = raw[j] end
-            tr[#tr + 1] = { x = door.x, y = door.y }
-            raw = tr
+            local trail = {}   -- (not "tr": that is the translation function)
+            for j = 1, math.max(1, cut - 1) do trail[#trail + 1] = raw[j] end
+            trail[#trail + 1] = { x = door.x, y = door.y }
+            raw = trail
             NV.goal = { x = door.x, y = door.y, z = door.z, cat = "door", key = NV.goal and NV.goal.key }
         end
     end
@@ -7010,7 +7166,7 @@ local function nav_route_finish(goalnode)
     if blocker then
         local nm = NV.person_name(blocker)
         log(string.format("ROUTE blocked by a person at (%.0f,%.0f): %s", blocker.x, blocker.y, tostring(nm)))
-        speak((nm or "Someone") .. " is in the way")
+        speak(trf("%s is in the way", nm or tr("Someone")))
         return
     end
     -- the cells right at the target are no use: the walk arrives within 110 of it, and
@@ -7040,17 +7196,17 @@ local function nav_route_finish(goalnode)
     pts[#pts + 1] = raw[#raw]
     local floorword = ""
     local ez = (door and R.mode == "walk") and (door.z or R.oz) or R.oz   -- the walk's end
-    if ez - R.pz < -250 then floorword = ", downstairs"
-    elseif ez - R.pz > 250 then floorword = ", upstairs" end
+    if ez - R.pz < -250 then floorword = ", " .. tr("downstairs")
+    elseif ez - R.pz > 250 then floorword = ", " .. tr("upstairs") end
     log(string.format("ROUTE ok cells=%d wps=%d traces=%d slides=%d %.1fs (%d ticks, %.1f ms/tick, %.3f ms/trace)",
         #chain, #pts, R.traces, R.slides or 0, os.clock() - R.started,
         R.ticks or 0, (R.cpu or 0) * 1000 / math.max(1, R.ticks or 0), (R.cpu or 0) * 1000 / math.max(1, R.traces)))
     if R.mode == "walk" then
-        if door then speak("A shut door on the way") end
-        nav_walk_begin_path(pts, (door and "to the door" or "traced route") .. floorword)
+        if door then speak(tr("A shut door on the way")) end
+        nav_walk_begin_path(pts, (door and tr("to the door") or tr("traced route")) .. floorword)
     else
         local desc, total = nav_describe_path(pts)
-        speak(string.format("Path: %s. Total %d%s%s.", desc, total, floorword, door and ", through a door" or ""))
+        speak(trf("Path: %s. Total %d%s%s.", desc, total, floorword, door and (", " .. tr("through a door")) or ""))
     end
 end
 
@@ -7709,22 +7865,22 @@ local function nav_route_step()
     end
     if os.clock() - R.started > 2 and not R.saidlong then
         R.saidlong = true
-        speak("Still routing")
+        speak(tr("Still routing"))
     end
 end
 
 local function nav_route_begin(mode, ox, oy, oz)
-    local p = get_player_obj(); if not p then speak("No player"); return end
-    local px, py, pz = read_actor_pos(p); if not px then speak("No position"); return end
+    local p = get_player_obj(); if not p then speak(tr("No player")); return end
+    local px, py, pz = read_actor_pos(p); if not px then speak(tr("No position")); return end
     oz = oz or pz
     local samelevel = math.abs(oz - pz) <= 200
     local gx = math.floor((ox - px) / NV.STEP + 0.5)
     local gy = math.floor((oy - py) / NV.STEP + 0.5)
     if gx == 0 and gy == 0 and samelevel then
         if mode == "walk" then
-            nav_walk_begin_path({ { x = px, y = py }, { x = ox, y = oy } }, "close by")
+            nav_walk_begin_path({ { x = px, y = py }, { x = ox, y = oy } }, tr("close by"))
         else
-            speak("Right here")
+            speak(tr("Right here"))
         end
         return
     end
@@ -7740,10 +7896,10 @@ local function nav_route_begin(mode, ox, oy, oz)
     if ksl and samelevel and NV.corridor_clear(ksl, p, px, py, pz, ox, oy)
         and not NV.person_on(people, px, py, pz, ox, oy) then
         if mode == "walk" then
-            nav_walk_begin_path({ { x = px, y = py }, { x = ox, y = oy } }, "direct")
+            nav_walk_begin_path({ { x = px, y = py }, { x = ox, y = oy } }, tr("direct"))
         else
             local d = math.floor(math.sqrt((ox - px) ^ 2 + (oy - py) ^ 2) + 0.5)
-            speak(string.format("Path: straight ahead, %d", d))
+            speak(trf("Path: straight ahead, %d", d))
         end
         return
     end
@@ -7905,28 +8061,28 @@ local function nav_info()
     -- on the world map: the route to the place Page Up/Down picked (M.wm_route_say)
     if M.WM and M.WM.open and M.explore_now ~= true then pcall(M.wm_route_say); return end
     if #NV.list > 0 and NV.list_stale() and NV.list_refresh() then   -- after a teleport
-        if #NV.list == 0 then speak("Targets changed, none here"); return end
-        nav_announce(string.format("Targets changed. %s, %d targets. ", NAV_CLASSES[NV.cat].name, #NV.list))
+        if #NV.list == 0 then speak(tr("Targets changed, none here")); return end
+        nav_announce(trn("Targets changed. %s, %d target. ", "Targets changed. %s, %d targets. ", #NV.list, tr(NAV_CLASSES[NV.cat].name), #NV.list))
         return
     end
     local t = nav_target()
-    if not t then speak("No target selected. Home and end pick a category, page up and down a target."); return end
-    local p = get_player_obj(); if not p then speak("No player"); return end
+    if not t then speak(tr("No target selected. Home and end pick a category, page up and down a target.")); return end
+    local p = get_player_obj(); if not p then speak(tr("No player")); return end
     local px, py, pz = read_actor_pos(p)
     local ox, oy, oz = NV.tpos(t)
-    if not (px and ox) then speak("Target lost"); return end
+    if not (px and ox) then speak(tr("Target lost")); return end
     oz = oz or pz
     local dx, dy, dz = ox - px, oy - py, (oz or pz) - pz
     local d = math.floor(math.sqrt(dx * dx + dy * dy) + 0.5)
-    local lvl = "same level"
-    if dz > LEVEL_THRESH then lvl = "above" elseif dz < -LEVEL_THRESH then lvl = "below" end
-    local base = string.format("%s %d of %d, %s, %d, %s. ", t.cat, NV.idx, #NV.list, nav_dir(dx, dy), d, lvl)
+    local lvl = tr("same level")
+    if dz > LEVEL_THRESH then lvl = tr("above") elseif dz < -LEVEL_THRESH then lvl = tr("below") end
+    local base = trf("%s %d of %d, %s, %d, %s. ", tr(t.cat), NV.idx, #NV.list, nav_dir(dx, dy), d, lvl)
     local pts = nav_find_path(p, px, py, pz, ox, oy, oz)
     if pts then
         local desc, total = nav_describe_path(pts)
-        speak(base .. string.format("Path: %s. Total %d.", desc, total))
+        speak(base .. trf("Path: %s. Total %d.", desc, total))
     else
-        speak(base .. "Routing.")
+        speak(base .. tr("Routing."))
         nav_route_begin("info", ox, oy, oz)
     end
 end
@@ -8111,7 +8267,7 @@ NV.door_auto_start = function()
         return false
     end
     NV.door_auto = { phase = "press", t = os.clock(), tries = 0 }
-    speak("Opening the door")
+    speak(tr("Opening the door"))
     return true
 end
 NV.door_auto_step = function()
@@ -8146,7 +8302,7 @@ NV.door_auto_step = function()
             if d.tries >= 2 then
                 log("DOORAUTO no luck")
                 NV.door_auto = nil
-                speak("The door doesn't open. Press E yourself, then backspace again")
+                speak(tr("The door doesn't open. Press E yourself, then backspace again"))
             else
                 d.phase = "press"
             end
@@ -8166,27 +8322,27 @@ local function nav_walk_start(quiet)
     -- ...nor the Backspace that just closed a menu: it said "No target selected" as the
     -- main menu closed, and with a target it would have walked off (2026-11-14)
     if quiet and os.clock() - (M.unexplore_t or -9) < 0.6 then return end
-    if nav_walking then nav_walk_stop("Walk stopped"); return end
-    if NV.route then NV.route = nil; speak("Routing cancelled"); return end
+    if nav_walking then nav_walk_stop(tr("Walk stopped")); return end
+    if NV.route then NV.route = nil; speak(tr("Routing cancelled")); return end
     if NV.door_auto then                -- the walker is opening a door: Backspace stops it
         NV.door_auto, NV.resume_walk = nil, nil
         pcall(function() shim.KeyEvent(0x45, false) end)
-        speak("Walk stopped")
+        speak(tr("Walk stopped"))
         return
     end
-    if world_susp then speak(M.battle_now and "In battle" or "Scene running, try again after"); return end
+    if world_susp then speak(M.battle_now and tr("In battle") or tr("Scene running, try again after")); return end
     -- after a teleport: never walk to a target of the part we left (NV.list_stale)
     if #NV.list > 0 and NV.list_stale() and NV.list_refresh() then
-        if #NV.list == 0 then speak("Targets changed, none here"); return end
-        nav_announce(string.format("Targets changed. %s, %d targets. ", NAV_CLASSES[NV.cat].name, #NV.list))
+        if #NV.list == 0 then speak(tr("Targets changed, none here")); return end
+        nav_announce(trn("Targets changed. %s, %d target. ", "Targets changed. %s, %d targets. ", #NV.list, tr(NAV_CLASSES[NV.cat].name), #NV.list))
         return
     end
     local t = nav_target()
-    if not t then speak("No target selected"); return end
-    local p = get_player_obj(); if not p then speak("No player"); return end
+    if not t then speak(tr("No target selected")); return end
+    local p = get_player_obj(); if not p then speak(tr("No player")); return end
     local px, py, pz = read_actor_pos(p)
     local ox, oy, oz = NV.tpos(t)
-    if not (px and ox) then speak("Target lost"); return end
+    if not (px and ox) then speak(tr("Target lost")); return end
     oz = oz or pz
     local key = NV.tkey(t)
     NV.goal = { x = ox, y = oy, z = oz, cat = t.walkcat or t.cat, key = key }
@@ -8211,7 +8367,7 @@ local function nav_walk_start(quiet)
             local dx, dy, dz = read_actor_pos(pdoor)
             if dx and math.sqrt((dx - px) ^ 2 + (dy - py) ^ 2) > NV.ATDOOR then
                 NV.goal = { x = dx, y = dy, z = dz or pz, cat = "door", key = key }
-                speak(string.format("Leaving the building first. Routing to its door, %d",
+                speak(trf("Leaving the building first. Routing to its door, %d",
                     math.floor(math.sqrt((dx - px) ^ 2 + (dy - py) ^ 2) + 0.5)))
                 nav_route_begin("walk", dx, dy, dz or pz)
                 return
@@ -8229,8 +8385,8 @@ local function nav_walk_start(quiet)
             local dx, dy, dz = read_actor_pos(door)
             if dx and math.sqrt((dx - px) ^ 2 + (dy - py) ^ 2) > NV.ATDOOR then
                 NV.goal = { x = dx, y = dy, z = dz or pz, cat = "door", key = key }
-                local who = t.name and t.name:match("^[^,]+") or t.cat
-                speak(string.format("%s is inside a building. Routing to its door, %d", who,
+                local who = t.name and t.name:match("^[^,]+") or tr(t.cat)
+                speak(trf("%s is inside a building. Routing to its door, %d", who,
                     math.floor(math.sqrt((dx - px) ^ 2 + (dy - py) ^ 2) + 0.5)))
                 nav_route_begin("walk", dx, dy, dz or pz)
                 return
@@ -8242,17 +8398,17 @@ local function nav_walk_start(quiet)
     if not samehouse and NV.is_noroute(key, px, py)
         and not (NV.retry_key == key and os.clock() - (NV.retry_t or -10) < 4) then
         NV.retry_key, NV.retry_t = key, os.clock()
-        speak("Not reachable from here. Press again to try anyway")
+        speak(tr("Not reachable from here. Press again to try anyway"))
         return
     end
     -- navmesh first (free + instant if the game has it), else our traced A*
     local pts = nav_find_path(p, px, py, pz, ox, oy, oz)
     if pts then
-        nav_walk_begin_path(pts, "navmesh path")
+        nav_walk_begin_path(pts, tr("navmesh path"))
         return
     end
     local d = math.floor(math.sqrt((ox - px) ^ 2 + (oy - py) ^ 2) + 0.5)
-    speak(string.format("Routing to %s, %d", t.cat, d))
+    speak(trf("Routing to %s, %d", tr(t.cat), d))
     nav_route_begin("walk", ox, oy, oz)
 end
 
@@ -8277,7 +8433,7 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
             local into_exit = NV.goal and NV.goal.cat == "exit" and (NV.push or (NV.lastgd or 1e9) < 450)
             -- a story event's spot: its scene starting is the arrival, as an exit's fade
             local into_event = NV.goal and NV.goal.cat == "event" and (NV.lastgd or 1e9) < 450
-            if waswalking and not (into_exit or into_event) then speak("Walk stopped") end
+            if waswalking and not (into_exit or into_event) then speak(tr("Walk stopped")) end
             if into_exit then log("NAVWALK through exit") end
             if into_event then log("NAVWALK into the event") end
         end
@@ -8317,10 +8473,10 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
         pcall(function() shim.HoldKeys(false, false, false, false) end)
         if NV.goal and (esc or (NV.retries or 0) < 4) then
             if not esc then NV.retries = (NV.retries or 0) + 1 end
-            speak(esc and "Trying another way" or "Rerouting")
+            speak(esc and tr("Trying another way") or tr("Rerouting"))
             nav_route_begin("walk", NV.goal.x, NV.goal.y, NV.goal.z)
         else
-            speak("Walk interrupted, backspace to resume")
+            speak(tr("Walk interrupted, backspace to resume"))
         end
         return
     end
@@ -8387,7 +8543,7 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
             return
         end
         if gcat ~= "exit" and gcat ~= "door" then
-            nav_walk_stop("Arrived")
+            nav_walk_stop(tr("Arrived"))
             pcall(NV.face_goal)
             return
         end
@@ -8421,8 +8577,8 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
             nav_walk_stop()   -- silent: the prompt speech says what to do
             if NV.door_auto_start() then return end   -- the walker opens it itself
             -- a prompt that was up before the walk wasn't spoken now: say it again
-            if NV.prompt_at_start then speak("Still shut. " .. (M.popup_text or "press E") .. ", then backspace again")
-            elseif gcat == "door" then speak("then backspace again", false) end
+            if NV.prompt_at_start then speak(trf("Still shut. %s, then backspace again", M.popup_text or tr("press E")))
+            elseif gcat == "door" then speak(tr("then backspace again"), false) end
             return
         end
         if now > NV.push.till then
@@ -8444,8 +8600,8 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
                     return
                 end
             end
-            nav_walk_stop(gcat == "door" and "At the door. Open it, then backspace again"
-                or "At the exit, no way through")
+            nav_walk_stop(gcat == "door" and tr("At the door. Open it, then backspace again")
+                or tr("At the exit, no way through"))
             return
         end
         dx, dy = NV.push.x, NV.push.y
@@ -8499,7 +8655,7 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
         if not ours then
             log(string.format("NAVWALK cancel: key=%s held=%s last_ours=%s", tostring(bump_arrow_key),
                 tostring(held[bump_arrow_key or ""]), last and string.format("%.2fs ago", bump_arrow_t - last) or "never"))
-            nav_walk_stop("Walk cancelled")
+            nav_walk_stop(tr("Walk cancelled"))
             return
         end
     end
@@ -8527,7 +8683,7 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
                 -- ...unless the prompt was up already when the walk began: the door is
                 -- still shut (an E press that didn't take) -- the walk ended without a
                 -- word after "Walking, total 161" (2026-11-14). Say the prompt again.
-                if NV.prompt_at_start then speak("Still shut. " .. (M.popup_text or "press E")) end
+                if NV.prompt_at_start then speak(trf("Still shut. %s", M.popup_text or tr("press E"))) end
                 return
             end
         elseif NV.goal.cat == "through" then
@@ -8548,9 +8704,9 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
                 nav_walk_stop()
                 if NV.door_auto_start() then return end   -- the walker opens it itself
                 if NV.prompt_at_start then
-                    speak("Still shut. " .. (M.popup_text or "press E") .. ", then backspace again")
+                    speak(trf("Still shut. %s, then backspace again", M.popup_text or tr("press E")))
                 else
-                    speak("then backspace again", false)
+                    speak(tr("then backspace again"), false)
                 end
                 return
             end
@@ -8559,25 +8715,25 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
             -- at 170 (that left you 107 short of the headmaster's, 2026-11-14). The scene
             -- ends the walk (nav_drive); at the spot without one, arrived.
             if gd < 45 and math.abs(pz - (NV.goal.z or pz)) < LEVEL_THRESH then
-                nav_walk_stop("Arrived"); return
+                nav_walk_stop(tr("Arrived")); return
             end
         elseif NV.goal.cat == "spot" then
             -- another side of a chest / hidden item (NV.iapproach): the spot itself, not
             -- "close enough at 170" -- that ended the walk where it started (2026-11-15)
             if gd < 35 and math.abs(pz - (NV.goal.z or pz)) < LEVEL_THRESH then
-                nav_walk_stop("Arrived"); pcall(NV.face_goal); return
+                nav_walk_stop(tr("Arrived")); pcall(NV.face_goal); return
             end
         elseif gd < 170 and math.abs(pz - (NV.goal.z or pz)) < LEVEL_THRESH then
             -- (not when the goal is a floor up or down: in the academy hall a walk to
             -- a door upstairs said "Arrived" passing beneath it)
-            nav_walk_stop("Arrived"); pcall(NV.face_goal); return
+            nav_walk_stop(tr("Arrived")); pcall(NV.face_goal); return
         end
     end
     local jump = math.sqrt((px - NV.prog.x) ^ 2 + (py - NV.prog.y) ^ 2)
     if jump > 900 then
         -- through an exit with a teleport (the academy door): the arrival, quietly
         if NV.goal and NV.goal.cat == "exit" then log("NAVWALK through exit (jump)"); nav_walk_stop(); return end
-        nav_walk_stop("Walk ended, went through a door"); return
+        nav_walk_stop(tr("Walk ended, went through a door")); return
     end
     if jump > 40 then
         NV.prog = { t = now, x = px, y = py }
@@ -8588,7 +8744,7 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
         local inpMag = 0
         pcall(function() local iv = p:GetLastMovementInputVector(); inpMag = math.sqrt(iv.X * iv.X + iv.Y * iv.Y) end)
         if NV.held and inpMag < 0.3 then
-            nav_walk_stop("Walk interrupted")
+            nav_walk_stop(tr("Walk interrupted"))
             return
         end
         if not NV.unwedged and NV.path then
@@ -8648,14 +8804,14 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
         local gc = NV.goal and NV.goal.cat
         local reach = (gc == "event") and 60 or (gc == "spot") and 50 or 220
         if gd >= 0 and gd < reach and gdz < LEVEL_THRESH then
-            speak("Arrived")                       -- close enough to interact
+            speak(tr("Arrived"))                       -- close enough to interact
             pcall(NV.face_goal)
         elseif NV.goal and (NV.noimprove or 0) < 2 and (NV.retries or 0) < 5 then
             NV.retries = (NV.retries or 0) + 1
-            speak("Rerouting")
+            speak(tr("Rerouting"))
             nav_route_begin("walk", NV.goal.x, NV.goal.y, NV.goal.z)
         else
-            speak(string.format("Can't reach, closest %d", math.floor((NV.bestgoal or gd) + 0.5)))
+            speak(trf("Can't reach, closest %d", math.floor((NV.bestgoal or gd) + 0.5)))
         end
     end
 end
@@ -8732,18 +8888,18 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
                 ia.spots[#ia.spots + 1] = spot
                 ia.next = os.clock() + 1.0
                 log(string.format("NAVWALK item: no prompt at (%.0f,%.0f), trying (%.0f,%.0f)", px, py, spot.x, spot.y))
-                speak("No prompt here, trying another side")
+                speak(tr("No prompt here, trying another side"))
                 NV.goal = { x = spot.x, y = spot.y, z = spot.z, cat = "spot", key = NV.goal and NV.goal.key,
                     face = { x = ia.x, y = ia.y } }
                 NV.retries, NV.bestgoal, NV.noimprove = 0, nil, 0
                 nav_route_begin("walk", spot.x, spot.y, spot.z)
             else
                 if not oks then log("NAVWALK item spot error: " .. tostring(spot)) end
-                speak("No prompt here, and no other side found")
+                speak(tr("No prompt here, and no other side found"))
                 NV.iapproach = nil
             end
         else
-            speak("No prompt at this item")
+            speak(tr("No prompt at this item"))
             NV.iapproach = nil
         end
     end
@@ -9202,7 +9358,7 @@ M.interact_poll = function()
         local okk, kind = pcall(M.marker_kind_of, tobj)
         if okk and kind == "save point" then
             if audio_inited then pcall(function() shim.AudioPlayCue(M.TALK_CUE) end) end
-            speak("Save point", false)
+            speak(tr("Save point"), false)
             return
         end
     end
@@ -9224,7 +9380,7 @@ M.interact_poll = function()
     if audio_inited then
         pcall(function() shim.AudioPlayCue(has_path and M.PATH_CUE or M.TALK_CUE) end)
     end
-    local what = has_path and "Path action" or "Talk"
+    local what = has_path and tr("Path action") or tr("Talk")
     local s = (nm and nm ~= "") and (what .. ", " .. nm) or what
     -- which ones, and whether they are done or not possible (the balloon's icons):
     -- "Path action, Wachmann: Studieren, done"
@@ -9401,7 +9557,7 @@ M.FC_TYPES = {
 -- a path action's name in the game's language ("Studieren")
 M.fc_type_name = function(t)
     local e = M.FC_TYPES[t]
-    return (e and M.gt_label(e[1])) or FIELD_CMD_NAME[t] or ("action " .. tostring(t))
+    return (e and M.gt_label(e[1])) or FIELD_CMD_NAME[t] or trf("action %s", tostring(t))
 end
 M.fc_get = function(w, field)
     local v
@@ -9470,7 +9626,7 @@ M.fc_judge_states = function(addr, types)
             local comp = M.fc_shown(M.fc_get(j, "Icon_" .. e[2] .. "_Comp"))
             local imp = M.fc_shown(M.fc_get(j, "Icon_" .. e[2] .. "_Imp"))
             raw[#raw + 1] = string.format("%s comp=%s imp=%s", e[2], tostring(comp), tostring(imp))
-            if comp then out[t] = "done" elseif imp then out[t] = "not possible" end
+            if comp then out[t] = tr("done") elseif imp then out[t] = tr("not possible") end
         end
     end
     log("FCJUDGE " .. table.concat(raw, "; "))
@@ -9502,9 +9658,9 @@ M.fc_item_state = function(btn, label)
     local imp = M.fc_shown(M.fc_get(btn, "Icon_Imp"))
     local key = string.format("%s unused=%s comp=%s imp=%s", tostring(label), tostring(unused), tostring(comp), tostring(imp))
     if key ~= M.fc_item_logged then M.fc_item_logged = key; log("FCMENU item " .. key) end
-    if comp then return "done" end
-    if imp then return "not possible" end
-    if unused == true then return "unavailable" end
+    if comp then return tr("done") end
+    if imp then return tr("not possible") end
+    if unused == true then return tr("unavailable") end
     return nil
 end
 -- stars of a RankWidget_C (Stärke): the images in RankList whose brush is RankEnable
@@ -9529,7 +9685,7 @@ M.fc_rank = function(rw)
         log(string.format("FCRANK stars total=%d shown=%d on=%d enable=%X", total, shown, on, en or 0))
     end
     if on == 0 then return nil end
-    return (shown > on) and string.format("%d of %d", on, shown) or tostring(on)
+    return (shown > on) and trf("%d of %d", on, shown) or tostring(on)
 end
 -- A person's panel (NPCStatusPartsWidget_C) on the Challenge / Provoke / Guide / Allure
 -- screens: name, strength (TextRank "Stärke" + stars), what they can do in battle
@@ -9570,7 +9726,7 @@ M.fc_lure_status = function(w)
         local a = M.fc_npc_status(M.fc_get(ch, "LeftWidget"))
         local b = M.fc_npc_status(M.fc_get(ch, "RightWidget"))
         if a or b then
-            return M.join_text({ a and ("Now: " .. a) or "", b and ("New: " .. b) or "" })
+            return M.join_text({ a and trf("Now: %s", a) or "", b and trf("New: %s", b) or "" })
         end
     end
     local out = {}
@@ -9639,9 +9795,9 @@ M.fc_purchase_say = function(row, steal, titles)
             say = say .. ", " .. price .. (un and (" " .. un) or "")   -- "Unverkäufl."
         end
     end
-    if have then say = say .. ", " .. (M.gt_label("eFC_PURCHASE_UI_HAVEITEM") or "on hand") .. " " .. have end
-    if struck then say = say .. (steal and ", stolen" or ", bought") end
-    if st == 1 then say = say .. ", unavailable" end
+    if have then say = say .. ", " .. (M.gt_label("eFC_PURCHASE_UI_HAVEITEM") or tr("on hand")) .. " " .. have end
+    if struck then say = say .. ", " .. (steal and tr("stolen") or tr("bought")) end
+    if st == 1 then say = trf("%s, unavailable", say) end
     return say
 end
 -- A row of H'aanit's monsters (ListItemWidget_Col3_2_C): name, how often it can be
@@ -9653,7 +9809,7 @@ M.fc_monster_say = function(row, titles)
     local stars = M.fc_rank(M.fc_get(row, "RankWidget") or M.fc_get(row, "RefRankWidget"))
     local say = c1
     if c2 then say = say .. ", " .. (titles[2] and (titles[2] .. " ") or "") .. c2 end
-    if stars then say = say .. ", " .. (titles[3] or M.gt_label("eFC_MONSTER_UI_RANK") or "strength") .. " " .. stars end
+    if stars then say = say .. ", " .. (titles[3] or M.gt_label("eFC_MONSTER_UI_RANK") or tr("strength")) .. " " .. stars end
     return say
 end
 -- the chosen monster's panel (MonsterStatusCaptionPartsWidget_C): its skills
@@ -9850,8 +10006,8 @@ end
 -- 10 eGENERAL_SHOP, 11 eINN, 12 eMAIN_BAR, 13 eBAR, 14 eMAIN_MAPCHANGE, 15 eMAPCHANGE,
 -- 16 eSAVE, 17 eADDMEMBER (a traveler who can join). Chests and shops have their own
 -- categories: the marker list leaves 2-4 and 8-13 out.
-M.MARKER_KIND = { [1] = "save point", [5] = "hidden item", [6] = "objective", [7] = "side story",
-                  [14] = "exit toward objective", [16] = "save point", [17] = "traveler to recruit" }
+M.MARKER_KIND = { [1] = N_("save point"), [5] = N_("hidden item"), [6] = N_("objective"), [7] = N_("side story"),
+                  [14] = N_("exit toward objective"), [16] = N_("save point"), [17] = N_("traveler to recruit") }
 M.MARKER_SKIP = { [0] = true, [2] = true, [3] = true, [4] = true, [8] = true, [9] = true, [10] = true,
                   [11] = true, [12] = true, [13] = true }
 
@@ -9979,7 +10135,7 @@ M.marker_watch = function(px, py)
         elseif px then
             for _, ic in ipairs(confirm) do
                 local dx, dy = ic.x - px, ic.y - py
-                local s = string.format("New marker: %s, %s, %d", M.MARKER_KIND[ic.type] or "marker",
+                local s = trf("New marker: %s, %s, %d", tr(M.MARKER_KIND[ic.type] or "marker"),
                     M.nav_dir and M.nav_dir(dx, dy) or "", math.floor(math.sqrt(dx * dx + dy * dy) + 0.5))
                 log("MARKER new " .. ic.key)
                 speak(s, false)
@@ -10119,7 +10275,7 @@ M.minimap_markers = function(pz)
             if ax then x, y, z = ax, ay, az else actor = nil end
         end
         local kind = M.MARKER_KIND[ic.type] or ((ic.type == 14 or ic.type == 15) and "exit toward objective")
-            or ("marker type " .. ic.type)
+        kind = kind and tr(kind) or trf("marker type %d", ic.type)
         local label = kind
         local aaddr = 0
         if actor then pcall(function() aaddr = actor:GetAddress() end) end
@@ -10127,7 +10283,7 @@ M.minimap_markers = function(pz)
         -- the minimap after you pick it up (2026-11-15: still there a minute later)
         if ic.type == 5 and chests[aaddr] and M.chest_state then
             local okc, opened = pcall(M.chest_state, { addr = aaddr })
-            if okc and opened then label = kind .. ", collected" end
+            if okc and opened then label = trf("%s, collected", kind) end
         end
         if npcs[aaddr] then
             -- names only for NPCs: NpcName reads the NPC placement label at a fixed
@@ -10139,11 +10295,11 @@ M.minimap_markers = function(pz)
         end
         if actor and (ic.type == 14 or ic.type == 15) and not npcs[aaddr] then
             local okd, dest, lv = pcall(M.exit_dest, actor)
-            if okd and dest then label = kind .. ", to " .. dest .. (lv and (", " .. lv) or "") end
+            if okd and dest then label = trf("%s, to %s", kind, dest) .. (lv and (", " .. lv) or "") end
         end
         -- a story event's spot: the walker walks INTO it (walkcat "event")
         local walkcat = (ic.type == 14 or ic.type == 15) and "exit" or nil
-        if events[aaddr] then label, walkcat = kind .. " place", "event" end
+        if events[aaddr] then label, walkcat = trf("%s place", kind), "event" end
         out[#out + 1] = { actor = actor, x = x, y = y, z = z, label = label, walkcat = walkcat }
     end
     return out
@@ -10277,7 +10433,7 @@ M.danger_text = function(id)
     if not d then return nil end
     log(string.format("DANGER level %d now: danger %d, icons %s (border %d, progress %s)", id, d.danger,
         tostring(d.display), d.border, tostring(d.progress)))
-    return string.format("danger level %d", d.danger)
+    return trf("danger level %d", d.danger)
 end
 -- FName(s) as (cmp, num). UE splits a trailing "_<digits>" off into the Number (not when
 -- the digits start with 0, unless just "0"); GetComparisonIndex names the rest.
