@@ -124,6 +124,13 @@ against one Eissentinel in the study dungeon. Not yet seen or checked:
   with more party members. Battle-start messages get no name.
 - **Keys 0-9** in OT's own controls were not checked; no side effect showed in about
   10 fights. Q (lower the boost) no longer reads the objective in battle.
+- **H'aanit's beasts and the capture** (new game, 2026-11-15). A called beast's attack
+  is said with the beast's name ("Linde: Anspringen", before it came out as the enemy's),
+  the capture message has no name in front, and the result line says the money in the
+  game's language ("Victory. 20 Blätter"). The capture picks its target without a target
+  cursor; the enemy whose success rate shows ("Erfolgschance 60 %") now counts as the
+  target and its line includes the rate. That last part was not heard yet, nor the
+  rate for stealing in battle.
 
 ## Walker (user report 2026-11-14)
 
@@ -166,6 +173,22 @@ against one Eissentinel in the study dungeon. Not yet seen or checked:
   first when the route from the threshold fails. A door shut from inside (the library
   on 2026-11-13) should show the prompt and open by itself as from outside, but that
   was not seen again.
+- **"Leaving the building first" outside a house — FIXED 2026-11-15, inside not yet
+  seen.** After Therion's intro, outside the pub in lower Felsfall, the walker said
+  "Leaving the building first" and led to the door of another house 1100 away. That
+  house's doorway box sits 10 units OUTSIDE its door, so the street in front counted as
+  its inside. Now the inner side comes from the room's own parts (their mean, when it is
+  150 or more off the doorway), and "you are in this house" from the game's own flag
+  `HouseEnterTriggerBP_C.IsHouseEnter` (+0x4B2). Checked outside: the flag was false for
+  every door, and the walk went straight on. The flag turning true inside a house was
+  not seen yet.
+- **Narrow stairs are not found.** Lower Felsfall's long stairs up to Felsfall are
+  about 118 wide between their invisible walls (wall tick: right 30, left 88). The
+  router needs a corridor 84 wide around a cell centre, cells are 130 apart, so only a
+  34-wide strip of centres fits; neither the grid nor the half-shifted one hit it. The
+  exit was "not reachable" from the pub and from the foot of the stairs, and the walk
+  never started. Walking by hand works (Up). A fix could let a straight step slide its
+  corridor sideways inside the cell.
 - **The side step in front of a person is untested.** When stepping straight toward
   a person behind a counter gets no closer, every other try steps sideways to stand
   square in front (Mercedes is picked at 161 with 26 to the side, not at 166 with 48).
@@ -185,10 +208,15 @@ Fertigkeiten: Verteidigungshaltung. Rufbereit 9"), a successful Guide and Allure
 failed Allure, the question to swap followers ("Now: … New: …") and Inquire's result.
 Open:
 
-- **Not tried:** an actual purchase or theft (the haggling message "Erfolgreich
-  gefeilscht"), Olberic's and H'aanit's duels, H'aanit's monster list (capture and
-  release in battle), parting from a follower, and the follower's own entries in the J
-  menu.
+- **Tried in new games (2026-11-15):** H'aanit (Provoke with its battle, the beasts list
+  in battle "Waldfuchs, 5 left", the capture question and a capture), Tressa (a real
+  purchase: "Flasche mit Wein, 50 Blätter, bought") and Therion (a real theft:
+  "Händler. Feuerseelenstein. Erfolgschance: 100 %. Diebstahl versuchen?", then
+  "Feuerseelenstein, Erfolgsrate 100 %, stolen"). Each new game needs its intro pressed
+  through (5-8 minutes of Enter).
+- **Not tried:** a failed theft, the haggling message "Erfolgreich gefeilscht",
+  Olberic's duel, releasing a beast, parting from a follower, and the follower's own
+  entries in the J menu.
 - **The balloon's cross ("not possible")** showed for the tavern keeper's Scrutinize and
   for a child's Provoke, Guide and Allure. A level lock shows nothing: Olberic's
   Challenge only said "Ihr müsst mindestens Stufe 7 erreicht haben …" when tried.
@@ -233,6 +261,13 @@ Open:
   Same signature as the known exit crash: `RtlLeaveCriticalSection` on a lock the thread
   doesn't own, under `HookUStructLink` and nested Lua calls, no shim frames. Since
   05ce7cc the screen polls call GetActiveStack once per run instead of up to 15 times.
+- **The game hung once after a won battle** (2026-11-15, H'aanit's new game; dump and
+  stacks in `build/user-logs/hang-20261115-1459*`). The game thread waited in
+  `RtlEnterCriticalSection` under UE4SS's `process_lua_function`; the lock's
+  RecursionCount was -2 and its owner a thread that was asleep. That is the same UE4SS
+  lock bookkeeping as the c0000264 crash (one Leave too many), here as a deadlock. No
+  shim frames; nothing in the mod can repair the lock. Seen once; the game had to be
+  killed.
 - **Q says "No objective" until the menu was opened once.** The objective comes from
   the menu's party panel (`PartyCharacterList_C.NowPlayingStoryPanel`), which is filled
   when the menu opens. After a load, Q in the field had nothing to read; after opening
@@ -244,6 +279,11 @@ Open:
 
 ## Menus
 
+- **Key names in tutorials are not heard in the game yet.** Since e41f695 the circled
+  letters the game uses for keys ("Drückt die Ⓞ-Taste", "Ⓙ drücken", "ⒶⒹ") are said as
+  plain letters ("O-Taste", "J", "A D"). Checked with a test of the function only. Other
+  key signs (⑤, ⑥ in the battle's boost help, probably gamepad buttons) are left as they
+  are.
 - **Inventory and abilities: only one traveler and no purchase checked.** Read since
   2026-11-14 (e0d8fd5), tested with Cyrus alone (Slot 1):
   - Inventory: tabs, rows with count and description, greyed items, and whom an item is
@@ -311,6 +351,9 @@ Open:
   "inside a building" a few seconds after the npc list opens. The padding can still
   catch someone beside a house's side wall. Checked in-game: Russell, Mercedes (library)
   and the headmaster (office upstairs) all reached; the Wachmann is walked to directly.
+  Since 2026-11-15 (c62c659) the inner side of a doorway comes from the room's parts
+  when they lie clearly on one side, and whether YOU are in a house comes from the
+  game's own flag (IsHouseEnter), see the walker section.
 - **Exit names are only checked in Atlasdam.** "exit 2 of 5: to Palast von Atlasdamm"
   comes from the exit's own labels; all five Palasttor exits had one. An exit without
   labels falls back to its level's town name (never seen yet), and a field or dungeon
