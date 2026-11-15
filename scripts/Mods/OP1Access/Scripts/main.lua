@@ -3411,6 +3411,29 @@ M.bt_party = function()
     end
     return out
 end
+-- The weakness tiles as said: { {name = "Stab"} or {} for a "?", locked = bool } in the
+-- game's order -> "weak to 1 unknown, Stab, Dunkelheit" (a run of "?" as a count, in
+-- place), nil for none.
+M.weak_tiles_text = function(tiles)
+    if #tiles == 0 then return nil end
+    local out, run = {}, 0
+    local function flush()
+        if run > 0 then out[#out + 1] = run .. " unknown"; run = 0 end
+    end
+    for _, t in ipairs(tiles) do
+        if t.name then
+            flush()
+            out[#out + 1] = t.name .. (t.locked and " locked" or "")
+        elseif t.locked then
+            flush()
+            out[#out + 1] = "1 unknown locked"
+        else
+            run = run + 1
+        end
+    end
+    flush()
+    return "weak to " .. table.concat(out, ", ")
+end
 M.bt_enemy_text = function(en)
     local w = en.w
     local parts = { en.name }
@@ -3418,24 +3441,39 @@ M.bt_enemy_text = function(en)
     pcall(function() sh = M.wtext(w.BreakStatusIcon.Text_BreakGauge) end)
     if sh == "0" then parts[#parts + 1] = "broken"
     elseif sh then parts[#parts + 1] = "shield " .. sh end
-    local known, unknown = {}, 0
+    -- The tiles in the game's own order (Schwert, Lanze, Dolch, Axt, Bogen, Stab, Feuer,
+    -- Eis, Blitz, Wind, Licht, Dunkelheit): a revealed weakness opens in ITS tile, the
+    -- others stay "?", so where an unknown one sits tells what it can still be (user,
+    -- 2026-11-15: "weak to Stab, Dunkelheit, 1 unknown" lost that). Unknown tiles are
+    -- said in place, a run of them as a count: "weak to 2 unknown, Stab, Dunkelheit".
+    local tiles, nknown = {}, 0
     for k = 0, 4 do
         local ic
         pcall(function() ic = w["WeakStatusIcon_0" .. k] end)
-        local setup, opened = false, false
+        local setup, opened, locked = false, false, false
         if ic then pcall(function() setup, opened = ic.IsSetup, ic.IconOpened end) end
+        if ic then pcall(function() locked = ic.WeakLocked == true end) end
         if setup then
+            local t = { locked = locked }
             if opened then
                 local res = M.icon_tex(ic, 0x248)   -- AttributeIcon's texture
                 local key = res and res:match("Icon_(%a+)$")
-                known[#known + 1] = (key and M.WEAK_DE[key]) or key or "?"
-            else
-                unknown = unknown + 1
+                t.name = (key and M.WEAK_DE[key]) or key or "?"
+                nknown = nknown + 1
             end
+            tiles[#tiles + 1] = t
         end
     end
-    if #known > 0 then parts[#parts + 1] = "weak to " .. table.concat(known, ", ") end
-    if unknown > 0 then parts[#parts + 1] = unknown .. " unknown" end
+    local wt = M.weak_tiles_text(tiles)
+    if wt then parts[#parts + 1] = wt end
+    -- the panel has five tiles; an enemy with more weaknesses (a boss?) would show here
+    local nweak
+    pcall(function() nweak = w.EnableWeakIconNum end)
+    if type(nweak) == "number" and nweak > #tiles and not (M.bt.weakmore or {})[en.name] then
+        M.bt.weakmore = M.bt.weakmore or {}
+        M.bt.weakmore[en.name] = true
+        log(string.format("WEAK %s: %d weaknesses, %d tiles", tostring(en.name), nweak, #tiles))
+    end
     local s = table.concat(parts, ", ")
     local st = M.bt_enemy_statuses(w)
     -- "broken" is already said from the shield; its icon only adds the turns
