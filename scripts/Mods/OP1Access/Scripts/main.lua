@@ -2935,6 +2935,55 @@ M.ml_support = function(owner, which)
     if cap and M.placeholder(cap) then cap = nil end
     return (cap and (cap .. ": ") or "") .. M.join_text(out)
 end
+-- A weapon or armor in a shop: the party panels on the right (ShopMenuWidget_C.PartsPartyList
+-- .PartyCharacter_00..03, PartyCharacterPanel_C) switch to VBox_Equip and show what the piece
+-- would change, row N = EquipNameN with EquipParamN_0 (now) and EquipParamN_1 (with it), in
+-- EquipParamN_Top (screenshot 2026-11-15: "Cyrus  Phys. Angr. 78 > 85, Elem. Angr. 122 >
+-- 138, Kritisch 70 > 68"; for a glaive Cyrus can't use only the name showed: "can't equip").
+-- "Cyrus: Phys. Angr. 78 to 85, Elem. Angr. 122 to 138, Kritisch 70 to 68"
+M.shop_party_changes = function(owner)
+    local pl
+    pcall(function() pl = owner.PartsPartyList end)
+    if not pl then return nil end
+    local out, raw = {}, {}
+    for k = 0, 3 do
+        local pc
+        pcall(function() pc = pl[string.format("PartyCharacter_%02d", k)] end)
+        local v = pc and M.wvis(pc)
+        if pc and v ~= 1 and v ~= 2 then
+            local name = M.wtext(pc.Name)
+            if name and not M.placeholder(name) then
+                local eqv
+                pcall(function() eqv = M.wvis(pc.VBox_Equip) end)
+                local rows = {}
+                for n = 0, 3 do
+                    local top, tv
+                    pcall(function() top = pc["EquipParam" .. n .. "_Top"] end)
+                    tv = top and M.wvis(top)
+                    if top and tv ~= 1 and tv ~= 2 then
+                        local nm, a, b
+                        pcall(function()
+                            nm = M.wtext(pc["EquipName" .. n])
+                            a, b = M.wtext(pc["EquipParam" .. n .. "_0"]), M.wtext(pc["EquipParam" .. n .. "_1"])
+                        end)
+                        if nm and a and b and not M.placeholder(a) and not M.placeholder(nm) then
+                            rows[#rows + 1] = (a == b) and (nm .. " " .. a) or string.format("%s %s to %s", nm, a, b)
+                        end
+                    end
+                end
+                raw[#raw + 1] = string.format("%s equip=%s rows=%d", name, tostring(eqv), #rows)
+                -- a piece the traveler can't use shows only the name (a glaive for Cyrus);
+                -- one they can use shows its rows (two shields: 2 and 1 rows)
+                if eqv ~= 1 and eqv ~= 2 then
+                    out[#out + 1] = name .. ": " .. (#rows > 0 and table.concat(rows, ", ") or "can't equip")
+                end
+            end
+        end
+    end
+    local key = table.concat(raw, "; ")
+    if key ~= M.shop_party_logged then M.shop_party_logged = key; log("SHOP party: " .. key) end
+    return #out > 0 and table.concat(out, ". ") or nil
+end
 -- a party member panel (PartyCharacterPanel_C): "Cyrus, level 5, HP 259 of 284, SP 56 of 64"
 M.ml_member = function(pc)
     local name = M.wtext(pc.Name)
@@ -3128,6 +3177,11 @@ M.poll_menu_list = function()
             local hh = M.ml_help()
             -- a locked skill's help is just "???"
             if hh and not hh:match("^[%?%s]+$") then parts[#parts + 1] = hh end
+            -- weapons and armor in a shop: what the piece would change for each traveler
+            if scr == "shop" then
+                local okp, pcs = pcall(M.shop_party_changes, owner)
+                if okp and pcs then parts[#parts + 1] = pcs end
+            end
         end
         st.extra_say = nil
         local h = #parts > 0 and M.join_text(parts) or nil
