@@ -173,22 +173,31 @@ against one Eissentinel in the study dungeon. Not yet seen or checked:
   first when the route from the threshold fails. A door shut from inside (the library
   on 2026-11-13) should show the prompt and open by itself as from outside, but that
   was not seen again.
-- **"Leaving the building first" outside a house — FIXED 2026-11-15, inside not yet
-  seen.** After Therion's intro, outside the pub in lower Felsfall, the walker said
+- **"Leaving the building first" outside a house — FIXED 2026-11-15.** After Therion's
+  intro, outside the pub in lower Felsfall, the walker said
   "Leaving the building first" and led to the door of another house 1100 away. That
   house's doorway box sits 10 units OUTSIDE its door, so the street in front counted as
   its inside. Now the inner side comes from the room's own parts (their mean, when it is
   150 or more off the doorway), and "you are in this house" from the game's own flag
-  `HouseEnterTriggerBP_C.IsHouseEnter` (+0x4B2). Checked outside: the flag was false for
-  every door, and the walk went straight on. The flag turning true inside a house was
-  not seen yet.
-- **Narrow stairs are not found.** Lower Felsfall's long stairs up to Felsfall are
-  about 118 wide between their invisible walls (wall tick: right 30, left 88). The
-  router needs a corridor 84 wide around a cell centre, cells are 130 apart, so only a
-  34-wide strip of centres fits; neither the grid nor the half-shifted one hit it. The
-  exit was "not reachable" from the pub and from the foot of the stairs, and the walk
-  never started. Walking by hand works (Up). A fix could let a straight step slide its
-  corridor sideways inside the cell.
+  `HouseEnterTriggerBP_C.IsHouseEnter` (+0x4B2). Checked: false at every door outside
+  (the walk went straight on), true inside a house in Felsfall ("Leaving the building
+  first. Routing to its door, 406"), false again in the doorway, then on to the exit.
+- **Narrow stairs — FIXED 2026-11-15, one town checked.** Lower Felsfall's long stairs up
+  to Felsfall are about 118 wide between their walls (wall tick: right 30, left 88). The
+  router needs a corridor 84 wide around a cell centre and cells are 130 apart, so only
+  a 34-wide strip of centres fits; neither the grid nor the half-shifted one hit it, and
+  the exit was "not reachable". Now a straight step whose centre line is clear may slide
+  its corridor sideways by 22 or 44 (with a side step first when it enters from open
+  ground); slid steps the player's own collision profile calls blocked are left out.
+  In a mock test passages 118 wide are found at any offset (56-65 by the shifted grid),
+  a 70-wide gap stays shut, an open street is unchanged. In the game: pub -> exit up
+  (planned in 0.8 s, walked 5460 in one go), the stairs down and up again. Routes near
+  walls now cost more traces (3500-7000 instead of 1500-3500 here; still under 1 s).
+  Not checked in other towns or dungeons yet.
+- **A person in a doorway still blocks the walk.** In lower Felsfall the Armer stands in
+  House_A's door, with invisible walls beside it; a target behind him is "not
+  reachable", and "try anyway" ends in bumps and "Walk interrupted". Before the slides
+  the walk went to the door and said "Open it", and E then talked to the Armer.
 - **The side step in front of a person is untested.** When stepping straight toward
   a person behind a counter gets no closer, every other try steps sideways to stand
   square in front (Mercedes is picked at 161 with 26 to the side, not at 166 with 48).
@@ -279,11 +288,17 @@ Open:
 
 ## Menus
 
-- **Key names in tutorials are not heard in the game yet.** Since e41f695 the circled
-  letters the game uses for keys ("Drückt die Ⓞ-Taste", "Ⓙ drücken", "ⒶⒹ") are said as
-  plain letters ("O-Taste", "J", "A D"). Checked with a test of the function only. Other
+- **Key names in tutorials: one heard.** Since e41f695 the circled letters the game uses
+  for keys ("Drückt die Ⓞ-Taste", "Ⓙ drücken", "ⒶⒹ") are said as plain letters. Heard in
+  the radar tutorial: "Drückt die O-Taste, um das Radar ein- und auszuschalten". Other
   key signs (⑤, ⑥ in the battle's boost help, probably gamepad buttons) are left as they
   are.
+- **The radar has no map to read.** Sighted players mentioned a town minimap with the
+  walkable paths. Octopath Traveler II has one; this game's radar is a cloudy circle with
+  icons only (checked on screenshots and in the game files). A minimap with a top-down
+  camera and a "road" material exists in the files (/Game/UI/MiniMap), but no level uses
+  it. Where you can walk is only in each level's collision (a combined collision mesh
+  and BlockingVolume actors), which the walker's traces already see.
 - **Inventory and abilities: only one traveler and no purchase checked.** Read since
   2026-11-14 (e0d8fd5), tested with Cyrus alone (Slot 1):
   - Inventory: tabs, rows with count and description, greyed items, and whom an item is
