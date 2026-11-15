@@ -3630,6 +3630,21 @@ M.poll_battle = function()
         end
         if sh then bt.shields[en.addr] = sh end
     end
+    -- a party member knocked out (or back up): the panel's IsDead. A lethal hit shows no
+    -- damage number -- Olberic at 1 HP fell to "Flach-Froggen I: Angriff" and nothing
+    -- was said; he just never came up again (2026-11-15). Goes with the damage line.
+    bt.down = bt.down or {}
+    for _, pm in ipairs(M.bt_party()) do
+        local dead
+        pcall(function() dead = pm.w.IsDead end)
+        if dead ~= nil then
+            local old = bt.down[pm.name]
+            if old ~= nil and dead ~= old then
+                M.dmg_push(pm.name .. (dead and " down" or " back up"))
+            end
+            bt.down[pm.name] = dead
+        end
+    end
     -- damage numbers gathered by the hooks: one line 0.25 s after the last of a burst
     if bt.dmgbuf and #bt.dmgbuf > 0 and now - (bt.dmg_t or 0) > 0.25 then
         local line = table.concat(bt.dmgbuf, ", ")
