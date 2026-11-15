@@ -2325,7 +2325,7 @@ do
             btn = box and box:GetChildAt(ci)
             if btn then local t = btn.Text; if t then local g = t:GetText(); if g then label = g:ToString() end end end
         end)
-        -- done already / not possible yet / not usable on this person (M.fc_item_state)
+        -- done already / not possible / not usable on this person (M.fc_item_state)
         local okx, extra = pcall(M.fc_item_state, btn, label)
         speak((label or ("Action " .. tostring(ci))) .. ((okx and extra) and (", " .. extra) or ""))
     end
@@ -4416,6 +4416,15 @@ poll_dialog = function()
         or ((default and default >= 0) and default) or 0
     local focused = buttons[ef + 1]
 
+    -- the same dialog window asking something else (Primrose's second question, "Ihr könnt
+    -- nur eine Person verführen ...", came in the window of the first, 2026-11-15): new
+    local dsig = caption .. "|" .. detail .. "|" .. table.concat(buttons, "|")
+    if dlg_visible and M.dlg_sig and dsig ~= M.dlg_sig then
+        log("DLG content changed: a new question in the same window")
+        dlg_visible = false
+    end
+    M.dlg_sig = dsig
+
     if not dlg_visible then
         dlg_visible, dlg_last_focus = true, ef
         -- If the dialog is over the character-select screen, read the focused
@@ -4445,6 +4454,8 @@ poll_dialog = function()
             local okd, d = pcall(M.fc_dialog_desc, inst)
             if okd and d then desc = d end
         end
+        -- (the purchase question names the item in its caption already: said twice)
+        if desc and desc == caption then desc = nil end
         if not desc and not result_dlg and #buttons >= 2 and M.fc_busy and M.fc_target_name then
             local okf, busy = pcall(M.fc_busy)
             if okf and busy then
@@ -8361,6 +8372,13 @@ M.interact_poll = function()
     if now - M.ia_t < 0.25 then return end
     local s = M.ia_said
     if s and s.addr == addr and (s.path or not has_path) then return end
+    -- the balloon over the person (done / not possible) can lag the pick: once it went
+    -- unsaid ("FCJUDGE balloon over 0", 2026-11-15); it shows once you stand still, so
+    -- after a walk 0.8 s was too short. Wait for it up to 1.5 s.
+    if has_path and now - M.ia_t < 1.5 and M.fc_judge_ready then
+        local okr, ready = pcall(M.fc_judge_ready, addr)
+        if okr and ready == false then return end
+    end
     local upgrade = s and s.addr == addr
     M.ia_at = M.ia_at or {}
     local recent = (not upgrade) and M.ia_at[addr] and (now - M.ia_at[addr] < 4.0)
@@ -8399,7 +8417,7 @@ M.interact_poll = function()
     end
     local what = has_path and "Path action" or "Talk"
     local s = (nm and nm ~= "") and (what .. ", " .. nm) or what
-    -- which ones, and whether they are done or not possible yet (the balloon's icons):
+    -- which ones, and whether they are done or not possible (the balloon's icons):
     -- "Path action, Wachmann: Studieren, done"
     if has_path and M.fc_hint_actions then
         local oka, acts = pcall(M.fc_hint_actions, raw, addr)
@@ -8451,6 +8469,8 @@ M.is_placeholder = function(s)
     if core == "" then return true end
     if core:gsub("\239\188[\144-\153]", "") == "" then return true end
     if #core >= 4 and ("1234567890"):rep(4):sub(1, #core) == core then return true end
+    -- the person panel's design texts: "123g" (in the hidden Guide screen, 2026-11-15)
+    if core:match("^123%a?$") then return true end
     return false
 end
 
@@ -8594,9 +8614,10 @@ M.fc_txt = function(w, field)
 end
 -- The balloon over the person you face (FieldCommandJudge_C), what sighted players see:
 -- an icon per path action on offer, and on it the blueprint turns on Icon_<Type>_Comp
--- (GetFCommandComplete: done with this person) or Icon_<Type>_Imp (GetFCommandEnable /
--- GetFCommandNecessaryLevel: not possible yet). One instance, found once (FindAllOf walks
--- every object: at most every 10 s while there is none).
+-- (GetFCommandComplete: done with this person) or Icon_<Type>_Imp (not possible: the
+-- tavern keeper can't be scrutinized; a Challenge locked by Olberic's level showed NO Imp,
+-- 2026-11-15 -- the level is only told when you try). One instance, found once (FindAllOf
+-- walks every object: at most every 10 s while there is none).
 M.fc_judge = function()
     local j = M.fc_judge_w
     local ok = false
@@ -8618,7 +8639,13 @@ M.fc_judge = function()
     end)
     return M.fc_judge_w
 end
--- { [type] = "done" | "not possible yet" } for the person at `addr`, from the balloon
+-- whether the balloon is over the person at `addr` yet (nil: no balloon widget found)
+M.fc_judge_ready = function(addr)
+    local j = M.fc_judge()
+    if not j then return nil end
+    return M.addr_of(M.fc_get(j, "TargetCharacter")) == addr
+end
+-- { [type] = "done" | "not possible" } for the person at `addr`, from the balloon
 M.fc_judge_states = function(addr, types)
     local j = M.fc_judge()
     if not j then return {} end
@@ -8634,7 +8661,7 @@ M.fc_judge_states = function(addr, types)
             local comp = M.fc_shown(M.fc_get(j, "Icon_" .. e[2] .. "_Comp"))
             local imp = M.fc_shown(M.fc_get(j, "Icon_" .. e[2] .. "_Imp"))
             raw[#raw + 1] = string.format("%s comp=%s imp=%s", e[2], tostring(comp), tostring(imp))
-            if comp then out[t] = "done" elseif imp then out[t] = "not possible yet" end
+            if comp then out[t] = "done" elseif imp then out[t] = "not possible" end
         end
     end
     log("FCJUDGE " .. table.concat(raw, "; "))
@@ -8656,7 +8683,7 @@ M.fc_hint_actions = function(types, addr)
     return table.concat(parts, "; ")
 end
 -- An entry of the J menu (FieldCommandMenuItemPanel_C): the blueprint shows Icon_Imp
--- (IsNecessaryLevel) and Icon_Purchase_Comp (IsComplete) on it and greys it out
+-- (not possible) and Icon_Purchase_Comp (IsComplete) on it and greys it out
 -- (UnusedFlag / IsUnused: not for this person). Its State is only the animation state
 -- (EFIELDCOMMAND_MENUITEM_STATE: eNONE, eOPEN, eUPDATE, eDECIDE, eCLOSE, eSELECT).
 M.fc_item_state = function(btn, label)
@@ -8667,7 +8694,7 @@ M.fc_item_state = function(btn, label)
     local key = string.format("%s unused=%s comp=%s imp=%s", tostring(label), tostring(unused), tostring(comp), tostring(imp))
     if key ~= M.fc_item_logged then M.fc_item_logged = key; log("FCMENU item " .. key) end
     if comp then return "done" end
-    if imp then return "not possible yet" end
+    if imp then return "not possible" end
     if unused == true then return "unavailable" end
     return nil
 end
@@ -8692,7 +8719,8 @@ M.fc_rank = function(rw)
         M.fc_rank_logged = key
         log(string.format("FCRANK stars total=%d shown=%d on=%d enable=%X", total, shown, on, en or 0))
     end
-    return on > 0 and on or nil
+    if on == 0 then return nil end
+    return (shown > on) and string.format("%d of %d", on, shown) or tostring(on)
 end
 -- A person's panel (NPCStatusPartsWidget_C) on the Challenge / Provoke / Guide / Allure
 -- screens: name, strength (TextRank "Stärke" + stars), what they can do in battle
@@ -8790,10 +8818,13 @@ M.fc_purchase_say = function(row, steal, titles)
     local price, have = c3, c2
     if not price then price, have = c2, nil end
     local say = c1
-    if price then
-        if un == "%" or (steal and not un) then
-            say = say .. ", " .. (M.gt_label("eFC_STEAL_UI_RATE") or "chance") .. " " .. price .. " %"
-        elseif price:match("^[%d%.,]+$") then
+    -- Therion's list: column 2 is "Erfolgsrate" ("8%" on screen, no unit text: it said
+    -- "8 Blätter", 2026-11-15); Tressa's is "Preis" with the money sign
+    local rate = M.gt_label("eFC_STEAL_UI_RATE")
+    if steal or un == "%" or (rate and titles[2] == rate) then
+        if price then say = say .. ", " .. (rate or "chance") .. " " .. price:gsub("%s*%%$", "") .. " %" end
+    elseif price then
+        if price:match("^[%d%.,]+$") then
             say = say .. ", " .. price .. " " .. (un or M.MONEY_SIGN)
         else
             say = say .. ", " .. price .. (un and (" " .. un) or "")   -- "Unverkäufl."
@@ -8837,7 +8868,7 @@ M.fc_screen_open = function(S)
     local head = M.fc_txt(M.fc_get(w, "PartsMenuHeader"), "CaptionText")
     local st, steal, bm, lure = M.fc_get(w, "State"), M.fc_get(w, "ExecSteal"), M.fc_get(w, "BattleMode"),
         M.fc_get(w, "IsLure")
-    S.steal = steal == true
+    S.steal = steal == true or (head ~= nil and head == M.gt_label("eFC_STEAL_HEADER"))
     local parts = {}
     if S.kind == "purchase" then
         head = head or M.gt_label(S.steal and "eFC_STEAL_HEADER" or "eFC_PURCHASE_HEADER")
@@ -8921,8 +8952,16 @@ M.poll_fc_screens = function()
     if S.kind ~= kind or S.addr ~= oa then
         S = { kind = kind, owner = owner, addr = oa }
         M.FCS = S
-        pcall(M.fc_screen_open, S)
+        -- right after a question closed it is the screen closing (Guide / Allure panels
+        -- were said again after "Ja" / "Nein", 2026-11-15): kept quiet
+        if M.dlg_closed_t and os.clock() - M.dlg_closed_t < 1.0 then
+            S.quiet = true
+            log("FCSCREEN " .. kind .. " shows while closing: quiet")
+        else
+            pcall(M.fc_screen_open, S)
+        end
     end
+    if S.quiet then return end
     if S.dlg then S.dlg, S.row = nil, nil end   -- back from the question: the row again
     pcall(M.fc_screen_tick, S)
 end
@@ -8946,6 +8985,25 @@ M.fc_dialog_desc = function(dlg)
         local ok = false
         pcall(function() ok = S.owner:IsValid() end)
         if ok then o, kind = S.owner, S.kind end
+    end
+    if not kind and not M.evm_active then
+        -- Challenge / Provoke / Guide / Allure ask at once: their person panel sits in the
+        -- question ("Wache, Stärke 4 of 10"), owned by a FieldCommandMonster_C (or _Lure_C)
+        -- that never had the focus. The running action's type picks the screen class.
+        local mgr = get_fcmd_mgr()
+        local et = mgr and M.fc_get(mgr, "ExecFieldCommandType")
+        local cls = (et == 3 or et == 4) and "FieldCommandMonster_C" or ((et == 5 or et == 6) and "FieldCommandLure_C")
+        if cls then
+            for _, inst in ipairs(M.ml_list(cls)) do
+                local st
+                if cls == "FieldCommandMonster_C" then st = M.fc_npc_status(M.fc_get(inst, "NPCStatusPartsWidget"))
+                elseif M.fc_shown(inst) then st = M.fc_lure_status(inst) end
+                if st then
+                    log(string.format("FCSCREEN question over %s (type %s, found by class)", cls, tostring(et)))
+                    return st
+                end
+            end
+        end
     end
     if not kind then return nil end
     local same = (M.addr_of(o) == S.addr)
