@@ -1181,22 +1181,37 @@ end
 -- on menu open; queue=false (the Q keybind) interrupts and reads on demand.
 M.read_objective = function(queue)
     local txt
-    local lst; pcall(function() lst = FindAllOf("PartyCharacterList_C") end)
-    if lst then for _, w in ipairs(lst) do
-        local ok = false; pcall(function() ok = w:IsValid() end)
-        if ok then
-            pcall(function()
-                local p = w.NowPlayingStoryPanel
-                if p then local t = p.characterName
-                    if t then local g = t:GetText(); if g then
-                        local s = g:ToString()
-                        if s and s ~= "" and s ~= "1234" then txt = s end
-                    end end
-                end
-            end)
-            if txt then break end
+    local function from(lst)
+        for _, w in ipairs(lst or {}) do
+            local ok = false; pcall(function() ok = w:IsValid() end)
+            if ok then
+                pcall(function()
+                    local p = w.NowPlayingStoryPanel
+                    if p then local t = p.characterName
+                        if t then local g = t:GetText(); if g then
+                            local s = g:ToString()
+                            if s and s ~= "" and s ~= "1234" then txt = s end
+                        end end
+                    end
+                end)
+                if txt then return w end
+            end
         end
-    end end
+    end
+    -- The FindAllOf search walks every object and stalled the game 75-86 ms each time the
+    -- menu opened (known issue 2026-11-14). The list that had the text is kept, so on menu
+    -- open the search runs once per session; Q searches again while none is known.
+    if M.obj_list then from({ M.obj_list }) end
+    if not txt and (not queue or not M.obj_searched) then
+        M.obj_searched = true
+        local lst
+        pcall(function() lst = FindAllOf("PartyCharacterList_C") end)
+        local w = from(lst)
+        if w then
+            M.obj_list = w
+            log(string.format("OBJECTIVE from party list %X (%d lists)", M.addr_of(w) or 0, #(lst or {})))
+        end
+    end
     if txt then speak("Objective: " .. txt, not queue)
     elseif not queue then speak("No objective") end
 end
