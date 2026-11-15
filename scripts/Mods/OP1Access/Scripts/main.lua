@@ -9214,7 +9214,12 @@ M.poll_area_name = function()
         local ml, rl = "?", "?"
         pcall(function() ml = w.MapNameLabel:ToString() end)
         pcall(function() rl = w.RegionNameLabel:ToString() end)
-        log(string.format("AREA level=%s labels=%s/%s", tostring(id), ml, rl))
+        -- the level the banner names: the manager's CurrentLevelID often still held the
+        -- level just left (3 of 4 area changes on 2026-11-15: the study said no danger
+        -- level, T_Plain_L_A came with 77), so the banner's own label decides
+        local byname = M.level_id_by_name and M.level_id_by_name(ml)
+        log(string.format("AREA level=%s by label=%s labels=%s/%s", tostring(id), tostring(byname), ml, rl))
+        if byname then id = byname end
     end)
     -- what the game itself computed for this area (EncountManagerBP_C: DangerLevel
     -- @0x440, EncounterLevel @0x3DC, CurrentEncounter @0x3A8 = border/icons/danger), to
@@ -10475,6 +10480,30 @@ M.gt_label = function(label)
     return c and M.gametext(c, n) or nil
 end
 -- TownTable: town ID -> TownName label (cmp, num), read once.
+-- Level name (the banner's MapNameLabel: "D_Plain_1_1", or a part of a level,
+-- "T_Plain_L_B_AreaA") -> the level ID (the LevelTable row whose LevelName it is), or nil.
+-- The table is read once.
+M.level_id_by_name = function(name)
+    if type(name) ~= "string" or name == "" or name == "?" then return nil end
+    if not M.level_ids then
+        local idx, n = {}, 0
+        local lt = shim and shim.DtCount and M.dt_addr("LevelTable")
+        if lt then
+            for i = 0, (shim.DtCount(lt) or 0) - 1 do
+                local rc, rn, row = shim.DtRowAt(lt, i)
+                local id = rc and tonumber(M.fname_str(rc, rn))
+                if id and row then
+                    local lc, ln = shim.PeekFName(row + 0x08)
+                    if lc and lc > 0 then idx[M.fname_str(lc, ln)] = id; n = n + 1 end
+                end
+            end
+        end
+        log(string.format("LEVELS by name: %d", n))
+        if n == 0 then return nil end   -- the table isn't loaded yet: try again next time
+        M.level_ids = idx
+    end
+    return M.level_ids[name] or M.level_ids[(name:gsub("_Area%w+$", ""))]
+end
 M.town_names = function()
     if M.town_idx then return M.town_idx end
     local idx, n = {}, 0
