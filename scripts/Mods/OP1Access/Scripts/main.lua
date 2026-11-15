@@ -10194,21 +10194,33 @@ radar_pump = function(src)
         -- A BATTLE is no event to the game, but the field must stand still too: the
         -- navigator, walker and radar kept going in battle (user, 2026-11-14).
         -- KSGameStatics:GetBattleMode needs a world object for its context: the
-        -- player, else the player controller.
-        local battle = false
-        pcall(function()
-            local gs = StaticFindObject("/Script/Octopath_Traveler.Default__KSGameStatics")
-            if not gs then return end
-            local ctx = get_player_obj()
-            if not ctx then
-                local pc = M.pc
-                local okc = false
-                if pc then pcall(function() okc = pc:IsValid() end) end
-                if not okc then pc = FindFirstOf("KSPlayerControllerBP_C"); M.pc = pc end
-                ctx = pc
-            end
-            if ctx then battle = gs:GetBattleMode(ctx) and true or false end
-        end)
+        -- player, else the player controller. Not while the screen fade is up (the
+        -- last pump saw it): a load tears the player down then, and a call that hands
+        -- UE4SS a freed object faults in IsA, past any pcall (crash 2026-11-15 while
+        -- loading a save from the title after a game over). The kept controller is
+        -- used only while the shim's reads show the same object (M.handle_ok).
+        local battle = M.battle_now or false
+        if not M.fade_now then
+            battle = false
+            pcall(function()
+                local gs = StaticFindObject("/Script/Octopath_Traveler.Default__KSGameStatics")
+                if not gs then return end
+                local ctx = get_player_obj()
+                if not ctx then
+                    local pc
+                    if M.handle_ok(M.pc_h) then
+                        pcall(function() if M.pc_h.o:IsValid() then pc = M.pc_h.o end end)
+                    end
+                    if not pc then
+                        M.pc_h = nil
+                        local x = FindFirstOf("KSPlayerControllerBP_C")
+                        if x and x:IsValid() then pc = x; M.pc_h = M.handle(x) end
+                    end
+                    ctx = pc
+                end
+                if ctx then battle = gs:GetBattleMode(ctx) and true or false end
+            end)
+        end
         if battle ~= (M.battle_now or false) then
             M.battle_now = battle
             M.bt = {}   -- the battle reader starts afresh (enemy list, menus, widget lists)
@@ -10217,7 +10229,12 @@ radar_pump = function(src)
         if battle then ev = true end
         if ev then WS.ev_t = now end
         local settling = false
-        if not ev then
+        if not ev and M.fade_now then
+            -- the fade is up (last pump): settling anyway, and the player may be
+            -- mid-teardown -- don't ask the game for it (see the battle check above)
+            WS.present_since = nil
+            settling = true
+        elseif not ev then
             -- position reads PAUSE during events (scenes teleport the player step by
             -- step; freezing WS.px makes the whole displacement register as ONE jump).
             local p = get_player_obj()
