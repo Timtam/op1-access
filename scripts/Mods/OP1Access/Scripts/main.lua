@@ -797,14 +797,15 @@ local function on_widget_created(NewObject)
         -- built at launch stay silent: after a short delay, only if the screen is
         -- actually on-screen (cs_live_instance reads a live cursor) and the loop
         -- hasn't already named it.
-        ExecuteWithDelay(500, function()
+        -- (the widget reads on the game thread, like the screen polls: M.in_gt)
+        ExecuteWithDelay(500, function() M.in_gt(function()
             if last_polled_class == "TitlePlayerSelect_C" then return end
             if not cs_live_instance or not cs_live_instance() then return end
             last_polled_class = "TitlePlayerSelect_C"
             last_spoken_class = "TitlePlayerSelect_C"
             cs_coord_mute = CS_COORD_MUTE
             speak(tr(label))
-        end)
+        end) end)
     end
 
     -- Do NOT announce on construction. At launch the game builds dozens of menu
@@ -5178,7 +5179,7 @@ local function cycle_player_select(direction)
     -- with the name (skip if the user has already paged on) so fast paging never
     -- files a mid-jump position under the wrong traveler.
     local learn_name = name
-    ExecuteWithDelay(300, function()
+    ExecuteWithDelay(300, function() M.in_gt(function()   -- (game thread)
         local live = cs_live_instance()
         if not live then return end
         local panel2 = nil
@@ -5190,7 +5191,7 @@ local function cycle_player_select(direction)
         local kk = cs_known[learn_name]
         if not kk then kk = { sx = 0, sy = 0, n = 0 }; cs_known[learn_name] = kk end
         kk.sx, kk.sy, kk.n = kk.sx + x, kk.sy + y, kk.n + 1
-    end)
+    end) end)
 end
 
 -- Page Up/Down serve TWO features from ONE binding (double-registering a key in
@@ -5311,7 +5312,7 @@ local function on_arrow_log(kname)
     local px, py, pressed = math.floor(x + 0.5), math.floor(y + 0.5), kname
     cs_noop_gen = cs_noop_gen + 1
     local mygen = cs_noop_gen
-    ExecuteWithDelay(250, function()
+    ExecuteWithDelay(250, function() M.in_gt(function()   -- (game thread)
         if mygen ~= cs_noop_gen then return end          -- superseded by a newer press
         if dlg_visible then return end                   -- a dialog opened during the wait
         local i2, x2, y2 = cs_live_instance()
@@ -5323,7 +5324,7 @@ local function on_arrow_log(kname)
         else
             cs_announce(i2, x2, y2)       -- moved: announce where we landed (works w/o the loop)
         end
-    end)
+    end) end)
 end
 do
     for _, kn in ipairs({ "UP_ARROW", "DOWN_ARROW", "LEFT_ARROW", "RIGHT_ARROW" }) do
@@ -11167,14 +11168,14 @@ local function on_cursor_hook(dir)
         if not inst then return end
         cs_cursor_gen = cs_cursor_gen + 1
         local mygen = cs_cursor_gen
-        ExecuteWithDelay(140, function()
+        ExecuteWithDelay(140, function() M.in_gt(function()   -- (game thread)
             if mygen ~= cs_cursor_gen then return end        -- superseded by a newer press
             if dlg_visible then return end                    -- a dialog owns input
             -- Full-map cursor position (on-screen cursor minus map scroll; see
             -- cs_cursor_pos). Announce the hovered traveler / cursor cell.
             local x, y = cs_cursor_pos(inst)
             if x and y then cs_announce(inst, x, y) end
-        end)
+        end) end)
     end
 end
 local function try_hook_cursor()
