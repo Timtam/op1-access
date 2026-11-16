@@ -7733,6 +7733,54 @@ NV.nudge_wp = function(wp)
     end
 end
 
+-- WALLS LEARNED FROM GETTING STUCK (2026-11-16). The router's traces can call a step open,
+-- or only "soft" (cost 8), where the character still can't pass: an invisible wall at a
+-- ledge. North of Atlasdam a chest stood below one, and every route from above took a
+-- short soft step through it; the walk got stuck and planned the same way again, though
+-- a way round from below existed (found once, 21 cells). Now where a walk gets stuck with
+-- the pawn trace hitting straight ahead (NV.learn_wall), a wall 200 long across that
+-- direction is kept for the area: no route crosses it again, and soft steps there cost
+-- 30 after that (the same ledge goes on), except near the target (its own collision).
+NV.walls = { key = nil, list = {} }
+NV.walls_key = function() return (M.level_id and M.level_id()) or M.area_said end
+NV.walls_here = function()
+    local key = NV.walls_key()
+    if key == nil or NV.walls.key ~= key then return {} end
+    return NV.walls.list
+end
+NV.wall_add = function(x1, y1, x2, y2, z)
+    local key = NV.walls_key()
+    if key == nil then return false end
+    if NV.walls.key ~= key then NV.walls = { key = key, list = {} } end
+    local L = NV.walls.list
+    local mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+    for _, w in ipairs(L) do   -- the same spot again: kept once
+        if ((w.x1 + w.x2) / 2 - mx) ^ 2 + ((w.y1 + w.y2) / 2 - my) ^ 2 < 40 * 40 and math.abs(w.z - z) < 200 then
+            return false
+        end
+    end
+    L[#L + 1] = { x1 = x1, y1 = y1, x2 = x2, y2 = y2, z = z }
+    return true
+end
+-- 2D: do the segments a-b and c-d cross?
+NV.seg_cross = function(ax, ay, bx, by, cx, cy, dx, dy)
+    local o1 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+    local o2 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax)
+    local o3 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx)
+    local o4 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx)
+    return ((o1 > 0) ~= (o2 > 0)) and ((o3 > 0) ~= (o4 > 0)) and o1 ~= 0 and o2 ~= 0
+end
+-- does the step a-b cross one of the learned walls (on about its floor)?
+NV.walls_cross = function(walls, ax, ay, bx, by, z)
+    if not walls then return false end
+    for _, w in ipairs(walls) do
+        if math.abs((z or w.z) - w.z) < 200 and NV.seg_cross(ax, ay, bx, by, w.x1, w.y1, w.x2, w.y2) then
+            return true
+        end
+    end
+    return false
+end
+
 -- A routing job (the walk router's NV.route, or a background check's NV.bg.R): the
 -- search box is the start/goal rectangle plus `pad` cells (9); it fails after maxtr
 -- traces or maxt seconds. doors / via: see the door edges in NV.route_slice.
@@ -7748,6 +7796,7 @@ NV.route_job = function(mode, ox, oy, oz, px, py, pz, pad)
         open = { { x = 0, y = 0, z = pz, k = startk, g = 0, f = math.abs(gx) + math.abs(gy) } },
         came = {}, gbest = { [startk] = 0 }, closed = {}, via = {},
         doors = (okd and type(doors) == "table") and doors or {},
+        walls = NV.walls_here(),   -- learned where walks got stuck (NV.learn_wall)
         ecache = {}, gcache = {}, eside = {}, gcache2 = {}, traces = 0, pops = 0, started = os.clock(),
         maxtr = 7000, maxt = 8,   -- (5200 before the diagonals: more traces per cell now)
         minx = math.min(0, gx) - pad, maxx = math.max(0, gx) + pad,
@@ -8191,12 +8240,12 @@ NV.route_slice = function(R, budget, itercap, deadline)
             for _, c in ipairs(cand) do
                 local nk = c[4]
                 local so = c[7]
+                local bx = R.px + c[1] * NV.STEP + (so and so[1] or 0)
+                local by = R.py + c[2] * NV.STEP + (so and so[2] or 0)
+                local pre = so and so.pre
                 -- PEOPLE IN THE WAY: a step through someone's circle is out (NV.person_on)
                 local who = nil
                 if R.people and not R.closed[nk] then
-                    local bx = R.px + c[1] * NV.STEP + (so and so[1] or 0)
-                    local by = R.py + c[2] * NV.STEP + (so and so[2] or 0)
-                    local pre = so and so.pre
                     if pre then
                         who = NV.person_on(R.people, ax0, ay0, best.z, pre.x, pre.y)
                             or NV.person_on(R.people, pre.x, pre.y, best.z, bx, by)
@@ -8205,12 +8254,29 @@ NV.route_slice = function(R, budget, itercap, deadline)
                     end
                     if who then R.ppl_hit = (R.ppl_hit or 0) + 1 end
                 end
-                if not R.closed[nk] and not who then
+                -- a wall a walk got stuck at (NV.walls): no step across it
+                local walled = false
+                if R.walls and #R.walls > 0 and not R.closed[nk] and not who then
+                    if pre then
+                        walled = NV.walls_cross(R.walls, ax0, ay0, pre.x, pre.y, best.z)
+                            or NV.walls_cross(R.walls, pre.x, pre.y, bx, by, best.z)
+                    else
+                        walled = NV.walls_cross(R.walls, ax0, ay0, bx, by, best.z)
+                    end
+                    if walled then R.wall_hit = (R.wall_hit or 0) + 1 end
+                end
+                if not R.closed[nk] and not who and not walled then
                     local isdoor = type(c[5]) == "number"
                     -- a door costs a stop and an E press: open ways up to 25 cells longer
                     -- win (at +6 the router took a door to a target it also reached openly);
-                    -- a step the pawn trace calls blocked ("soft") costs 8
-                    local step = isdoor and 25 or (c[5] == "soft" and 8 or (c[6] and 1.41421 or 1))
+                    -- a step the pawn trace calls blocked ("soft") costs 8 -- 30 once a walk
+                    -- got stuck in this area (NV.walls), except within 250 of the target
+                    local softc = 8
+                    if c[5] == "soft" and R.walls and #R.walls > 0
+                        and (bx - R.ox) ^ 2 + (by - R.oy) ^ 2 > 250 * 250 then
+                        softc = 30
+                    end
+                    local step = isdoor and 25 or (c[5] == "soft" and softc or (c[6] and 1.41421 or 1))
                     -- a slid step: only where the grid has no way (narrow passages)
                     local slid = so and (so[1] ~= 0 or so[2] ~= 0)
                     if slid then step = step + 1 end
@@ -8282,8 +8348,9 @@ local function nav_route_begin(mode, ox, oy, oz)
     -- direct-line shortcut (same level only): if a BODY-WIDTH corridor (3 lines,
     -- center +-42) to the target is clear, skip the search entirely
     local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+    local walls = NV.walls_here()
     if ksl and samelevel and NV.corridor_clear(ksl, p, px, py, pz, ox, oy)
-        and not NV.person_on(people, px, py, pz, ox, oy) then
+        and not NV.person_on(people, px, py, pz, ox, oy) and not NV.walls_cross(walls, px, py, ox, oy, pz) then
         if mode == "walk" then
             nav_walk_begin_path({ { x = px, y = py }, { x = ox, y = oy } }, tr("direct"))
         else
@@ -8295,6 +8362,7 @@ local function nav_route_begin(mode, ox, oy, oz)
     NV.route = NV.route_job(mode, ox, oy, oz, px, py, pz)
     NV.route.people = people
     if people then log(string.format("ROUTE keeps away from %d people", #people)) end
+    if #walls > 0 then log(string.format("ROUTE keeps off %d learned walls", #walls)) end
 end
 NV.route_begin = nav_route_begin   -- for nav_route_finish (defined above it)
 
@@ -8381,7 +8449,8 @@ NV.bg_new = function(t, p, px, py, pz)
     if not ksl then return nil end
     local gx = math.floor((tx - px) / NV.STEP + 0.5)
     local gy = math.floor((ty - py) / NV.STEP + 0.5)
-    if math.abs(tz - pz) <= 200 and ((gx == 0 and gy == 0) or NV.corridor_clear(ksl, p, px, py, pz, tx, ty)) then
+    if math.abs(tz - pz) <= 200 and ((gx == 0 and gy == 0)
+        or (NV.corridor_clear(ksl, p, px, py, pz, tx, ty) and not NV.walls_cross(NV.walls_here(), px, py, tx, ty, pz))) then
         NV.bg_record(job, true, "straight")
         return nil
     end
@@ -8518,6 +8587,44 @@ M.unstick_step = function()
     u.n = u.n + 1
     M.arrows_up(u.keys, string.format("field back, try %d, input %.2f", u.n, inp))
     if u.n >= 2 then NV.unstick = nil else u.live = now + 0.7 end
+end
+
+-- Stuck on the way (nav_walk_watch): is there a wall straight ahead that the route didn't
+-- see? The pawn trace (the player's own collision) toward the waypoint hits within 90:
+-- then a wall 200 long across that direction, just behind the surface, goes to NV.walls
+-- and the re-route keeps off it. Not near the target (its own collision stops you there)
+-- and not at a person (people move).
+NV.learn_wall = function(p, px, py, pz)
+    local wp = NV.path and NV.path[NV.wp]
+    if not wp then return false end
+    local g = NV.goal
+    if g and (px - g.x) ^ 2 + (py - g.y) ^ 2 < 250 * 250 then return false end
+    local vx, vy = wp.x - px, wp.y - py
+    local vl = math.sqrt(vx * vx + vy * vy)
+    if vl < 1 then return false end
+    vx, vy = vx / vl, vy / vl
+    local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+    if not ksl then return false end
+    local ok, hit, info = line_blocked(ksl, p, px, py, pz + 30, px + vx * 90, py + vy * 90, pz + 30, NV_TRACE)
+    if not (ok and hit) then return false end
+    local d = 40
+    pcall(function() if type(info.Distance) == "number" then d = info.Distance end end)
+    local cx, cy = px + vx * d, py + vy * d
+    local okp, people = pcall(NV.people_scan, px, py, pz)
+    if okp and people then
+        for _, q in ipairs(people) do
+            if math.abs(q.z - pz) < 250 and (q.x - cx) ^ 2 + (q.y - cy) ^ 2 < 120 * 120 then
+                log(string.format("NAVWALK stuck at a person near (%.0f,%.0f): no wall learned", cx, cy))
+                return false
+            end
+        end
+    end
+    local wx, wy = cx + vx * 15, cy + vy * 15
+    local ux, uy = -vy, vx
+    if not NV.wall_add(wx - ux * 100, wy - uy * 100, wx + ux * 100, wy + uy * 100, pz) then return false end
+    log(string.format("NAVWALK learned a wall at (%.0f,%.0f) across (%.2f,%.2f), pawn hit at %.0f; %d in this area",
+        wx, wy, vx, vy, d, #NV.walls.list))
+    return true
 end
 
 local function nav_walk_stop(msg)
@@ -8663,7 +8770,8 @@ NV.escape_step = function(px, py, pz, gx, gy)
     for i = 0, 7 do
         local ang = i * math.pi / 4
         local dx, dy = math.cos(ang), math.sin(ang)
-        if NV.corridor_clear(ksl, p, px, py, pz, px + dx * 160, py + dy * 160) then
+        if NV.corridor_clear(ksl, p, px, py, pz, px + dx * 160, py + dy * 160)
+            and not NV.walls_cross(NV.walls_here(), px, py, px + dx * 160, py + dy * 160, pz) then
             local score = dx * gdx + dy * gdy
             local le = NV.last_escape
             if le and dx * le[1] + dy * le[2] < -0.9 then score = score - 1 end
@@ -9200,6 +9308,9 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
             nav_walk_stop(tr("Walk interrupted"))
             return
         end
+        -- an invisible wall the route took for open (or "soft"): learn it, so the
+        -- re-route below goes round it (NV.walls)
+        pcall(NV.learn_wall, p, px, py, pz)
         if not NV.unwedged and NV.path then
             -- one automatic SIDESTEP perpendicular to travel (the manual recovery
             -- that worked on the stairs), then re-route from the freed spot

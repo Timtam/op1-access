@@ -205,6 +205,18 @@ against one Eissentinel in the study dungeon. Weaknesses in the game's tile orde
   a walk into a battle with the new code — the log line should show input 1.00 at the
   first key-up and the character should stand still after the battle. Pressing the stuck
   arrow once also frees it.
+- **A chest below an invisible ledge — fixed 2026-11-16, not yet seen in the game.** In the
+  North Atlasdam Flats a chest stands a step below a grassy ledge, next to a big rock. From
+  above every route took a short "soft" step through the ledge's invisible wall (channel 0
+  doesn't see it, the pawn trace does, and such a step cost only 8); the walk got stuck
+  about 300 short and planned the same way again, although a way round from below exists
+  (found once, 21 cells, before a battle cut it short). Now a walk that gets stuck with the
+  pawn trace hitting straight ahead learns a wall 200 long across its way for the area
+  (`NAVWALK learned a wall` in the log). No route, straight walk, background check or
+  escape step crosses it again, and soft steps cost 30 there after that (not within 250 of
+  the target, where its own collision makes them soft). In the mock router a long invisible
+  ledge is crossed by a soft step at first and gone round after one learned spot. Not seen
+  yet: the walk to that chest should get stuck once, learn the wall and go round.
 - **The first step of a route on the shifted grid can bump.** Since 2026-11-14
   (bc28ced) a failed search runs again on a grid shifted by half a cell, and the walk
   then goes from where you stand to that grid's start first. Twice that first waypoint
