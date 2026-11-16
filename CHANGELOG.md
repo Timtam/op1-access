@@ -55,7 +55,7 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
 - A 3D radar (Steam Audio) for chests, exits, people, buildings and shops, a wall radar and
   bump sounds.
 - A navigator: categories with Home and End, targets with Page Up and Page Down, Ctrl+Backspace
-  for directions. It says which chests are opened, which targets can't be reached, where exits
+  for directions. It says which chests are opened or purple, which targets can't be reached, where exits
   lead and how dangerous the area behind them is, and what kind of shop a shop is. A
   tavern leads to its barkeep, not to the door.
 - The minimap's markers: what each one is (side story with the person's name, hidden item,

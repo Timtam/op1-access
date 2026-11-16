@@ -423,13 +423,12 @@ Open:
 - **Side stories are named, not explained.** Since ea8078c the marker list says "Kit,
   side story" (icon type 7, seen on the flats); "traveler to recruit" (17) wasn't seen yet.
   What a side story is about is only in its dialogue.
-- **Chests: opened or not is said, the purple ones are not told apart.** Since
-  2026-11-14 (252661f) the list says "opened" and the category counts them, from the
-  chest's own IsOpenFlag; checked in the study, with Slot 1 (all open), the older
-  autosave (none) and one chest opened in between. Opened chests still sort by
-  distance and still ring in the radar. Purple (thief) chests, which need a certain
-  traveler, aren't named: the chest's ObjectType was 1 or 2 in the study, meaning
-  unknown (logged as "CHESTS opened/type").
+- **Purple chests: named, but none heard yet.** Since 73ca347 a chest whose mesh wears
+  the thief material says "purple" ("violett"); ObjectType 1 is the wood chest, 2 the
+  plain one, 3 was seen only where purple chests are (Felsfall, the path to the
+  Whisperwood). No purple chest was reachable from the test saves, so only the negative
+  case is checked (the flats' two chests). "opened" (252661f) is checked in the study;
+  opened chests still sort by distance and still ring in the radar.
 - **"Not reachable" can still be wrong for very long detours.** The router searches
   the start/goal rectangle plus 9 cells. When that runs out of cells (or, since
   bc28ced, of traces) it searches once more with 20 cells (~2600 units) and 6000 more
