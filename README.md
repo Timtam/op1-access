@@ -196,7 +196,9 @@ out.
   the game over screen.
 - The main menu: its categories (the ones you can't open yet say so), the inventory with
   counts, descriptions and whom an item is for, the skills (learning them with their LBP
-  costs, support skills), the equipment with what a piece would change, the tutorials and
+  costs; equipping support skills: each traveler's four slots, the learned ones with
+  their descriptions, and the key to take one off), the equipment with what a piece would
+  change, the tutorials and
   the Miscellaneous submenu. Coming back from a list, the options or a dialog, the menu
   says where you are again.
 - The objective is read when the menu opens, and with Q at any time.

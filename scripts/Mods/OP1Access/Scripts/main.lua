@@ -3234,9 +3234,81 @@ M.menu_dump = function()
             tostring(sub), tostring(cmd), tostring(cost)))
     end)
     each("SupportAbilityWidget_C", function(w, i)
-        local lf
-        pcall(function() lf = w.ListFocus end)
-        log(string.format("MDUMP support#%d vis=%s focus=%s", i, tostring(M.wvis(w)), tostring(lf)))
+        local lf, hv
+        pcall(function() lf, hv = w.ListFocus, w.HelpVisible end)
+        local slots = {}
+        for k = 0, 3 do
+            pcall(function()
+                local s = w["SupportAbilityWidget0" .. k]
+                local cv
+                pcall(function() cv = M.wvis(s.CursorIcon) end)
+                slots[#slots + 1] = string.format("%d:%s c%s v%s", k, tostring(M.wtext(s.Column1_Text)), tostring(cv),
+                    tostring(M.wvis(s)))
+            end)
+        end
+        local labels = {}
+        pcall(function()
+            w.EquipSkillDetailLabel:ForEach(function(k, e)
+                local c, txt
+                pcall(function() c = e:get():GetComparisonIndex() end)
+                txt = c and M.gametext(c, 0)
+                labels[#labels + 1] = tostring(k) .. "=" .. tostring(c) .. ":" .. tostring(txt)
+            end)
+        end)
+        local col
+        pcall(function() col = M.wtext(w.ListColumn.Column1_Title) end)
+        log(string.format("MDUMP support#%d vis=%s focus=%s help=%s col=%s | slots: %s | labels: %s", i,
+            tostring(M.wvis(w)), tostring(lf), tostring(hv), tostring(col), table.concat(slots, " ; "),
+            table.concat(labels, " ; ")))
+    end)
+    each("SupportAbilityChangeWidget_C", function(w, i)
+        local f = {}
+        for _, k in ipairs({ "State", "SelectCategoryIndex", "Current", "IsCursorUpdate", "ConfirmNextState",
+            "LastSelectJobScene", "SubJobConfirmReturn", "ChangeLanguage" }) do
+            local v
+            pcall(function() v = w[k] end)
+            f[#f + 1] = k .. "=" .. tostring(v)
+        end
+        local cats = {}
+        pcall(function()
+            w.CategoryWidgetList:ForEach(function(k, e)
+                local c = e:get()
+                local t, cv, ln, nn, id, face
+                pcall(function() t = c.CategoryText:ToString() end)
+                pcall(function() cv = M.wvis(c.CurcorIcon) end)
+                pcall(function() ln = c.ListNameText:ToString() end)
+                pcall(function() nn = c.ListNumText:ToString() end)
+                pcall(function() id, face = c.CategoryId, c.IsMemberFace end)
+                cats[#cats + 1] = string.format("%s:[%s|%s|%s|id%s face=%s] c%s v%s", tostring(k), tostring(t), tostring(ln),
+                    tostring(nn), tostring(id), tostring(face), tostring(cv), tostring(M.wvis(c)))
+            end)
+        end)
+        local n = { cur = 0, acq = 0, items = 0 }
+        pcall(function() w.CurrentSupportAbilityList:ForEach(function() n.cur = n.cur + 1 end) end)
+        pcall(function() w.AcquisitionSupportAbility:ForEach(function() n.acq = n.acq + 1 end) end)
+        pcall(function() w.SupportListItem:ForEach(function() n.items = n.items + 1 end) end)
+        local sl, sw = nil, nil
+        pcall(function() sl = M.addr_of(w.SupportAbilitySelectList) end)
+        pcall(function() sw = M.addr_of(w.SupportAbilityWidget) end)
+        log(string.format("MDUMP supportchange#%d vis=%s %s title=%s cur=%d acq=%d items=%d list=%X slots=%X | cats: %s", i,
+            tostring(M.wvis(w)), table.concat(f, " "), tostring(M.wtext(w.TitleText)), n.cur, n.acq, n.items, sl or 0,
+            sw or 0, table.concat(cats, ", ")))
+        local ps = {}
+        pcall(function()
+            local pl = w.ListItemParamWidget
+            for k = 1, 10 do
+                local p
+                pcall(function() p = pl[(k == 10) and "param_10" or string.format("Param_%02d", k)] end)
+                if p then
+                    local vb, va
+                    pcall(function() vb, va = p.ValueBefore, p.ValueAfter end)
+                    ps[#ps + 1] = string.format("%s:%s>%s(%s>%s) v%s", tostring(M.wtext(p.ParamName)),
+                        tostring(M.wtext(p.ParamBefore)), tostring(M.wtext(p.ParamAfter)), tostring(vb), tostring(va),
+                        tostring(M.wvis(p)))
+                end
+            end
+        end)
+        log("MDUMP supportchange params: " .. table.concat(ps, " ; "))
     end)
     each("MainMenuItemListWidget_C", function(w, i)
         local un, tn
@@ -3304,7 +3376,7 @@ M.menu_dump = function()
                     local full = ""
                     pcall(function() full = t:GetFullName() end)
                     if (full:find("MainMenu") and not full:find("MainMenuList")) or full:find("HelpWindow")
-                        or full:find("Equipment") then
+                        or full:find("Equipment") or full:find("SupportAbility") or full:find("MenuFooter") then
                         local short = (full:gsub("^.-PersistentLevel%.", ""):gsub("WidgetTree%.", ""))
                         log(string.format("MDUMP text %s = %s", short, s))
                     end
@@ -3378,12 +3450,20 @@ M.ml_screen = function(addr, w)
         if cls == "MainMenuAbilityWidget_C" then
             if is("MainJobAbilityAcquisitionListWidget") then return "abilities", owner, "main" end
             if is("SubJobAbilityAcquisitionListWidget") then return "abilities", owner, "sub" end
+            -- the support screen's learned list lives here too (ChangeSupportSkillListWidget
+            -- = SupportAbilityChangeWidget.SupportAbilitySelectList); its owner is that screen
+            if is("ChangeSupportSkillListWidget") then
+                local sw
+                pcall(function() sw = owner.SupportAbilityChangeWidget end)
+                if sw then return "support", sw end
+            end
         end
         if cls == "EquipmentMenuWidget_C" then
             if is("ListEqp_Center") then return "equip", owner, "center" end
             if is("ListEqp_Right") then return "equip", owner, "right" end
         end
         if cls == "ShopMenuWidget_C" and is("ProductList") then return "shop", owner end
+        if cls == "SupportAbilityChangeWidget_C" and is("SupportAbilitySelectList") then return "support", owner end
         return nil   -- another screen's list (read plainly)
     end
     for _, o in ipairs(M.ml_list("MainMenuItemListWidget_C")) do
@@ -3409,10 +3489,11 @@ M.ml_screen = function(addr, w)
 end
 -- The equipment screen's stat table (EqpParamList.Param_01..09 + param_10, each a
 -- ParamBeforeAfterWBP_C with ParamName and the ints ValueBefore/ValueAfter): what the
--- focused item would change -- "Phys. Vert. 82 to 103, Tempo 77 to 99" -- or nil.
-M.eq_changes = function(owner)
+-- focused item would change -- "Phys. Vert. 82 to 103, Tempo 77 to 99" -- or nil. The
+-- support-ability screen has the same table as ListItemParamWidget (prop).
+M.eq_changes = function(owner, prop)
     local pl
-    pcall(function() pl = owner.EqpParamList end)
+    pcall(function() pl = owner[prop or "EqpParamList"] end)
     if not pl then return nil end
     local out = {}
     for n = 1, 10 do
@@ -3527,6 +3608,142 @@ M.shop_party_changes = function(owner)
     if key ~= M.shop_party_logged then M.shop_party_logged = key; log("SHOP party: " .. key) end
     return #out > 0 and table.concat(out, ". ") or nil
 end
+-- SUPPORT ABILITIES ("Hilfsfertigkeiten ausrüsten", SupportAbilityChangeWidget_C; seen
+-- in game 2026-11-16 -- the user: "not read yet"). Its State: 2 = choosing the traveler
+-- (face tabs, SelectCategoryIndex; the name in TitleText), 9 = choosing one of the four
+-- slots, 10 = the learned list (SupportAbilitySelectList, a ListWidget_C) has the cursor.
+-- The slots: SupportAbilityWidget (SupportAbilityWidget_C) .SupportAbilityWidget00..03
+-- (Column1_Text "Keine" / the skill), ListFocus = the slot, and EquipSkillDetailLabel
+-- (TArray<FName> at +0x248, read raw: the labels carry a number, BT_ABI_DETAIL_249) =
+-- each slot's description, EQUIPMENT_EMPTY_HELP for an empty one. In state 9 the learned
+-- list is already active and visible, without a cursor: the plain list reader said its
+-- first row then. After a choice the game moves on to the next free slot, the list stays.
+M.support_slots = function(sw)
+    local sa
+    pcall(function() sa = sw.SupportAbilityWidget end)
+    if not sa then return nil end
+    local slots, focus = {}, 0
+    pcall(function() focus = sa.ListFocus end)
+    for k = 0, 3 do
+        local s
+        pcall(function() s = sa["SupportAbilityWidget0" .. k] end)
+        local t = s and M.wtext(s.Column1_Text)
+        if not t or M.placeholder(t) then return nil end
+        slots[#slots + 1] = { name = t }
+    end
+    -- the descriptions, and which slots are empty
+    local a = M.addr_of(sa)
+    local data = a and shim and shim.Peek(a + 0x248, "ptr")
+    local n = a and shim and shim.Peek(a + 0x250, "i32")
+    local ec = M.fname_of("EQUIPMENT_EMPTY_HELP")
+    if data and data ~= 0 and n == #slots and shim.PeekFName then
+        for i = 1, n do
+            local c, num = shim.PeekFName(data + (i - 1) * 8)
+            if c and c > 0 then
+                slots[i].empty = (c == ec and num == 0)
+                slots[i].help = M.gametext(c, num)
+            end
+        end
+    end
+    return slots, focus, sa
+end
+-- the four slots in one line: "Ausgerüstete Hilfsfertigkeiten: Ausweichmanöver, 3 free
+-- slots" ("...: Keine" when none is used)
+M.support_slots_text = function(slots, sa)
+    local used, free, known = {}, 0, true
+    for _, s in ipairs(slots) do
+        if s.empty == nil then known = false
+        elseif s.empty then free = free + 1
+        else used[#used + 1] = s.name end
+    end
+    local list
+    if not known then
+        local same = true
+        for i = 2, #slots do if slots[i].name ~= slots[1].name then same = false end end
+        local names = {}
+        for _, s in ipairs(slots) do names[#names + 1] = s.name end
+        list = same and slots[1].name or table.concat(names, ", ")
+    elseif #used == 0 then
+        list = slots[1].name   -- the game's own word for an empty slot ("Keine")
+    else
+        list = table.concat(used, ", ")
+        if free > 0 then list = list .. ", " .. trn("%d free slot", "%d free slots", free) end
+    end
+    local cap
+    pcall(function() cap = M.wtext(sa.ListColumn.Column1_Title) end)
+    if cap and not M.placeholder(cap) then return cap .. ": " .. list end
+    return list
+end
+-- A key the footer offers, by its GameText label: "Ⓛ: Entfernen" (speak() says the key
+-- cap as "L"), or nil. The footer copies with placeholder texts are skipped by the text.
+M.footer_hint = function(label)
+    local want = M.gt_label(label)
+    if not want then return nil end
+    for _, f in ipairs(M.ml_list("MenuFooter_C")) do
+        local v = M.wvis(f)
+        if v == 0 or v == 3 or v == 4 then
+            for k = 0, 7 do
+                local it
+                pcall(function() it = f["MenuGuideItem0" .. k] end)
+                if not it then break end
+                local t = M.wtext(it.GuideText_00)
+                local iv = M.wvis(it)
+                if t == want and (iv == 0 or iv == 3 or iv == 4) then
+                    local g = M.wtext(it.ButtonGuideText_00)
+                    if g and not M.placeholder(g) then return g .. ": " .. t end
+                end
+            end
+        end
+    end
+    return nil
+end
+-- State 2 / 9: sig, line, help line (nil, nil: nothing to say)
+M.support_line = function(sw, state, st)
+    if state == 2 then
+        local name = M.wtext(sw.TitleText)
+        if not name or M.placeholder(name) then return nil end
+        local idx, ntab = 0, 0
+        pcall(function() idx = sw.SelectCategoryIndex end)
+        pcall(function() sw.CategoryWidgetList:ForEach(function() ntab = ntab + 1 end) end)
+        local say = name .. (ntab > 1 and trf(", tab %d of %d", idx + 1, ntab) or "")
+        local slots, _, sa = M.support_slots(sw)
+        st.sup_slot = nil
+        return "UC" .. tostring(idx) .. ":" .. name, say, slots and M.support_slots_text(slots, sa) or nil
+    elseif state == 9 then
+        local slots, focus = M.support_slots(sw)
+        local s = slots and slots[focus + 1]
+        if not s then return nil end
+        st.sup_slot = focus
+        -- a used slot: its description, and the footer's key to take it off ("L:
+        -- Entfernen", read when the help line is due: the footer follows the cursor). An
+        -- empty slot's "you have nothing equipped here" only repeats the "Keine".
+        local extra
+        if not s.empty then
+            extra = function()
+                local parts = { s.help }
+                parts[#parts + 1] = M.footer_hint("eMAINMENU_INPUT_GUIDE_REMOVE")
+                return #parts > 0 and M.join_text(parts) or nil
+            end
+        elseif M.support_learned(sw) == 0 then
+            -- nothing to choose (Ophilia, 2026-11-16: the list stays empty, Enter does nothing)
+            extra = tr("No support skills learned yet")
+        end
+        return "US" .. tostring(focus) .. ":" .. s.name, trf("Slot %d of %d: %s", focus + 1, #slots, s.name), extra
+    end
+    return nil
+end
+-- how many skills the learned list shows (in State 9 it shows already), nil: unreadable
+M.support_learned = function(sw)
+    local n, ok = 0, false
+    pcall(function()
+        sw.SupportAbilitySelectList.ItemWidgetList_ActiveItems:ForEach(function(_, e)
+            local t = M.wtext(e:get().RefText_Col1)
+            if t and not M.placeholder(t) then n = n + 1 end
+        end)
+        ok = true
+    end)
+    return ok and n or nil
+end
 -- a party member panel (PartyCharacterPanel_C): "Cyrus, level 5, HP 259 of 284, SP 56 of 64"
 M.ml_member = function(pc)
     local name = M.wtext(pc.Name)
@@ -3573,9 +3790,21 @@ M.poll_menu_list = function()
         end
     end
     local w
+    -- the support-ability screen reads its travelers and slots itself (its learned list is
+    -- active meanwhile, without the cursor); in State 10 that list has the cursor
+    if top == "SupportAbilityChangeWidget_C" and aw then
+        local state
+        pcall(function() state = aw.State end)
+        if state ~= 10 then
+            local sig, say, extra = M.support_line(aw, state, st)
+            if sig then M.ml_speak(st, now, sig, say, extra, "support", nil, aw, true) end
+            return
+        end
+        pcall(function() w = aw.SupportAbilitySelectList end)
+    end
     -- the focused list itself, as GetActiveStack returns it: the equipment screen has two
     -- lists active at once (slots, items) and the scan below took the wrong one
-    if top == "ListWidget_C" and aw then w = aw end
+    if not w and top == "ListWidget_C" and aw then w = aw end
     if not w then
         for _, l in ipairs(M.ml_list("ListWidget_C")) do
             local act = false
@@ -3692,13 +3921,31 @@ M.poll_menu_list = function()
             say = (which == "right") and trf("%s, equipped", say) or trf("%s, can't equip", say)
         end
         sig = string.format("R%X:%s:%s", addr or 0, tostring(idx), say)
+        -- support abilities: a greyed row is one already equipped; the slot the list fills
+        -- is said when it changes (after a choice the game moves on to the next free one)
+        if scr == "support" then
+            if stv == 1 then say = trf("%s, equipped", say) end
+            local slot
+            pcall(function() slot = owner.SupportAbilityWidget.ListFocus end)
+            sig = string.format("R%X:%s:%s:%s", addr or 0, tostring(idx), say, tostring(slot))
+            if slot and st.sup_slot ~= nil and slot ~= st.sup_slot then
+                say = trf("Slot %d of %d", slot + 1, 4) .. ". " .. say
+            end
+            if slot then st.sup_slot = slot end
+        end
     end
+    M.ml_speak(st, now, sig, say, extra, scr, which, owner, scr == "support")
+end
+-- Say a list line (sig names what it is: the same again stays quiet), and 0.3 s later its
+-- help line: extra (a tab's support rows, a support slot's description) or the help box,
+-- with what the row would change. nowait: no screen name is coming (see below).
+M.ml_speak = function(st, now, sig, say, extra, scr, which, owner, nowait)
     if sig ~= st.said then
         -- a screen just opened (nothing said yet): its name ("Items") comes from the
         -- screen announcer ~1 s later and cut this off -- so wait for it (at most 1.2 s),
         -- then queue
         local first = st.said == nil
-        if first then
+        if first and not nowait then
             if not st.first_at then st.first_at = now; return end
             local named = (M.scr_said_t or -1) >= st.first_at
             if not named and now < st.first_at + 1.2 then return end
@@ -3708,14 +3955,24 @@ M.poll_menu_list = function()
         speak(say, not first)
         st.help_at = now + 0.3
         st.extra_say = extra
+        -- the support screen's travelers and slots: their help line is said each time,
+        -- even when it is the one said before (Ophilia's "...: Keine" after Cyrus's was
+        -- left out; back on a used slot, its description again)
+        if sig:match("^U") then st.help_said = nil end
     end
     if st.help_at and now >= st.help_at then
         st.help_at = nil
         -- tabs: the support rows (abilities) instead of the help box, which still
-        -- shows the last row's text there
+        -- shows the last row's text there; the support screen's travelers and slots
+        -- ("U"): only their own line
         local parts = {}
-        if st.extra_say then parts[#parts + 1] = st.extra_say end
-        if not st.extra_say and not sig:match("^C") then
+        local ex = st.extra_say
+        if type(ex) == "function" then   -- (read now, not when the line was said)
+            local ok, v = pcall(ex)
+            ex = ok and v or nil
+        end
+        if ex then parts[#parts + 1] = ex end
+        if not st.extra_say and not sig:match("^[CU]") then
             -- equipment items: what the piece would change first, read now (the table
             -- follows the cursor a frame late)
             if scr == "equip" and which == "right" then
@@ -3725,6 +3982,11 @@ M.poll_menu_list = function()
             local hh = M.ml_help()
             -- a locked skill's help is just "???"
             if hh and not hh:match("^[%?%s]+$") then parts[#parts + 1] = hh end
+            -- a support ability: what it changes (max. HP ...), after its description
+            if scr == "support" then
+                local okc, c = pcall(M.eq_changes, owner, "ListItemParamWidget")
+                if okc and c then parts[#parts + 1] = c end
+            end
             -- weapons and armor in a shop: what the piece would change for each traveler
             if scr == "shop" then
                 local okp, pcs = pcall(M.shop_party_changes, owner)

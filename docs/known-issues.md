@@ -425,8 +425,16 @@ Open:
 
   Not seen yet:
   - An item for several travelers or for all of them.
-  - "Hilfsfertigkeiten ausrüsten" (still locked).
   - A secondary job's list (the "sub" path).
+- **Support skills: one learned skill, two travelers.** "Hilfsfertigkeiten ausrüsten" is
+  read since 2026-11-16 (the user: "the menu is open now and not read"), tried in game
+  with Cyrus (Ausweichmanöver) and Ophilia (none learned): the traveler with the four
+  slots ("Ausgerüstete Hilfsfertigkeiten: Ausweichmanöver, 3 Plätze frei"), each slot
+  with its description and "L: Entfernen", the learned list with descriptions,
+  equipping ("Platz 2 von 4. Ausweichmanöver, ausgerüstet" -- the game moves on to the
+  next free slot) and taking one off. Not seen yet: a skill that changes a stat (the
+  table's "Max. GP 384 to 422" is read after the description), several jobs' skills in
+  the list (a secondary job), all four slots full.
 - **Equipment: only browsed, nothing equipped.** Read since 2026-11-14 (ef1a374) with
   Cyrus: slots with the worn piece and its bonuses, items with what they would change
   ("Phys. Vert. 82 to 103 …") and "equipped" for the worn one (a row dump confirmed: the
