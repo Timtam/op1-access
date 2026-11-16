@@ -420,12 +420,6 @@ Open:
   ("No prompt here, trying another side"). Tried from behind the ledge at Atlasdam's
   hidden item (dev teleport): it went around and got "Untersuchen, E". Not tried at a
   normal chest, nor where no side works ("No prompt at this item").
-- **From the underground study's entrance the walker finds no way out.** That spot is
-  inside the academy building (its door's IsHouseEnter is set), so every walk first heads
-  for the academy's door, 2184 away and a floor up ("Leaving the building first. Routing
-  to its door"), and the router gives up after 45000 traces, widened and shifted
-  ("Not reachable, no route found"; seen 2026-11-15 after loading the autosave there).
-  The way in from outside was found the same day. Walking by hand works.
 - **Side stories are named, not explained.** Since ea8078c the marker list says "Kit,
   side story" (icon type 7, seen on the flats); "traveler to recruit" (17) wasn't seen yet.
   What a side story is about is only in its dialogue.
@@ -467,7 +461,11 @@ Open:
   and the headmaster (office upstairs) all reached; the Wachmann is walked to directly.
   Since 2026-11-15 (c62c659) the inner side of a doorway comes from the room's parts
   when they lie clearly on one side, and whether YOU are in a house comes from the
-  game's own flag (IsHouseEnter), see the walker section.
+  game's own flag (IsHouseEnter), see the walker section. Since 2c6c435 triggers that
+  only switch the light (the academy's SchoolLighting_Out, _IN, _In_Library:
+  ForceHouseOut, no door object) are no buildings at all, and "Leaving the building
+  first" needs a door that shuts; by the study's entrance SchoolLighting_Out had sent
+  every walk to an unreachable spot a floor up. Other towns' triggers were not dumped.
 - **Exit names are only checked in Atlasdam.** "exit 2 of 5: to Palast von Atlasdamm"
   comes from the exit's own labels; all five Palasttor exits had one. An exit without
   labels falls back to its level's town name (never seen yet), and a field or dungeon
