@@ -5,11 +5,15 @@ gets fixed, delete its entry (the commit message keeps the history).
 
 ## Speech and languages
 
-- **Only German was heard.** Since 7d483f2 the mod's own words follow the game's text
-  language (Scripts/lang/<language>.po, docs/translations.md); de.po covers all 414
-  texts and a whole German session logged no "I18N missing" line. English is the text
-  in the code (unit-tested fallback), but no game in English was played. Other
-  languages say English until someone adds a .po.
+- **English was heard only in a short session.** Since 7d483f2 the mod's own words follow
+  the game's text language (Scripts/lang/<language>.po, docs/translations.md); de.po
+  covers all 414 texts and a whole German session logged no "I18N missing" line. Since
+  59f846a the language comes from the game's own setting (KSGameStatics:GetLanguage); a
+  switch in the options is followed within 2-5 s (title options to English, field menu
+  options back to German, 2026-11-16). Heard in English: the title and load menus, the
+  navigator, the main menu and its lists, the world map, one battle and the game over.
+  Not heard in English: shops, the tavern, path actions, event menus. Other languages say
+  English until someone adds a .po.
 - **Some German words are guesses at the game's own terms**: "Speer" for the polearm
   weakness (the user says "Lanze"), "EXP" and "JP" in the battle result, "HP", "SP" and
   "BP" kept as they are, "Wege-Aktion" from the tutorials. Each is one line in de.po.
@@ -68,6 +72,11 @@ Heard on 2026-11-15 (Cyrus alone lost a battle on the flats): "Cyrus down", "Gam
 title after that crashed the game every time until 2b0e87f (kept title widgets touched
 after the load freed them); three runs since loaded fine, the last with the radar idle
 on the title (0212d98; before, it went "live" there).
+
+- **The area name can come between the game over items** ("Game over", "Resume from last
+  save point", "Atlasdam, Flatlands", "Return to title"; 2026-11-16, English test). The
+  walk had crossed into Atlasdam's part of the flats as the battle began; its banner was
+  read when the pump ran again between the battle's end and the game over screen.
 
 - **Between "Ja" and the load's fade the radar is live for a moment** ("RADAR live" then
   "suspended" in the same second, 2026-11-15): the title's screen is gone, the fade not
@@ -326,17 +335,12 @@ Open:
   Same signature as the known exit crash: `RtlLeaveCriticalSection` on a lock the thread
   doesn't own, under `HookUStructLink` and nested Lua calls, no shim frames. Since
   05ce7cc the screen polls call GetActiveStack once per run instead of up to 15 times.
-- **Other kept UE4SS objects are still touched without the shim's check.** 2b0e87f
-  guards the title widgets and the UI manager (the load crash); others are kept as bare
-  UE4SS objects with only IsValid in front: the area banner, the action prompt, KSFade,
-  the balloon manager, the save manager, the dialog widgets. None crashed so far.
-  `M.trace = true` (the test build sets it) logs every pump and poll step, so the last
-  line before a crash names the step.
-- **After a dialogue or on arrival the radar stalls the game ~390 ms** (5 object
-  searches of ~78 ms each: chests, exits, doors, shops, people). It did so before too;
-  since d1f4b25 the lists are kept per level and the navigator reuses them, so category
-  presses take 0-2 ms. A scene or transition still drops them (a story scene may add or
-  remove people), so the rescan after each dialogue stays.
+- **On arrival the radar stalls the game ~390 ms, after a dialogue ~150 ms.** Each object
+  search walks all objects (~78 ms): on arrival all five (chests, exits, doors, shops,
+  people). Since 4d88542 a dialogue without a fade keeps the exits, doors and shops
+  ("FINDALL 3 fixed lists kept through the scene"), so only chests and people are
+  searched again (a scene can move people, a reward can be a new chest). Category
+  presses take 0-2 ms (d1f4b25).
 - **The game hung once after a won battle** (2026-11-15, H'aanit's new game; dump and
   stacks in `build/user-logs/hang-20261115-1459*`). The game thread waited in
   `RtlEnterCriticalSection` under UE4SS's `process_lua_function`; the lock's

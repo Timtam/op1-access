@@ -15,9 +15,9 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   shows its own ⑳ sign, which screen readers can't read.
 - Keys the tutorials name as circled letters ("Drückt die Ⓞ-Taste", "Ⓙ drücken") are said
   as plain letters ("O-Taste", "J").
-- The mod's own words follow the game's language: German and English for now ("Truhe 1 von
-  5", "chest 1 of 5"). More languages are a text file each (gettext .po, see
-  docs/translations.md).
+- The mod's own words follow the game's text language, also when you change it in the
+  options: German and English for now ("Truhe 1 von 5", "chest 1 of 5"). More languages are
+  a text file each (gettext .po, see docs/translations.md).
 - A speech history: comma and period read the last 100 lines again (back and forward), the
   dialogue too; Shift+comma and Shift+period jump to the first and the last.
 
@@ -27,7 +27,9 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   dialogs.
 - Main menu: categories, the current objective (also with Q), inventory (tabs, items with count
   and description, whom an item is for), abilities (learning skills with costs, support skills),
-  equipment (slots, items and what they would change) and the tutorials.
+  equipment (slots, items and what they would change), the tutorials and the
+  Miscellaneous submenu (settings, tutorial, back to the title, quit). Back from a list, the
+  options or a dialog, the menu says where you are again.
 - World map: the place under the cursor (town, path or dungeon, region, danger level, not
   visited) and the chapters recommended there; Page Up and Page Down go through every place,
   nearest first, with its direction from where you are, and move the cursor there for fast
