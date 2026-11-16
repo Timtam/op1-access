@@ -4948,7 +4948,17 @@ cs_live_instance = function()
             if w then return w, x, y end
         end
     end
-    return probe(cs_instance)
+    -- the kept instance only through its registry entry's handle (review 2026-11-16: it
+    -- was probed unchecked when its entry failed M.sw_ok, before the next prune); an
+    -- instance without an entry was pruned and isn't touched
+    for i = 1, #scene_widgets do
+        local e = scene_widgets[i]
+        if e[1] == cs_instance then
+            if M.sw_ok(e) then return probe(cs_instance) end
+            return nil
+        end
+    end
+    return nil
 end
 
 -- Forward-declared poll_dialog. The character-select confirmation (and other
