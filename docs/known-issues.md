@@ -388,14 +388,23 @@ Open:
     cost and description, learned and locked skills.
   - The learn dialog with its LBP lines; it was always cancelled.
 
+  Since 9d2ebb7 "learned" comes from the row's check mark (RefImg_Strikethrough): with
+  too few LBP every skill is greyed, and greyed used to be said "learned" ("Analyse,
+  erlernt" at 33 of 100 LBP). Learning tried with 500 LBP set in memory (2026-11-16):
+  "Analyse. LBP-Kosten: 100, Aktuelle LBP: 500. Diese Fertigkeit erlernen?", "Ja", the
+  game's "Ausweichmanöver. Ihr habt eine neue Hilfsfertigkeit erlernt!", its tutorial,
+  then "Analyse, erlernt". In battle the new Analyse revealed a weakness, said in its
+  place: "Schwächen: 1 unbekannt, Stab, Dunkelheit".
+
   Not seen yet:
-  - Learning a skill ("Ja"); the row should then say "learned".
   - An item for several travelers or for all of them.
   - "Hilfsfertigkeiten ausrüsten" (still locked).
   - A secondary job's list (the "sub" path).
 - **Equipment: only browsed, nothing equipped.** Read since 2026-11-14 (ef1a374) with
   Cyrus: slots with the worn piece and its bonuses, items with what they would change
-  ("Phys. Vert. 82 to 103 …") and "equipped" for the worn one. Not tried:
+  ("Phys. Vert. 82 to 103 …") and "equipped" for the worn one (a row dump confirmed: the
+  worn piece is the greyed row, "Stab, 1, ausgerüstet"; Cyrus has no second staff, so
+  equipping another piece couldn't be tried). Not tried:
   - Equipping (Enter on an item); the slot row should then name the new piece.
   - "Optimieren" and "Alles ablegen".
   - Accessories with a special effect.
