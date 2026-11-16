@@ -18,9 +18,11 @@ gets fixed, delete its entry (the commit message keeps the history).
   weakness (the user says "Lanze"), "EXP" and "JP" in the battle result, "HP", "SP" and
   "BP" kept as they are, "Wege-Aktion" from the tutorials. Each is one line in de.po.
 - **The speech history keeps the dialogue lines from the pump's PollTalk**: two lines
-  within one pump would keep only the last. Navigator and menu lines were checked
-  (comma, period, Shift+comma, Shift+period); dialogue lines in the history were not
-  listened to yet. A line said twice in a row is kept once.
+  within one pump would keep only the last (the shim keeps one line; lines come a key
+  press apart, so it wasn't seen). Navigator and menu lines were checked by ear (comma,
+  period, Shift+comma, Shift+period); dialogue lines are in the list (a dump after
+  Kit's dialogue, 2026-11-16) but weren't listened to through the keys. A line said
+  twice in a row is kept once.
 
 ## Shops, inns and the tavern
 
