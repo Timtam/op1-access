@@ -58,8 +58,18 @@ Open:
 - **The story select when you enter a town** (where a traveler's chapter can begin) is
   the same screen, but wasn't seen there. Party change with more than one traveler (the
   waiting ones, "chosen") wasn't tried: Cyrus is alone.
-- **Buying equipment**: the question to equip what you bought wasn't seen (nothing was
-  bought).
+- **Equipping what you just bought: built, not heard yet.** After buying a weapon or armor
+  the game asks "Quarzrute sofort ausrüsten?" (read as a dialog, heard 2026-11-16). After
+  "Ja" you choose who gets it on the party panels; that stayed silent (user report). Since
+  then the shop's own state is read (GetCurrentState; ESHOPMENU_STATE 10 = the question,
+  11 = the choice, names from the game's enum asset, their order checked against the shop
+  commands' enum). In state 11 the shop says "Wer soll es ausrüsten?" and the traveler
+  under the cursor with what the piece changes for them ("Cyrus: Phys. Angr. 83 auf 94,
+  ...", or "kann nicht ausrüsten"), then each traveler you move to; the goods list keeps
+  quiet meanwhile and says its row again after. The cursor: the party panel whose
+  CursorIcon shows, else QcEqp_CursorPos. Check the log's `SHOP state ... state=11` and
+  `SHOP quick equip` lines if it stays silent (the state number is the likely suspect).
+  Not seen yet: what the game does after the choice when you bought two.
 - **What the inn says after "Bleiben"** wasn't seen.
 - The currency word for the ⑳ sign ("3.246 Blätter" heard). The game has no word for
   it, so the mod picks one by the game's text language. Where the words come from:

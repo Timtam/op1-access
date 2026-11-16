@@ -39,7 +39,8 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
 - The game over menu.
 - Shops and inns: the shop's name and your money, its commands, the goods with price and how
   many you have, the amount to buy or sell with the total, and for weapons and armor what
-  they would change for each traveler.
+  they would change for each traveler. After buying a weapon or armor and choosing to
+  equip it right away, the traveler you pick it for and what it changes for them.
 - The tavern: the keeper's menu, the equipment screen, changing the party and choosing whose
   story to continue.
 

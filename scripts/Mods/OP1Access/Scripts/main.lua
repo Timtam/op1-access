@@ -1938,6 +1938,7 @@ do
             -- (a dialog over the shop, "Kaufen?": keep the state, it comes back)
             if cls ~= "UICommonDialogBP_C" then
                 sh.top, sh.num, sh.open, sh.st, sh.w, sh.cmds = nil, nil, nil, nil, nil, nil
+                sh.qe, M.shop_qe_on = nil, nil
             end
             return
         end
@@ -1968,13 +1969,34 @@ do
         end
         -- what the shop shows now (logged on change, to tell its states apart)
         local mode, act, pv = nil, false, nil
-        local sn
+        local sn, gst
         pcall(function() mode = w.ShopMode end)
         pcall(function() act = w.ProductList.ActiveFlag end)
         pcall(function() sn = w.SelectItemNum end)
+        pcall(function() gst = w:GetCurrentState() end)   -- ESHOPMENU_STATE (M.shop_quick_equip)
         if sn then pv = M.wvis(sn) end
-        local st = string.format("mode=%s list=%s picker=%s", tostring(mode), tostring(act), tostring(pv))
+        -- (the party panels' cursor icons too: the other sign of the quick equip, logged)
+        local icons = ""
+        pcall(function()
+            local pl = w.PartsPartyList
+            for k = 0, 3 do
+                local cv
+                pcall(function() cv = M.wvis(pl[string.format("PartyCharacter_%02d", k)].CursorIcon) end)
+                icons = icons .. (cv and tostring(cv) or "-")
+            end
+        end)
+        local st = string.format("mode=%s list=%s picker=%s state=%s icons=%s", tostring(mode), tostring(act),
+            tostring(pv), tostring(gst), icons)
         if st ~= sh.st then sh.st = st; log("SHOP state " .. st) end
+        -- choosing who gets what was just bought ("... sofort ausrüsten?" -> Ja)
+        if gst == M.SHOP_QUICK_EQUIP then
+            M.shop_qe_on = true
+            local okq, err = pcall(M.shop_quick_equip, w, sh)
+            if not okq then log("SHOP quick equip error: " .. tostring(err)) end
+            return
+        end
+        if sh.qe and M.ml then M.ml.said, M.ml.help_said = nil, nil end   -- back at the goods: say the row again
+        sh.qe, M.shop_qe_on = nil, nil
         -- how many: the amount picker while it shows ("Anzahl: 1, Gesamtkosten: 50
         -- Blätter", then "2, 100 Blätter" per step). The goods list stays active under it.
         if pv == 0 or pv == 3 or pv == 4 then
@@ -3565,6 +3587,37 @@ end
 -- EquipParamN_Top (screenshot 2026-11-15: "Cyrus  Phys. Angr. 78 > 85, Elem. Angr. 122 >
 -- 138, Kritisch 70 > 68"; for a glaive Cyrus can't use only the name showed: "can't equip").
 -- "Cyrus: Phys. Angr. 78 to 85, Elem. Angr. 122 to 138, Kritisch 70 to 68"
+-- one party panel (PartyCharacterPanel_C): "Cyrus: Phys. Angr. 78 to 85, ...", "Cyrus: can't
+-- equip", or nil (hidden / no name / not showing equipment); and a short log form
+M.shop_member_line = function(pc)
+    local v = pc and M.wvis(pc)
+    if not pc or v == 1 or v == 2 then return nil end
+    local name = M.wtext(pc.Name)
+    if not name or M.placeholder(name) then return nil end
+    local eqv
+    pcall(function() eqv = M.wvis(pc.VBox_Equip) end)
+    local rows = {}
+    for n = 0, 3 do
+        local top, tv
+        pcall(function() top = pc["EquipParam" .. n .. "_Top"] end)
+        tv = top and M.wvis(top)
+        if top and tv ~= 1 and tv ~= 2 then
+            local nm, a, b
+            pcall(function()
+                nm = M.wtext(pc["EquipName" .. n])
+                a, b = M.wtext(pc["EquipParam" .. n .. "_0"]), M.wtext(pc["EquipParam" .. n .. "_1"])
+            end)
+            if nm and a and b and not M.placeholder(a) and not M.placeholder(nm) then
+                rows[#rows + 1] = (a == b) and (nm .. " " .. a) or trf("%s %s to %s", nm, a, b)
+            end
+        end
+    end
+    local raw = string.format("%s equip=%s rows=%d", name, tostring(eqv), #rows)
+    -- a piece the traveler can't use shows only the name (a glaive for Cyrus); one they
+    -- can use shows its rows (two shields: 2 and 1 rows)
+    if eqv == 1 or eqv == 2 then return nil, raw end
+    return name .. ": " .. (#rows > 0 and table.concat(rows, ", ") or tr("can't equip")), raw
+end
 M.shop_party_changes = function(owner)
     local pl
     pcall(function() pl = owner.PartsPartyList end)
@@ -3573,40 +3626,59 @@ M.shop_party_changes = function(owner)
     for k = 0, 3 do
         local pc
         pcall(function() pc = pl[string.format("PartyCharacter_%02d", k)] end)
-        local v = pc and M.wvis(pc)
-        if pc and v ~= 1 and v ~= 2 then
-            local name = M.wtext(pc.Name)
-            if name and not M.placeholder(name) then
-                local eqv
-                pcall(function() eqv = M.wvis(pc.VBox_Equip) end)
-                local rows = {}
-                for n = 0, 3 do
-                    local top, tv
-                    pcall(function() top = pc["EquipParam" .. n .. "_Top"] end)
-                    tv = top and M.wvis(top)
-                    if top and tv ~= 1 and tv ~= 2 then
-                        local nm, a, b
-                        pcall(function()
-                            nm = M.wtext(pc["EquipName" .. n])
-                            a, b = M.wtext(pc["EquipParam" .. n .. "_0"]), M.wtext(pc["EquipParam" .. n .. "_1"])
-                        end)
-                        if nm and a and b and not M.placeholder(a) and not M.placeholder(nm) then
-                            rows[#rows + 1] = (a == b) and (nm .. " " .. a) or trf("%s %s to %s", nm, a, b)
-                        end
-                    end
-                end
-                raw[#raw + 1] = string.format("%s equip=%s rows=%d", name, tostring(eqv), #rows)
-                -- a piece the traveler can't use shows only the name (a glaive for Cyrus);
-                -- one they can use shows its rows (two shields: 2 and 1 rows)
-                if eqv ~= 1 and eqv ~= 2 then
-                    out[#out + 1] = name .. ": " .. (#rows > 0 and table.concat(rows, ", ") or tr("can't equip"))
-                end
-            end
+        local ok, line, r = pcall(M.shop_member_line, pc)
+        if ok then
+            if r then raw[#raw + 1] = r end
+            if line then out[#out + 1] = line end
         end
     end
     local key = table.concat(raw, "; ")
     if key ~= M.shop_party_logged then M.shop_party_logged = key; log("SHOP party: " .. key) end
     return #out > 0 and table.concat(out, ". ") or nil
+end
+-- QUICK EQUIP after a purchase (user 2026-11-16: "Quarzrute sofort ausrüsten?" -> Ja, then
+-- nothing was read). ShopMenuWidget_C's own state (KSUserWidgetWithState GetCurrentState;
+-- ESHOPMENU_STATE, names from the asset's DisplayNameMap in enumerator order, the order
+-- checked against ESHOPMENU_MODE's known commands): 10 = eSHOP_QUICK_EQUIP_CONFIRM (the
+-- question, a dialog), 11 = eSHOP_QUICK_EQUIPMENT = choosing who gets it. The traveler under
+-- the cursor: the party panel (PartsPartyList.PartyCharacter_0N) whose CursorIcon shows,
+-- else QcEqp_CursorPos; said as in the goods list ("Cyrus: Phys. Angr. 83 to 94, ...").
+M.SHOP_QUICK_EQUIP = 11
+M.shop_quick_equip = function(w, sh)
+    local pl
+    pcall(function() pl = w.PartsPartyList end)
+    if not pl then return end
+    local pos, cnt, own
+    pcall(function() pos = w.QcEqp_CursorPos end)
+    pcall(function() cnt = w.QcEqp_EnableEquipCount end)
+    pcall(function() own = w.QcEqp_PossessCount end)
+    local focus, icons = nil, {}
+    for k = 0, 3 do
+        local pc, cv
+        pcall(function() pc = pl[string.format("PartyCharacter_%02d", k)] end)
+        if pc then pcall(function() cv = M.wvis(pc.CursorIcon) end) end
+        icons[#icons + 1] = tostring(cv)
+        if cv == 0 or cv == 3 or cv == 4 then focus = focus or k end
+    end
+    local k = focus or (type(pos) == "number" and pos) or nil
+    local key = tostring(k) .. "|" .. tostring(pos)
+    if key == sh.qe then return end
+    local first = sh.qe == nil
+    sh.qe = key
+    log(string.format("SHOP quick equip: cursor icons [%s] QcEqp_CursorPos=%s enable=%s own=%s -> panel %s",
+        table.concat(icons, " "), tostring(pos), tostring(cnt), tostring(own), tostring(k)))
+    local line
+    if type(k) == "number" and k >= 0 and k <= 3 then
+        local pc
+        pcall(function() pc = pl[string.format("PartyCharacter_%02d", k)] end)
+        local ok, l = pcall(M.shop_member_line, pc)
+        line = ok and l or nil
+    end
+    if first then
+        speak(tr("Equip it: choose a traveler") .. (line and (". " .. line) or ""), true)
+    elseif line then
+        M.say_item(line)
+    end
 end
 -- SUPPORT ABILITIES ("Hilfsfertigkeiten ausrüsten", SupportAbilityChangeWidget_C; seen
 -- in game 2026-11-16 -- the user: "not read yet"). Its State: 2 = choosing the traveler
@@ -3835,6 +3907,9 @@ M.poll_menu_list = function()
     end
     local addr = M.addr_of(w)
     local scr, owner, which = M.ml_screen(addr, w)
+    -- the goods stay active while the shop asks who gets what was just bought
+    -- (M.shop_quick_equip reads that): no goods row then
+    if scr == "shop" and M.shop_qe_on then return end
     local usecat, catsel, ccur, cur = false, false, 0, 0
     pcall(function() usecat, catsel, ccur, cur = w.UseCategory, w.CategorySelect, w.CategoryCursorPos, w.CursorPosition end)
     local sig, say, extra
