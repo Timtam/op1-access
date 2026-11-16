@@ -625,6 +625,9 @@ local BLOCKING_CLASSES = {
     -- neue Informationen gewonnen!") -- the radar came back between the boxes.
     -- Active-stack only (not in SCENE_LABELS), so a cached copy can't block.
     BalloonManagerBP_C = true, UICommonDialogBP_C = true,
+    -- a tutorial pop-up (2026-11-16: the radar played under it, and the Backspace that
+    -- closes it also started a walk to the selected target). Active-stack only too.
+    UITutorial_C = true,
 }
 
 -- ---------------------------------------------------------------------------
