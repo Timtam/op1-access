@@ -75,7 +75,9 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   people stand there. Before a target counts as not reachable, the search takes in the
   whole area, however far round the way goes. After a battle (or a menu), Backspace
   walks on along the same route. The route search is several times faster, most of all
-  for a target you have just picked.
+  for a target you have just picked. Routes keep out of water and other places only
+  invisible walls close off, and take invisible floors such as the bridge on the path to
+  the Maiya caves.
 
 ### Battles
 

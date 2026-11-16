@@ -566,6 +566,28 @@ Open:
     up-left: all reachable only via the stairs outside the small box). Atlasdam's
     buildings at ~16000 units and one "2922, above" were "not reachable" with the +40
     box; not tried again.
+- **Water and invisible floors: built, not walked yet.** (2026-11-16, user: "er will immer
+  durch das Wasser, er müsste über die Brücke") On the path to the Maiya caves the water is
+  filled with invisible blocking volumes (the level file F_Sea_1_1: convex "Box brushes",
+  z -475 to 1525), and the bridge's deck is four invisible slabs (z 425 to 507, x 1295 to
+  1695, y -1660 to -280) over a volume that ends at 355. Channel 0 sees neither: every
+  route waded through the river with "soft" steps, the walk learned 15 walls in a row, and
+  no route took the bridge.
+  - Now a cell is a place only where the character fits: its knee and head points (55 and
+    150 over the floor) not inside anything the character's own collision profile blocks
+    (people excepted: the people rules keep away from them). Where channel 0 finds no
+    floor, or no room, that profile measures the floor: the bridge's deck. A target
+    hovering 150 or more over its channel-0 floor gets its floor by that profile too.
+  - Mock river (test_water.lua): the old router waded (9 cells in the river, 10 soft
+    steps), the new one crosses on the bridge, also with a person standing on it, and
+    reaches a target on the deck. Without the bridge, "not reachable" (the whole area ran
+    out of cells), no wading.
+  - Not tried in the game. Log: `no-room=` and `capsule-floors=` in `ROUTE ok` / `ROUTE
+    fail`, and `@z` in `ROUTE cells` where the floor changes by more than 40.
+  - Still open: the side lines of a step are channel 0 only, so a gap between two
+    invisible volumes narrower than the character (one under the bridge's east side looks
+    ~72 wide in the level file) can still pass the centre line. The level files hold all
+    blocking volumes; reading them needs a package parser (done by hand for F_Sea_1_1).
 - **After a battle the walk goes on with its route: built, not tried yet.** (2026-11-16)
   A battle, a menu, a speech bubble or a scene stops the walk ("Angehalten"), and the
   route is kept. The next Backspace for the same target walks on with it from where you

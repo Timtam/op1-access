@@ -7778,14 +7778,63 @@ local function cellkey(ix, iy) return ix * 8192 + iy end
 local function zlayer(R, z) return math.floor((z - R.pz) / 200 + 0.5) end
 local function key3(x, y, zl) return (x * 8192 + y) * 131 + zl end
 
+-- ROOM TO STAND (2026-11-16, user: "er will immer durch das Wasser, er müsste über die
+-- Brücke"). On the path to the Maiya caves the water is FILLED with invisible blocking
+-- volumes (the level file: convex "Box brushes" from z -475 to 1525; channel 0 doesn't see
+-- them, the capsule's profile does), and the bridge's deck is four invisible slabs (z 425
+-- to 507) over a volume that ends at 355. Channel 0 found the river bed as floor and the
+-- deck as nothing, so every route waded through the water -- each step "soft" (cost 8 or
+-- 30), 15 learned walls in a row -- and none took the bridge.
+-- A cell is a place only where the capsule fits: its knee (55 over the floor) and head
+-- (150) points not inside anything the capsule's profile blocks -- a 1-unit trace from a
+-- point inside a solid hits at once. People don't count (the people rules keep away from
+-- them, and they move): a person within 70 of the point lets it pass. -> inside?, traces
+NV.solid_at = function(R, ksl, p, x, y, z)
+    local used = 0
+    for _, h in ipairs({ 55, 150 }) do
+        used = used + 1
+        local ok, hit = line_blocked(ksl, p, x, y, z + h, x + 1, y, z + h, NV_TRACE)
+        if ok and hit then
+            local pl = R.people or R.blame
+            if not pl then
+                if R.pl_all == nil then
+                    local okp, ppl = pcall(NV.people_scan, R.px, R.py, R.pz)
+                    R.pl_all = okp and ppl or false
+                end
+                pl = R.pl_all or nil
+            end
+            for _, q in ipairs(pl or {}) do
+                if math.abs(q.z - (z + (M.pfoot or 82))) < 250 and (q.x - x) ^ 2 + (q.y - y) ^ 2 < 70 * 70 then
+                    return false, used
+                end
+            end
+            return true, used
+        end
+    end
+    return false, used
+end
+-- ...and where channel 0 finds no place, the capsule's own profile may: an invisible floor
+-- (the bridge's deck). From za+160 to za-240 like nav_ground; a trace that begins inside
+-- something solid finds nothing. -> floor or false, traces
+NV.pawn_floor = function(R, ksl, p, x, y, za)
+    local ok, hit, oh = line_blocked(ksl, p, x, y, za + 160, x, y, za - 240, NV_TRACE)
+    if not (ok and hit and oh and type(oh.Distance) == "number") or oh.Distance < 1 then return false, 1 end
+    local z = NV.stepin_floor(R, x, y, za + 160 - oh.Distance)   -- (not a person's head)
+    local inside, u = NV.solid_at(R, ksl, p, x, y, z)
+    if inside then return false, 1 + u end
+    return z, 1 + u
+end
+
 -- ground height at cell (bx,by) approached from height za (down-trace from
--- za+160 to za-240; false = void / too big a drop). Cached per cell + band.
+-- za+160 to za-240; false = void / too big a drop / no room to stand). Cached per cell
+-- + band.
 local function nav_ground(R, ksl, p, bx, by, za)
     local gk = cellkey(bx, by) .. "@" .. math.floor((za - R.pz) / 200 + 0.5)
     local c = R.gcache[gk]
     if c ~= nil then return c, 0 end
     local wx, wy = R.px + bx * NV.STEP, R.py + by * NV.STEP
     R.traces = R.traces + 1
+    local used = 1
     -- (R.groundch: a step-in route measures floors with the capsule's own profile, which
     -- sees steps channel 0 misses -- the Flammhuld inn's side stairs, NV.stepin_leg)
     local ok, hit, oh = line_blocked(ksl, p, wx, wy, za + 160, wx, wy, za - 240, R.groundch)
@@ -7794,10 +7843,26 @@ local function nav_ground(R, ksl, p, bx, by, za)
         local dist
         pcall(function() if type(oh.Distance) == "number" then dist = oh.Distance end end)
         z = dist and (za + 160 - dist) or za
-        if R.groundch then z = NV.stepin_floor(R, wx, wy, z) end
+        if R.groundch then
+            if dist and dist < 1 then z = false else z = NV.stepin_floor(R, wx, wy, z) end
+        end
     end
+    -- no room to stand there (NV.solid_at): the river bed under the water's volume
+    if z then
+        local inside, u = NV.solid_at(R, ksl, p, wx, wy, z)
+        used = used + u
+        if inside then z = false; R.nroom = (R.nroom or 0) + 1 end
+    end
+    -- nothing (or no room) on channel 0: an invisible floor? (NV.pawn_floor)
+    if not z and not R.groundch then
+        local zp, u = NV.pawn_floor(R, ksl, p, wx, wy, za)
+        used = used + u
+        z = zp
+        if z then R.npawn = (R.npawn or 0) + 1 end
+    end
+    R.traces = R.traces + (used - 1)
     R.gcache[gk] = z
-    return z, 1
+    return z, used
 end
 
 local function nav_route_finish(goalnode)
@@ -7805,8 +7870,8 @@ local function nav_route_finish(goalnode)
     NV.route = nil
     if not R then return end
     if not goalnode then
-        log(string.format("ROUTE fail traces=%d pops=%d slides=%d people-blocked=%d %.1fs", R.traces, R.pops,
-            R.slides or 0, R.ppl_hit or 0, os.clock() - R.started))
+        log(string.format("ROUTE fail traces=%d pops=%d slides=%d people-blocked=%d no-room=%d capsule-floors=%d %.1fs",
+            R.traces, R.pops, R.slides or 0, R.ppl_hit or 0, R.nroom or 0, R.npawn or 0, os.clock() - R.started))
         -- people stood in the way of some steps: was it them? The same search without
         -- people; if that finds a way, the person on it is named (below, R.blame)
         if R.people and (R.ppl_hit or 0) > 0 and not R.nopeople and not R.capped then
@@ -7927,6 +7992,7 @@ local function nav_route_finish(goalnode)
     end
     if R.mode == "walk" then   -- debug: the cells and their edge kinds (s soft, D door, x diagonal)
         local parts = {}
+        local lastz = R.pz - (M.pfoot or 82)
         for i = #chain, 1, -1 do
             local nd = chain[i]
             local par = R.came[nd.k]
@@ -7935,6 +8001,11 @@ local function nav_route_finish(goalnode)
             if par and par.x ~= nd.x and par.y ~= nd.y then t = t .. "x" end
             if (nd.ox or 0) ~= 0 or (nd.oy or 0) ~= 0 then
                 t = t .. string.format("~%d", math.floor(math.abs((nd.ox or 0) + (nd.oy or 0)) + 0.5))
+            end
+            -- (@z: the floor, where it changed by more than 40 -- the bridge's deck vs the bed)
+            if nd.z and math.abs(nd.z - lastz) > 40 then
+                t = t .. string.format("@%d", math.floor(nd.z + 0.5))
+                lastz = nd.z
             end
             parts[#parts + 1] = nd.x .. "," .. nd.y .. t
         end
@@ -8008,8 +8079,8 @@ local function nav_route_finish(goalnode)
     local ez = (door and R.mode == "walk") and (door.z or R.oz) or R.oz   -- the walk's end
     if ez - R.pz < -250 then floorword = ", " .. tr("downstairs")
     elseif ez - R.pz > 250 then floorword = ", " .. tr("upstairs") end
-    log(string.format("ROUTE ok cells=%d wps=%d traces=%d slides=%d %.1fs (%d ticks, %.1f ms/tick, %.3f ms/trace)",
-        #chain, #pts, R.traces, R.slides or 0, os.clock() - R.started,
+    log(string.format("ROUTE ok cells=%d wps=%d traces=%d slides=%d no-room=%d capsule-floors=%d %.1fs (%d ticks, %.1f ms/tick, %.3f ms/trace)",
+        #chain, #pts, R.traces, R.slides or 0, R.nroom or 0, R.npawn or 0, os.clock() - R.started,
         R.ticks or 0, (R.cpu or 0) * 1000 / math.max(1, R.ticks or 0), (R.cpu or 0) * 1000 / math.max(1, R.traces)))
     if R.mode == "walk" then
         if door then speak(tr("A shut door on the way")) end
@@ -8320,6 +8391,7 @@ NV.route_widen = function(R, whole)
     W.stepin, W.ofl_p, W.pl_all, W.groundch = R.stepin, R.ofl_p, R.pl_all, R.groundch
     W.traces, W.pops, W.started, W.saidlong = R.traces, R.pops, R.started, R.saidlong
     W.cpu, W.ticks, W.ran = R.cpu, R.ticks, R.ran
+    W.nroom, W.npawn = R.nroom, R.npawn
     W.shifted, W.pops0, W.shift_i = R.shifted, R.pops0, R.shift_i
     if pad == 40 then
         W.whole = true
@@ -8370,6 +8442,7 @@ NV.route_shift = function(R, why)
                 W.pops0 = R.shifted and R.pops0 or R.pops
                 W.traces, W.started, W.saidlong = R.traces, R.started, R.saidlong
                 W.cpu, W.ticks, W.ran = R.cpu, R.ticks, R.ran
+                W.nroom, W.npawn = R.nroom, R.npawn
                 if R.whole then   -- (the whole area again, without caches)
                     W.maxtr = R.traces + NV.whole_traces(W)
                     W.maxt = (os.clock() - R.started) + NV.whole_time(W)
@@ -8482,6 +8555,13 @@ NV.goal_floor_ok = function(R, ksl, p, best)
     if R.ofl == nil then
         R.ofl = NV.floor_at(ksl, p, R.ox, R.oy, R.oz) or false
         R.traces = R.traces + 1
+        -- the target hovers over that floor: an invisible one under it, like the bridge's
+        -- deck (nav_ground then takes the capsule's floor there, NV.pawn_floor) -- that
+        -- profile's floor, or none (the old height rule; a chest blocks that trace itself)
+        if R.ofl and R.oz - R.ofl > 150 then
+            R.ofl = NV.floor_at(ksl, p, R.ox, R.oy, R.oz, NV_TRACE) or false
+            R.traces = R.traces + 1
+        end
     end
     if not R.ofl then return true end
     local fz = best.z
