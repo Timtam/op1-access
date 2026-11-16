@@ -8333,6 +8333,50 @@ NV.level_word = function(p, px, py, pz, tx, ty, tz)
     return nil
 end
 
+-- STEP-IN TARGETS (2026-11-16, Flammhuld inn, after c38e2eb didn't help). A shop without
+-- a keeper opens at its trigger, a box in its entrance: there the game shows "Gasthaus,
+-- E", and only there. The inn's door is three steps up; two people stand at their foot
+-- with ~40 between them (the walker, tried by hand, stuck between both at 80). Channel 0
+-- sees neither the steps nor the stone base beside them (CHPROBE "up ch0=- ch1=28"), so
+-- floors and routes take it all for street: "Arrived" 152 away beside the base, E went to
+-- the follower. Now such a walk ends only at the shop's prompt (also when it comes up on
+-- the way); stuck within 250 of it, or 2 s of pushing at the end without it: "Entrance
+-- not reached", with the people standing there.
+NV.is_stepin = function(t) return t ~= nil and t.cat == "shop" and not t.keeper end
+-- the shop's own prompt is up ("Gasthaus, E"; any prompt when the name is unknown)
+NV.stepin_prompt = function()
+    if not M.popup_said then return false end
+    local nm = NV.goal and NV.goal.pname
+    if not nm then return true end
+    return (M.popup_text or ""):find(nm, 1, true) == 1
+end
+-- the people within 220 of the step-in goal on its floor, but not the follower (a person
+-- of the ResidentGame level that trails you); -> count
+NV.stepin_people = function(pz)
+    local g = NV.goal
+    if not g then return 0 end
+    local okp, ppl = pcall(NV.people_scan, g.x, g.y, pz)
+    local n = 0
+    for _, q in ipairs(okp and ppl or {}) do
+        if math.abs(q.z - pz) < 300 and (q.x - g.x) ^ 2 + (q.y - g.y) ^ 2 < 220 * 220 then
+            local full = ""
+            pcall(function() full = q.actor:GetFullName() end)
+            if not full:find("ResidentGame", 1, true) then n = n + 1 end
+        end
+    end
+    return n
+end
+NV.stepin_fail = function(px, py, pz)
+    local g = NV.goal
+    local n = NV.stepin_people(pz)
+    log(string.format("NAVWALK step-in not reached: you (%.0f,%.0f,%.0f), target (%.0f,%.0f,%.0f), %d people there",
+        px, py, pz, g and g.x or 0, g and g.y or 0, g and g.z or 0, n))
+    if n > 0 then
+        return trn("Entrance not reached, %d person is standing there", "Entrance not reached, %d people are standing there", n)
+    end
+    return tr("Entrance not reached")
+end
+
 -- A body-wide straight corridor (3 knee-high lines, center and +-42) is clear.
 NV.corridor_clear = function(ksl, p, px, py, pz, ox, oy)
     local ddx, ddy = ox - px, oy - py
@@ -9321,6 +9365,10 @@ local function nav_walk_start(quiet)
     oz = oz or pz
     local key = NV.tkey(t)
     NV.goal = { x = ox, y = oy, z = oz, cat = t.walkcat or t.cat, key = key }
+    if NV.is_stepin(t) then   -- a shop without a keeper: reached at its prompt
+        NV.goal.stepin = true
+        NV.goal.pname = type(t.name) == "string" and t.name or nil
+    end
     NV.push = nil
     NV.retries = 0
     NV.bestgoal = nil
@@ -9466,8 +9514,8 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
     end
     if not NV.path then return end
     local p = get_player_obj()
-    local px, py
-    if p then px, py = read_actor_pos(p) end
+    local px, py, pz
+    if p then px, py, pz = read_actor_pos(p) end
     if not px then
         -- world unstable (transition in progress): stop NOW, never idle with keys held
         M.unstick_arm(NV.held)
@@ -9527,69 +9575,86 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
             NV.resume_walk = true
             return
         end
-        if gcat ~= "exit" and gcat ~= "door" then
+        local stepin = NV.goal and NV.goal.stepin
+        if gcat ~= "exit" and gcat ~= "door" and not stepin then
             nav_walk_stop(tr("Arrived"))
             pcall(NV.face_goal)
             return
         end
-        -- EXIT: its trigger volume can sit past the last waypoint (the palace hall
-        -- door: "Arrived" 150 short of it, nothing happened). Keep walking on along
-        -- the approach direction for up to 2 s; the transition fade then ends the
-        -- walk silently (see the scene check above). No transition -> stop.
-        -- DOOR (first leg to a target inside a building): head for the door's center
-        -- until its "Öffnen, E" prompt shows -- stopping 60 units off to the side left
-        -- you without the prompt (library door, 2026-11-13).
-        if not NV.push then
-            local ax, ay
-            if gcat == "door" then
-                ax, ay = NV.goal.x - px, NV.goal.y - py
-            else
-                local n = #NV.path
-                ax = NV.path[n].x - (NV.path[n - 1] or NV.path[n]).x
-                ay = NV.path[n].y - (NV.path[n - 1] or NV.path[n]).y
-                if math.sqrt(ax * ax + ay * ay) < 1 then ax, ay = NV.goal.x - px, NV.goal.y - py end
+        -- STEP-IN (a shop without a keeper, NV.is_stepin): like a door, push on to its
+        -- center until its prompt shows (nav_walk_watch stops the walk then), 2 s at most
+        if stepin then
+            if not NV.push then
+                NV.push = { till = now + 2.0 }
+                log("NAVWALK push into the step-in target")
             end
-            NV.push = { till = now + 2.0, x = ax, y = ay }
-            log("NAVWALK push to " .. gcat)
-        end
-        if gcat == "door" then
-            NV.push.x, NV.push.y = NV.goal.x - px, NV.goal.y - py   -- keep aiming at the door
-        end
-        if M.popup_said then
-            -- the game shows the door's prompt ("Öffnen, E", spoken by
-            -- poll_action_popup) and waits for the key -- stop at the door
-            NV.push = nil
-            nav_walk_stop()   -- silent: the prompt speech says what to do
-            if NV.door_auto_start() then return end   -- the walker opens it itself
-            -- a prompt that was up before the walk wasn't spoken now: say it again
-            if NV.prompt_at_start then speak(trf("Still shut. %s, then backspace again", M.popup_text or tr("press E")))
-            elseif gcat == "door" then speak(tr("then backspace again"), false) end
-            return
-        end
-        if now > NV.push.till then
-            NV.push = nil
-            if gcat == "door" then
-                local dd = math.sqrt((NV.goal.x - px) ^ 2 + (NV.goal.y - py) ^ 2)
-                log(string.format("DOORLEG no prompt: player (%.0f,%.0f) door (%.0f,%.0f) d=%.0f",
-                    px, py, NV.goal.x, NV.goal.y, dd))
-                -- 2 s of pushing into the doorway and no "Öffnen" prompt: the door is OPEN
-                -- (the library's stayed open after we went in; the walker stood 30 past
-                -- its center and still said "Open it", 2026-11-14) -- walk on to the
-                -- target. Once per target in 30 s, so a door that really is shut can't loop.
-                local w = NV.door_walked_on
-                if dd < 60 and not (w and w.key == NV.goal.key and now - w.t < 30) then
-                    NV.door_walked_on = { key = NV.goal.key, t = now }
-                    log("DOORLEG door is open: walking on")
-                    nav_walk_stop()
-                    NV.resume_walk = true
-                    return
+            NV.push.x, NV.push.y = NV.goal.x - px, NV.goal.y - py
+            if now > NV.push.till then
+                NV.push = nil
+                nav_walk_stop(NV.stepin_fail(px, py, pz or NV.goal.z))
+                return
+            end
+            dx, dy = NV.push.x, NV.push.y
+        else
+            -- EXIT: its trigger volume can sit past the last waypoint (the palace hall
+            -- door: "Arrived" 150 short of it, nothing happened). Keep walking on along
+            -- the approach direction for up to 2 s; the transition fade then ends the
+            -- walk silently (see the scene check above). No transition -> stop.
+            -- DOOR (first leg to a target inside a building): head for the door's center
+            -- until its "Öffnen, E" prompt shows -- stopping 60 units off to the side left
+            -- you without the prompt (library door, 2026-11-13).
+            if not NV.push then
+                local ax, ay
+                if gcat == "door" then
+                    ax, ay = NV.goal.x - px, NV.goal.y - py
+                else
+                    local n = #NV.path
+                    ax = NV.path[n].x - (NV.path[n - 1] or NV.path[n]).x
+                    ay = NV.path[n].y - (NV.path[n - 1] or NV.path[n]).y
+                    if math.sqrt(ax * ax + ay * ay) < 1 then ax, ay = NV.goal.x - px, NV.goal.y - py end
                 end
+                NV.push = { till = now + 2.0, x = ax, y = ay }
+                log("NAVWALK push to " .. gcat)
             end
-            nav_walk_stop(gcat == "door" and tr("At the door. Open it, then backspace again")
-                or tr("At the exit, no way through"))
-            return
-        end
-        dx, dy = NV.push.x, NV.push.y
+            if gcat == "door" then
+                NV.push.x, NV.push.y = NV.goal.x - px, NV.goal.y - py   -- keep aiming at the door
+            end
+            if M.popup_said then
+                -- the game shows the door's prompt ("Öffnen, E", spoken by
+                -- poll_action_popup) and waits for the key -- stop at the door
+                NV.push = nil
+                nav_walk_stop()   -- silent: the prompt speech says what to do
+                if NV.door_auto_start() then return end   -- the walker opens it itself
+                -- a prompt that was up before the walk wasn't spoken now: say it again
+                if NV.prompt_at_start then speak(trf("Still shut. %s, then backspace again", M.popup_text or tr("press E")))
+                elseif gcat == "door" then speak(tr("then backspace again"), false) end
+                return
+            end
+            if now > NV.push.till then
+                NV.push = nil
+                if gcat == "door" then
+                    local dd = math.sqrt((NV.goal.x - px) ^ 2 + (NV.goal.y - py) ^ 2)
+                    log(string.format("DOORLEG no prompt: player (%.0f,%.0f) door (%.0f,%.0f) d=%.0f",
+                        px, py, NV.goal.x, NV.goal.y, dd))
+                    -- 2 s of pushing into the doorway and no "Öffnen" prompt: the door is OPEN
+                    -- (the library's stayed open after we went in; the walker stood 30 past
+                    -- its center and still said "Open it", 2026-11-14) -- walk on to the
+                    -- target. Once per target in 30 s, so a door that really is shut can't loop.
+                    local w = NV.door_walked_on
+                    if dd < 60 and not (w and w.key == NV.goal.key and now - w.t < 30) then
+                        NV.door_walked_on = { key = NV.goal.key, t = now }
+                        log("DOORLEG door is open: walking on")
+                        nav_walk_stop()
+                        NV.resume_walk = true
+                        return
+                    end
+                end
+                nav_walk_stop(gcat == "door" and tr("At the door. Open it, then backspace again")
+                    or tr("At the exit, no way through"))
+                return
+            end
+            dx, dy = NV.push.x, NV.push.y
+        end   -- (exit / door)
     else
         dx, dy = wp.x - px, wp.y - py
         -- follow the LEG, not just its end point: aim 70 ahead of us along the line from
@@ -9652,7 +9717,18 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
     if NV.goal then
         local gd = math.sqrt((px - NV.goal.x) ^ 2 + (py - NV.goal.y) ^ 2)
         NV.lastgd = gd
-        if NV.goal.cat == "exit" then
+        if NV.goal.stepin then
+            -- a shop without a keeper (NV.is_stepin): there when its prompt shows, at any
+            -- distance; never "close enough" (the Flammhuld inn: "Arrived" 152 below its
+            -- steps). The prompt speech says it ("Gasthaus, E"); one already up when the
+            -- walk began is said again.
+            if NV.stepin_prompt() then
+                log("NAVWALK step-in prompt: " .. tostring(M.popup_text))
+                nav_walk_stop()
+                if NV.prompt_at_start then speak(M.popup_text or tr("Arrived")) end
+                return
+            end
+        elseif NV.goal.cat == "exit" then
             -- exits are walked THROUGH (nav_drive pushes on past the last waypoint).
             -- The arrival is the transition: a fade (nav_drive ends the walk silently)
             -- or a teleport jump (below). NOT the area banner: leaving the study the
@@ -9805,7 +9881,16 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
         -- chest's other side (NV.item_spot) likewise)
         local gc = NV.goal and NV.goal.cat
         local reach = (gc == "event") and 60 or (gc == "spot") and 50 or 220
-        if gd >= 0 and gd < reach and gdz < LEVEL_THRESH and NV.goal_level(p, px, py, pz) ~= false then
+        if NV.goal and NV.goal.stepin and gd >= 0 and gd < 250 then
+            -- stuck at a step-in target: its prompt or the honest word (no wall is learned
+            -- this close to the target, so a re-route would take the same way again)
+            if NV.stepin_prompt() then
+                if NV.prompt_at_start then speak(M.popup_text or tr("Arrived")) end
+            else
+                speak(NV.stepin_fail(px, py, pz))
+            end
+        elseif gd >= 0 and gd < reach and gdz < LEVEL_THRESH and NV.goal_level(p, px, py, pz) ~= false
+            and not (NV.goal and NV.goal.stepin) then
             speak(tr("Arrived"))                       -- close enough to interact
             pcall(NV.face_goal)
         elseif NV.goal and (NV.noimprove or 0) < 2 and (NV.retries or 0) < 5 then

@@ -455,19 +455,34 @@ Open:
 
 ## Navigation
 
-- **Targets on a terrace: fixed, not walked yet.** In Flammhuld (2026-11-16) the inn
-  couldn't be reached: its trigger stands on a terrace about 170 over the street, 152
-  from where the walk ended and 129 over you. Every "same level" test took heights within
-  200-300 as one level, so the route search took its start for the goal, the walk said
-  "Arrived" at once below the terrace wall, and E went to the follower. Now a target's
-  floor counts, not its height: a down-trace under it (people and triggers don't block
-  it). Floors over 100 apart are one level only along stairs (the floor halfway is about
-  halfway up); a ledge is not. The search then looks for the way up, the walk doesn't
-  stop below, and the lists say "höher" / "tiefer" for such a target. Where the trace
-  starts inside something solid (a chest, a shut door) the old height rule stays.
-  Checked in a unit test only (a mock street, terrace and stairs). Not tried: the inn
-  itself, NPCs on steep stairs, exits on stairs. Log lines `ROUTE goal floor` and
-  `NAVWALK not at the goal's level`.
+- **The Flammhuld inn: its steps are blocked by two people.** (2026-11-16) The inn's
+  door is three stone steps up, about 170 over the street; its trigger (the "Gasthaus, E"
+  prompt) stands in the doorway. At the foot of the steps stand two people about 120
+  apart (centers): a man with a fur hat ("???", talkable) and a child (not talkable).
+  Tried by hand: walking up between them, the character stuck with both 80 away; the
+  gap (~40) is narrower than the character (~80). So the inn can't be entered right now,
+  by the walker or by hand. Unknown whether they move later.
+  - The walker said "Arrived" 152 away, beside the steps in front of the stone base.
+    Channel 0 sees neither the base nor the steps (CHPROBE "up ch0=- ch1=28 prof=28"),
+    so floors and routes took it all for street. The floor check (c38e2eb, below) didn't
+    help here for the same reason.
+  - Since then a shop without a keeper (its trigger is the target) is reached only when
+    its prompt shows, also on the way; at the end of the route the walker pushes on to
+    the trigger for 2 s. Stuck within 250 of it or no prompt: "Eingang nicht erreicht,
+    dort stehen 2 Personen" (people within 220 of the trigger; the follower doesn't
+    count). Unit test only; the inn's message is not heard yet.
+  - Not done: routes over steps and walls that channel 0 doesn't see. That needs floors by
+    the character's own collision profile, which isn't tried yet.
+- **Targets on a terrace: built, not walked yet.** Every "same level" test took heights
+  within 200-300 as one level. Since c38e2eb a target's floor counts, not its height: a
+  down-trace under it (people and triggers don't block it). Floors over 100 apart are one
+  level only along stairs (the floor halfway is about halfway up); a ledge is not. The
+  search then looks for the way up, the walk doesn't stop below, and the lists say "höher"
+  / "tiefer" for such a target. Where the trace starts inside something solid (a chest, a
+  shut door) the old height rule stays. Channel 0 must see the terrace (not so at the
+  Flammhuld inn, above). Checked in a unit test only (a mock street, terrace and stairs).
+  Not tried: a real terrace, NPCs on steep stairs, exits on stairs. Log lines `ROUTE goal
+  floor` and `NAVWALK not at the goal's level`.
 - **The radar in the background: built, not heard yet.** Since 7fb543a the radar fades
   out while another window is in front and back in when the game is, the same test the
   game mutes itself by (the front window belongs to the game's process). Not yet heard

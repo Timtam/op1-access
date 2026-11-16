@@ -65,10 +65,11 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   when Scrutinize reveals a hidden item: "New marker: hidden item, right, 3872"; the radar
   rings for it right away.
 - A walker: Backspace walks to the target over a computed route, also up and down narrow
-  stairs, up to terraces and around people, opens doors on the way and frees itself when
-  stuck. When
+  stairs and around people, opens doors on the way and frees itself when stuck. When
   someone blocks the only way, it says who ("Armer is in the way"). At a chest or a hidden
-  item it waits for the game's prompt and tries another side when none comes.
+  item it waits for the game's prompt and tries another side when none comes. A shop
+  that opens at its entrance (no keeper) counts as reached only when its prompt shows;
+  otherwise the walker says the entrance wasn't reached and how many people stand there.
 
 ### Battles
 
