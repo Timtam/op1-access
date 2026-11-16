@@ -5628,6 +5628,31 @@ M.find_all = function(cls, ttl)
     return list
 end
 M.fa_flush = function() M.fa_cache = {} end
+-- The level's fixed parts (exits, doors, shop counters) outlive a plain dialogue: the
+-- radar's rescan after each one searched for them again (~78 ms each, ~390 ms with
+-- chests and people; known issue 2026-11-15). Their lists are set aside when a scene
+-- starts and put back at its end if no fade came and the level is the same; every kept
+-- object's handle is still checked at each use (M.find_all). People and chests are
+-- searched again: a scene can move people, and a reward can be a new chest.
+M.FA_STATIC = { LevelTrigger_C = true, HouseEnterTriggerBP_C = true, ShopTriggerBP_C = true }
+M.fa_set_aside = function()
+    local keep, key = {}, M.level_id() or M.area_said
+    for cls in pairs(M.FA_STATIC) do
+        local c = M.fa_cache[cls]
+        if c and key ~= nil and c.key == key then keep[cls] = c end
+    end
+    M.fa_keep = next(keep) and { key = key, lists = keep } or nil
+end
+M.fa_put_back = function()
+    local k = M.fa_keep
+    M.fa_keep = nil
+    if not k then return end
+    local key = M.level_id() or M.area_said
+    if key == nil or key ~= k.key then return end
+    local n = 0
+    for cls, c in pairs(k.lists) do M.fa_cache[cls] = c; n = n + 1 end
+    log(string.format("FINDALL %d fixed lists kept through the scene (level %s)", n, tostring(key)))
+end
 local NAV_CLASSES = {
     { cls = "TreasureBoxBP_C",       name = "chest" },
     { cls = "LevelTrigger_C",        name = "exit" },     -- area transitions (the BP, not the C++ base)
@@ -10858,8 +10883,11 @@ radar_pump = function(src)
             WS.susp = susp
             log(susp and "RADAR suspended (event/transition)" or "RADAR resumed")
             -- a scene or transition may change the map: the kept object lists go, at
-            -- its start and at its end (nothing kept from inside it either)
+            -- its start and at its end (nothing kept from inside it either) -- except the
+            -- level's fixed parts after a scene without a fade (M.fa_set_aside)
+            if susp then pcall(M.fa_set_aside) end
             if M.fa_flush then M.fa_flush() end
+            if not susp then pcall(M.fa_put_back) end
             if susp then
                 -- MUTE the whole soundscape: suspended sources otherwise keep
                 -- ringing their last state straight through scene dialogue
@@ -10882,6 +10910,8 @@ radar_pump = function(src)
                 if beacon_on then beacon_rescan_at = now + 1.0 end
             end
         end
+        -- a fade, a missing player or a jump inside the scene: nothing set aside survives
+        if WS.susp and M.fa_keep and (fade_now or settling or now < WS.hold) then M.fa_keep = nil end
     end
     -- dispatch combos the shim's keyboard guard swallowed for us (handlers carry
     -- their own scene checks, so this stays outside the suspension gate)
