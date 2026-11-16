@@ -1385,6 +1385,9 @@ do
         local ready = false
         pcall(function() ready = m.AcceptControl and true or false end)
         if not ready then sl_idx = nil; return end
+        -- (save or load, and when: the dialog reader tells a confirmed load by it)
+        pcall(function() M.sl_save_mode = (m.IsSaveMode == true) end)
+        M.sl_seen_t = os.clock()
         local ci = nil
         pcall(function() ci = m.CursorIndex end)
         if ci == nil or ci == sl_idx then return end
@@ -1755,7 +1758,13 @@ do
     local go = { idx = nil }
     M.poll_gameover = function()
         local w, cls = M.get_active_screen()
-        if cls ~= "UIGameOver_C" then go.idx = nil; return end
+        if cls ~= "UIGameOver_C" then
+            -- left with "Weiter ab letztem Speicherpunkt" (the first item): a load, see
+            -- M.load_pending (poll_dialog)
+            if go.idx == 0 then M.load_pending = true end
+            go.idx = nil
+            return
+        end
         local ci
         pcall(function() ci = w.NowCursorPos end)
         if type(ci) ~= "number" or ci == go.idx then return end
@@ -4989,6 +4998,16 @@ poll_dialog = function()
             end
             last_select_owner, last_select_value = nil, nil
             M.dlg_closed_t = os.clock()
+            -- "Ja" (the first answer) on the question over the load list: a load starts.
+            -- Its area banner and "N objects here" are said again even for the place
+            -- you were at (2026-11-16: after "Return to Title" the same save loaded in
+            -- silence) -- reset when the load's fade comes up (radar pump), not before:
+            -- the old world's banner still holds its text until then.
+            if dlg_last_focus == 0 and M.sl_save_mode == false and M.sl_seen_t
+                and os.clock() - M.sl_seen_t < 60 then
+                M.load_pending = true
+                log("LOAD confirmed: area and object count will be said again")
+            end
         end
         dlg_visible, dlg_last_focus = false, nil
         return false
@@ -6334,11 +6353,13 @@ local function beacon_step()   -- driven by radar_pump while beacon_on
             if pl then x, y = read_actor_pos(pl) end
             local o = M.idle_from
             local far = not (o and x) or math.sqrt((x - o.x) ^ 2 + (y - o.y) ^ 2) > 600
-            if far or #beacon_objs ~= o.n then
+            -- (after a load always: M.load_resay, set when a confirmed load's fade came up)
+            if far or #beacon_objs ~= o.n or M.load_resay then
                 speak(trf("%d objects here", #beacon_objs))
             end
         end
         beacon_rescan_say = false
+        M.load_resay = nil
     end
     local p = get_player_obj()
     local px, py, pz
@@ -11083,6 +11104,14 @@ radar_pump = function(src)
         -- exists" (WS.px). Without this the title menu never announces.
         M.menu_unsafe = fade_now or (ev and WS.px ~= nil)
         M.fade_now, M.ev_now = fade_now, (ev and WS.px ~= nil) and true or false   -- M.poll_event_menus
+        -- a confirmed load's fade is up: forget the last area, and say the object count
+        -- after it (poll_dialog; M.idle_from can't just be dropped: the radar's moment
+        -- "live" before the fade sets it again)
+        if M.load_pending and fade_now then
+            M.load_pending = nil
+            M.area_said = nil
+            M.load_resay = true
+        end
         world_susp = susp   -- update BEFORE the transition handling below: the
                             -- deferred learn there must see the world as RESUMED
                             -- (it used to re-queue itself forever on stale state)
@@ -11217,7 +11246,7 @@ radar_pump = function(src)
             or ("idle (" .. (menu_open and "menu" or (talk_open and "talk" or "scene")) .. ")")))
         if explore then
             beacon_rescan_at  = now + 0.3                    -- re-enumerate this area
-            beacon_rescan_say = (WS.idle_reason ~= "menu")   -- announce count on area change, not menu close
+            beacon_rescan_say = (WS.idle_reason ~= "menu") or (M.load_resay == true)   -- announce count on area change / load, not menu close
         else
             -- a bubble conversation ends like a menu: no object count afterwards
             WS.idle_reason = (menu_open or talk_open) and "menu" or "scene"
