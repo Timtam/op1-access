@@ -5836,7 +5836,11 @@ M.nav_dir = nav_dir   -- (for M.marker_watch)
 -- (for scripts/i18n.py: texts said through tr(variable) -- nav_dir's pairs and the
 -- navigator's category names, NAV_CLASSES[].name / t.cat)
 M.I18N_NAV = { N_("up left"), N_("up right"), N_("down left"), N_("down right"), N_("chest"), N_("exit"),
-    N_("building"), N_("shop"), N_("npc"), N_("marker") }
+    N_("building"), N_("shop"), N_("marker") }
+-- The word for a category. The internal names stay (also cue and log keys); "npc" is
+-- said "person" (English 2026-11-16: "npc, 6 targets" was jargon).
+M.CAT_WORDS = { npc = N_("person") }
+M.cat_word = function(name) return tr(M.CAT_WORDS[name] or name) end
 local nav_last_px, nav_last_py = nil, nil
 local LEVEL_THRESH = 250  -- |dz| beyond this = another floor (one floor measured ~502 units; 250 clears same-floor jitter)
 local function nav_probe()
@@ -6994,7 +6998,7 @@ local function nav_announce(prefix)
         if okc and opened then who = who .. tr("opened") .. ", " end
     end
     speak(trf("%s%s %d of %d: %s%s, %d%s",
-        prefix or "", tr(t.cat), NV.idx, #NV.list, who, nav_dir(dx, dy), d, lvl))
+        prefix or "", M.cat_word(t.cat), NV.idx, #NV.list, who, nav_dir(dx, dy), d, lvl))
 end
 
 local function nav_cat_cycle(delta)
@@ -7020,7 +7024,7 @@ local function nav_cat_cycle(delta)
                 log("CHESTS opened/type: " .. table.concat(kinds, " "))
                 extra = trf(", %d opened", nopen)
             end
-            nav_announce(trn("%s, %d target%s. ", "%s, %d targets%s. ", #NV.list, tr(NAV_CLASSES[NV.cat].name), #NV.list, extra))
+            nav_announce(trn("%s, %d target%s. ", "%s, %d targets%s. ", #NV.list, M.cat_word(NAV_CLASSES[NV.cat].name), #NV.list, extra))
             log(string.format("NAVCAT %s: %.0f ms", NAV_CLASSES[NV.cat].name, (os.clock() - t0) * 1000))
             return
         end
@@ -7066,7 +7070,7 @@ local function nav_obj_cycle(delta)
     if world_susp then speak(M.battle_now and tr("In battle") or tr("Scene running")); return end
     if #NV.list > 0 and NV.list_stale() and NV.list_refresh() then
         if #NV.list == 0 then speak(tr("No targets here, control left or right for categories")); return end
-        nav_announce(trn("%s, %d target. ", "%s, %d targets. ", #NV.list, tr(NAV_CLASSES[NV.cat].name), #NV.list))
+        nav_announce(trn("%s, %d target. ", "%s, %d targets. ", #NV.list, M.cat_word(NAV_CLASSES[NV.cat].name), #NV.list))
         return
     end
     if #NV.list == 0 then nav_build_list() end
@@ -8246,7 +8250,7 @@ local function nav_info()
     if M.WM and M.WM.open and M.explore_now ~= true then pcall(M.wm_route_say); return end
     if #NV.list > 0 and NV.list_stale() and NV.list_refresh() then   -- after a teleport
         if #NV.list == 0 then speak(tr("Targets changed, none here")); return end
-        nav_announce(trn("Targets changed. %s, %d target. ", "Targets changed. %s, %d targets. ", #NV.list, tr(NAV_CLASSES[NV.cat].name), #NV.list))
+        nav_announce(trn("Targets changed. %s, %d target. ", "Targets changed. %s, %d targets. ", #NV.list, M.cat_word(NAV_CLASSES[NV.cat].name), #NV.list))
         return
     end
     local t = nav_target()
@@ -8260,7 +8264,7 @@ local function nav_info()
     local d = math.floor(math.sqrt(dx * dx + dy * dy) + 0.5)
     local lvl = tr("same level")
     if dz > LEVEL_THRESH then lvl = tr("above") elseif dz < -LEVEL_THRESH then lvl = tr("below") end
-    local base = trf("%s %d of %d, %s, %d, %s. ", tr(t.cat), NV.idx, #NV.list, nav_dir(dx, dy), d, lvl)
+    local base = trf("%s %d of %d, %s, %d, %s. ", M.cat_word(t.cat), NV.idx, #NV.list, nav_dir(dx, dy), d, lvl)
     local pts = nav_find_path(p, px, py, pz, ox, oy, oz)
     if pts then
         local desc, total = nav_describe_path(pts)
@@ -8519,7 +8523,7 @@ local function nav_walk_start(quiet)
     -- after a teleport: never walk to a target of the part we left (NV.list_stale)
     if #NV.list > 0 and NV.list_stale() and NV.list_refresh() then
         if #NV.list == 0 then speak(tr("Targets changed, none here")); return end
-        nav_announce(trn("Targets changed. %s, %d target. ", "Targets changed. %s, %d targets. ", #NV.list, tr(NAV_CLASSES[NV.cat].name), #NV.list))
+        nav_announce(trn("Targets changed. %s, %d target. ", "Targets changed. %s, %d targets. ", #NV.list, M.cat_word(NAV_CLASSES[NV.cat].name), #NV.list))
         return
     end
     local t = nav_target()
@@ -8570,7 +8574,7 @@ local function nav_walk_start(quiet)
             local dx, dy, dz = read_actor_pos(door)
             if dx and math.sqrt((dx - px) ^ 2 + (dy - py) ^ 2) > NV.ATDOOR then
                 NV.goal = { x = dx, y = dy, z = dz or pz, cat = "door", key = key }
-                local who = t.name and t.name:match("^[^,]+") or tr(t.cat)
+                local who = t.name and t.name:match("^[^,]+") or M.cat_word(t.cat)
                 speak(trf("%s is inside a building. Routing to its door, %d", who,
                     math.floor(math.sqrt((dx - px) ^ 2 + (dy - py) ^ 2) + 0.5)))
                 nav_route_begin("walk", dx, dy, dz or pz)
@@ -8593,7 +8597,7 @@ local function nav_walk_start(quiet)
         return
     end
     local d = math.floor(math.sqrt((ox - px) ^ 2 + (oy - py) ^ 2) + 0.5)
-    speak(trf("Routing to %s, %d", tr(t.cat), d))
+    speak(trf("Routing to %s, %d", M.cat_word(t.cat), d))
     nav_route_begin("walk", ox, oy, oz)
 end
 
