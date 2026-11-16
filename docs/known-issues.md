@@ -586,6 +586,14 @@ Open:
   said "not reachable" though the walk found the way. It also takes the whole area, as
   the walk does, and running out of traces there gives no verdict (checked again on the
   next list build).
+  Also since then the checks from one spot and the walk you start from that spot share
+  their traces (the walk never did: a door opened since would still look shut -- so not
+  within 150 of a door; E needs you within ~35 of one). The target you have selected is
+  checked with 10 ms slices instead of 4, so its cells are often traced before you press
+  Backspace. In a mock street (test_share.lua) the walk right after the check needed 508
+  new traces instead of 6482, the same route, still clear of a person standing in the
+  way. Not tried in the game; log line `ROUTE takes over the traces of the checks from
+  here`.
 - **Room detection only works for some buildings.** "Inside a building" comes from the
   box around a door's `Actor_Room` actors (good for the Atlasdam library), and since
   2026-11-14 the target must also be on the inner side of the doorway plane, so people

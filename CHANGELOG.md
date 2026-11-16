@@ -74,7 +74,8 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   other traces miss. Otherwise the walker says the entrance wasn't reached and how many
   people stand there. Before a target counts as not reachable, the search takes in the
   whole area, however far round the way goes. After a battle (or a menu), Backspace
-  walks on along the same route.
+  walks on along the same route. The route search is several times faster, most of all
+  for a target you have just picked.
 
 ### Battles
 

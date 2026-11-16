@@ -9099,6 +9099,8 @@ local function nav_route_step()
     local t0 = os.clock()
     local res, node = NV.route_slice(R, 8000, 30000, t0 + 0.040)
     R.cpu, R.ticks = (R.cpu or 0) + (os.clock() - t0), (R.ticks or 0) + 1
+    local bc = NV.bg_cache   -- (its traces stay the spot's while the search runs)
+    if bc and bc.g == R.gcache then bc.t = os.clock() end
     if res == "found" then nav_route_finish(node); return end
     if res == "fail" then
         -- out of cells in the box, or out of traces ("cap": 7000 ran out after 788 cells
@@ -9184,7 +9186,13 @@ local function nav_route_begin(mode, ox, oy, oz)
     NV.route = NV.route_job(mode, ox, oy, oz, px, py, pz)
     NV.route.people = people
     NV.route.stepin = stepin
-    if stepin then NV.route.groundch = NV_TRACE end
+    if stepin then
+        NV.route.groundch = NV_TRACE
+    else
+        -- the background checks' traces from this very spot (NV.share_traces)
+        local oks, shared = pcall(NV.share_traces, NV.route, px, py, pz)
+        if oks and shared then log("ROUTE takes over the traces of the checks from here") end
+    end
     if people then log(string.format("ROUTE keeps away from %d people", #people)) end
     if #walls > 0 then
         log(string.format("ROUTE keeps off %d learned walls", #walls))
@@ -9251,6 +9259,32 @@ NV.bg_record = function(job, ok, how, viadoor)
         ok and "ok" or "NOT reachable", how or "route", job.R and job.R.traces or 0, job.R and job.R.pops or 0,
         job.R and job.R.slides or 0, job.R and (os.clock() - job.R.started) or 0))
 end
+-- ONE SPOT, ONE SET OF TRACES (2026-11-16, user: make the walker faster). The ground and
+-- wall results of a search depend on its start (the grid is anchored there), not on the
+-- target, the people (kept away from by NV.person_on, outside the caches) or the learned
+-- walls (NV.walls_cross, outside too). So every search from the very same spot -- the
+-- background checks of the list, and the walk you start right after picking a target --
+-- shares them (NV.bg_cache): the focused target is checked first (NV.bg_front), and the
+-- walk then finds its cells traced already. "The very same spot": your position to the
+-- unit (you haven't moved), within 60 s of the last search there. Not for step-in routes
+-- (their floors come from another trace), and not within 150 of a door: one opened with
+-- E since (E needs you within ~35) would still count as shut. (Until 2026-11-16 only the
+-- background checks shared, and the walk never: "a door just opened would still look
+-- shut".) Returns true when R took the traces over; else R's own become the spot's.
+NV.share_traces = function(R, px, py, pz)
+    for _, dd in ipairs(R.doors or {}) do
+        if dd.cx and (dd.cx - px) ^ 2 + (dd.cy - py) ^ 2 < 150 * 150 then return false end
+    end
+    local c = NV.bg_cache
+    if c and c.x == px and c.y == py and c.z == pz and os.clock() - c.t < 60 then
+        R.gcache, R.ecache = c.g, c.e
+        R.eside, R.gcache2 = c.s or R.eside, c.g2 or R.gcache2
+        c.t = os.clock()
+        return true
+    end
+    NV.bg_cache = { x = px, y = py, z = pz, t = os.clock(), g = R.gcache, e = R.ecache, s = R.eside, g2 = R.gcache2 }
+    return false
+end
 -- Set up the check of target t from the player's spot; nil = nothing to search
 -- (gone, already known, behind a house door, or settled by a straight line).
 NV.bg_new = function(t, p, px, py, pz)
@@ -9289,20 +9323,14 @@ NV.bg_new = function(t, p, px, py, pz)
     job.R = NV.route_job("bg", tx, ty, tz, px, py, pz)
     job.R.stepin = stepin
     job.R.maxt = 60          -- slower slices: same trace budget, more time
-    -- checks from the same spot share their ground / wall caches (each one re-traced
-    -- the same cells otherwise); the walk router never uses them -- a door opened in
-    -- between would still look shut
+    -- checks from the same spot share their ground / wall caches with each other and with
+    -- the walk (NV.share_traces; NV.bg_step keeps them fresh while one runs -- a
+    -- whole-area check takes long, and the next one needs the same cells)
     -- (a step-in check measures its floors by another trace: no sharing)
-    local c = NV.bg_cache
     if stepin then
         job.R.groundch = NV_TRACE
-    elseif c and c.x == px and c.y == py and c.z == pz and os.clock() - c.t < 30 then
-        -- (30 s since a check last used them: NV.bg_step keeps c.t fresh while one runs --
-        -- a whole-area check takes longer, and the next one needs the same cells)
-        job.R.gcache, job.R.ecache = c.g, c.e
-        c.t = os.clock()
     else
-        NV.bg_cache = { x = px, y = py, z = pz, t = os.clock(), g = job.R.gcache, e = job.R.ecache }
+        NV.share_traces(job.R, px, py, pz)
     end
     -- walls learned here: the whole area at once, as for the walk (nav_route_begin)
     if #job.R.walls > 0 then job.R = NV.route_widen(job.R, true) or job.R end
@@ -9335,8 +9363,11 @@ NV.bg_step = function()      -- nav_tick, only while no walk or route runs
     -- 76 s ran out meanwhile, and it said "not reachable" -- the walk found the way)
     local now = os.clock()
     if job.R.ran and now - job.R.ran > 0.5 then job.R.started = job.R.started + (now - job.R.ran) end
-    -- quiet background work: traces for at most 4 ms per tick
-    local res, why = NV.route_slice(job.R, 800, 3000, now + 0.004)
+    -- quiet background work: traces for at most 4 ms per tick -- 10 ms for the target you
+    -- have selected: the walk you may start next takes its traces over (NV.share_traces)
+    local focused = job.t ~= nil and job.t == NV.list[NV.idx]
+    local res, why = NV.route_slice(job.R, focused and 2000 or 800, focused and 8000 or 3000,
+        now + (focused and 0.010 or 0.004))
     job.R.ran = os.clock()
     local bc = NV.bg_cache
     if bc and bc.g == job.R.gcache then bc.t = job.R.ran end
