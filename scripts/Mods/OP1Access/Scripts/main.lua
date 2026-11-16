@@ -7870,8 +7870,8 @@ local function nav_route_finish(goalnode)
     NV.route = nil
     if not R then return end
     if not goalnode then
-        log(string.format("ROUTE fail traces=%d pops=%d slides=%d people-blocked=%d no-room=%d capsule-floors=%d %.1fs",
-            R.traces, R.pops, R.slides or 0, R.ppl_hit or 0, R.nroom or 0, R.npawn or 0, os.clock() - R.started))
+        log(string.format("ROUTE fail traces=%d pops=%d slides=%d people-blocked=%d no-room=%d capsule-floors=%d too-narrow=%d %.1fs",
+            R.traces, R.pops, R.slides or 0, R.ppl_hit or 0, R.nroom or 0, R.npawn or 0, R.ntight or 0, os.clock() - R.started))
         -- people stood in the way of some steps: was it them? The same search without
         -- people; if that finds a way, the person on it is named (below, R.blame)
         if R.people and (R.ppl_hit or 0) > 0 and not R.nopeople and not R.capped then
@@ -8079,8 +8079,8 @@ local function nav_route_finish(goalnode)
     local ez = (door and R.mode == "walk") and (door.z or R.oz) or R.oz   -- the walk's end
     if ez - R.pz < -250 then floorword = ", " .. tr("downstairs")
     elseif ez - R.pz > 250 then floorword = ", " .. tr("upstairs") end
-    log(string.format("ROUTE ok cells=%d wps=%d traces=%d slides=%d no-room=%d capsule-floors=%d %.1fs (%d ticks, %.1f ms/tick, %.3f ms/trace)",
-        #chain, #pts, R.traces, R.slides or 0, R.nroom or 0, R.npawn or 0, os.clock() - R.started,
+    log(string.format("ROUTE ok cells=%d wps=%d traces=%d slides=%d no-room=%d capsule-floors=%d too-narrow=%d %.1fs (%d ticks, %.1f ms/tick, %.3f ms/trace)",
+        #chain, #pts, R.traces, R.slides or 0, R.nroom or 0, R.npawn or 0, R.ntight or 0, os.clock() - R.started,
         R.ticks or 0, (R.cpu or 0) * 1000 / math.max(1, R.ticks or 0), (R.cpu or 0) * 1000 / math.max(1, R.traces)))
     if R.mode == "walk" then
         if door then speak(tr("A shut door on the way")) end
@@ -8391,7 +8391,7 @@ NV.route_widen = function(R, whole)
     W.stepin, W.ofl_p, W.pl_all, W.groundch = R.stepin, R.ofl_p, R.pl_all, R.groundch
     W.traces, W.pops, W.started, W.saidlong = R.traces, R.pops, R.started, R.saidlong
     W.cpu, W.ticks, W.ran = R.cpu, R.ticks, R.ran
-    W.nroom, W.npawn = R.nroom, R.npawn
+    W.nroom, W.npawn, W.ntight = R.nroom, R.npawn, R.ntight
     W.shifted, W.pops0, W.shift_i = R.shifted, R.pops0, R.shift_i
     if pad == 40 then
         W.whole = true
@@ -8442,7 +8442,7 @@ NV.route_shift = function(R, why)
                 W.pops0 = R.shifted and R.pops0 or R.pops
                 W.traces, W.started, W.saidlong = R.traces, R.started, R.saidlong
                 W.cpu, W.ticks, W.ran = R.cpu, R.ticks, R.ran
-                W.nroom, W.npawn = R.nroom, R.npawn
+                W.nroom, W.npawn, W.ntight = R.nroom, R.npawn, R.ntight
                 if R.whole then   -- (the whole area again, without caches)
                     W.maxtr = R.traces + NV.whole_traces(W)
                     W.maxt = (os.clock() - R.started) + NV.whole_time(W)
@@ -9052,6 +9052,32 @@ NV.route_slice = function(R, budget, itercap, deadline)
                                     if diag or (R.stepin and not NV.stepin_person_at(R, ax0, ay0, bx0, by0, best.z)) then
                                         w = false
                                     else
+                                        w = "soft"
+                                    end
+                                elseif not diag and not R.stepin then
+                                    -- THE BODY'S SIDES on the capsule's own profile too
+                                    -- (2026-11-16): channel 0's side lines don't see invisible
+                                    -- walls, so the centre line alone passed gaps between two
+                                    -- volumes narrower than the character (one under the Maiya
+                                    -- bridge's east side, ~72 in the level file). Lines 40 to
+                                    -- each side (the capsule's radius is ~42: CHPROBE hits at
+                                    -- 28-32 from 12 out): both hit -> narrower than the body,
+                                    -- no step; one -> it grazes a wall, "soft" (the routes keep
+                                    -- off invisible walls as off visible ones). Not on step-in
+                                    -- routes (the inn's narrow side stairs, centre line only).
+                                    local sides = 0
+                                    for _, off in ipairs({ 1, -1 }) do
+                                        R.traces = R.traces + 1
+                                        budget = budget - 1
+                                        local oks, hits = line_blocked(ksl, p,
+                                            ax0 + pox * off * 40 / 42, ay0 + poy * off * 40 / 42, best.z + 55,
+                                            bx0 + pox * off * 40 / 42, by0 + poy * off * 40 / 42, zb + 55, NV_TRACE)
+                                        if oks and hits then sides = sides + 1 end
+                                    end
+                                    if sides == 2 then
+                                        w = false
+                                        R.ntight = (R.ntight or 0) + 1
+                                    elseif sides == 1 then
                                         w = "soft"
                                     end
                                 end

@@ -584,10 +584,14 @@ Open:
     out of cells), no wading.
   - Not tried in the game. Log: `no-room=` and `capsule-floors=` in `ROUTE ok` / `ROUTE
     fail`, and `@z` in `ROUTE cells` where the floor changes by more than 40.
-  - Still open: the side lines of a step are channel 0 only, so a gap between two
-    invisible volumes narrower than the character (one under the bridge's east side looks
-    ~72 wide in the level file) can still pass the centre line. The level files hold all
-    blocking volumes; reading them needs a package parser (done by hand for F_Sea_1_1).
+  - Gaps between invisible volumes: a straight step now also traces the character's own
+    profile 40 to each side (the capsule's radius is ~42). Both hit: narrower than the
+    body, no step (one under the bridge's east side looks ~72 wide in the level file); one
+    hits: it grazes a wall, a "soft" step, so routes keep off invisible walls as off
+    visible ones. Not on step-in routes (the inn's narrow side stairs). Mock: a 70-wide gap
+    in an invisible wall is no way, a 160-wide one is. Costs ~20% more traces. Log:
+    `too-narrow=` in `ROUTE ok` / `ROUTE fail`.
+  - The level files hold all blocking volumes: `scripts/level-dump.py` lists them.
 - **After a battle the walk goes on with its route: built, not tried yet.** (2026-11-16)
   A battle, a menu, a speech bubble or a scene stops the walk ("Angehalten"), and the
   route is kept. The next Backspace for the same target walks on with it from where you
