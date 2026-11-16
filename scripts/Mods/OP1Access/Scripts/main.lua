@@ -1647,9 +1647,14 @@ do
                 if vis then mw = e[1] end
             end
         end
-        if not mw then mm_idx = nil; sub_idx = nil; mm_away = nil; return end
+        -- (the "no objective" flag goes with the menu: it outlived a "Return to Title"
+        -- from the submenu and skipped the objective after the next load -- review)
+        if not mw then mm_idx = nil; sub_idx = nil; mm_away = nil; M.mm_no_objective = nil; return end
         -- Another screen on top (an item list, the options, a dialog): nothing to say here.
-        -- Back on the menu, its selected entry again, without the objective.
+        -- Back on the menu, its selected entry again, without the objective. Not while the
+        -- world map is open: a dialog over it (fast travel? "No") is no way back to the
+        -- list, and "World Map" then sounded as if the map had closed; the map's own reader
+        -- says the entry again when it closes (M.mainmenu_reannounce).
         local _, acls = M.get_active_screen()
         if acls and acls ~= "MainMenuWidget_C" then
             if not mm_away then log("MAINMENU under " .. acls) end
@@ -1659,8 +1664,10 @@ do
         if mm_away and acls == "MainMenuWidget_C" then
             log("MAINMENU back from " .. tostring(mm_away))
             mm_away = nil
-            mm_idx, sub_idx = nil, nil
-            M.mm_no_objective = true
+            if not (M.WM and M.WM.open) then
+                mm_idx, sub_idx = nil, nil
+                M.mm_no_objective = true
+            end
         end
         -- The "Verschiedenes" submenu (2026-11-16: it was silent): MainMenuEtcWidget_C
         -- (object dump: CursorSelect @0x260 indexes SubItemList @0x250, MainMenuSubItemPanel_C
@@ -1692,6 +1699,10 @@ do
             return
         end
         if sub_idx ~= nil then   -- back from the submenu: the category again, no objective
+            -- ... but only on the list (MainState 0): any other state is a screen of the
+            -- menu opening (Settings from the submenu left 13 a moment before the active
+            -- stack had the options, and "Verschiedenes" was said in passing)
+            if ms ~= nil and ms ~= 0 then return end
             sub_idx = nil
             mm_idx = nil
             M.mm_no_objective = true
