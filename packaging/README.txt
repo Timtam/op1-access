@@ -5,7 +5,9 @@ A screen reader accessibility mod for the Steam version of Octopath Traveler.
 Instructions, keys and updates: {PROJECT_URL}
 
 Files in this folder
-- Scripts\main.lua: the mod (a UE4SS Lua mod).
+- Scripts\main.lua: the mod (a UE4SS Lua mod). Scripts\worldlinks.lua: the links between the
+  areas, for the world map's route finder. Scripts\lang: the mod's texts in other languages
+  (German so far); the mod follows the game's text language.
 - Scripts\OP1AccessShim.dll: speech and braille through your screen reader (Prism), the 3D radar
   sounds (Steam Audio) and the game hooks. Scripts\buildinfo.lua holds the version.
 - Assets: the radar sounds. You can put your own there, see Assets\README.md; the installer keeps
@@ -27,8 +29,10 @@ Octopath_Traveler.exe. In Steam, open the context menu of Octopath Traveler and 
 Browse local files to find it. Everything lands in Octopath_Traveler\Binaries\Win64: UE4SS
 {UE4SS_VERSION} (dwmapi.dll, UE4SS.dll, UE4SS-settings.ini and the folder Mods), phonon.dll and the
 mod in Mods\OP1Access. If UE4SS is installed already, Mods\OP1Access and phonon.dll are enough; add
-the line "OP1Access : 1" to Mods\mods.txt.
-Start the game with your screen reader running. You hear "OP1 Access loaded".
+the line "OP1Access : 1" to Mods\mods.txt and set "GuiConsoleEnabled = 0" in UE4SS-settings.ini
+(UE4SS's console window would take the focus away from the game).
+Start the game with your screen reader running. You hear "OP1 Access loaded" ("OP1 Access
+geladen" when the game's text language is German).
 
 Updates
 The mod tells you when a new version is out. Press F5 twice to install it: the game closes, the
