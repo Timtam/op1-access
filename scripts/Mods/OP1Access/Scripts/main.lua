@@ -6156,6 +6156,8 @@ local function beacon_rescan()
                 -- reads each one's live position. Cap defends against huge towns.
                 if okv and #beacon_objs < 128 then
                     local keep = true
+                    -- a lighting zone is no building (M.house_is_zone)
+                    if c.name == "building" and M.actor_is_zone and M.actor_is_zone(o) then keep = false end
                     if c.name == "npc" then
                         local why, nm
                         keep, why, nm = npc_interesting(o)
@@ -6650,6 +6652,8 @@ local function nav_build_list()
             local ox, oy = read_actor_pos(o)
             if ox then
                 local keep, nm = true, nil
+                -- a lighting zone is no building (M.house_is_zone)
+                if c.name == "building" and M.actor_is_zone and M.actor_is_zone(o) then keep = false end
                 if c.name == "npc" then
                     local ok2, k, why, n = pcall(npc_interesting, o)
                     if ok2 then keep, nm = k, n else keep = false end
@@ -6803,6 +6807,29 @@ M.house_entered = function(daddr)
     if v == nil then return nil end
     return v ~= 0
 end
+-- The door that shuts behind you: DoorObj (+0x450) / DoorMeshComp (+0x458), raw reads.
+-- Open doorways (the academy's inner rooms) have none.
+M.house_has_door = function(daddr)
+    if not (shim and shim.Peek and daddr and daddr ~= 0) then return true end
+    local d, m = shim.Peek(daddr + 0x450, "ptr"), shim.Peek(daddr + 0x458, "ptr")
+    if d == nil and m == nil then return true end   -- unreadable: as before
+    return (d ~= nil and d ~= 0) or (m ~= nil and m ~= 0)
+end
+-- A trigger that only switches the light (2026-11-16, the academy's SchoolLighting_Out,
+-- _IN and _In_Library): ForceHouseOut (+0x4B4) set and no door. Not a building: no
+-- beacon, not in the list, never "the house you are in". By the study's entrance
+-- SchoolLighting_Out's IsHouseEnter stayed set, so every walk first headed for it,
+-- 2184 away a floor up, and found no way ("Not reachable").
+M.house_is_zone = function(daddr)
+    if not (shim and shim.Peek and daddr and daddr ~= 0) then return false end
+    return shim.Peek(daddr + 0x4B4, "u8") == 1 and not M.house_has_door(daddr)
+end
+-- the same for an actor (nil-safe; other classes are never zones)
+M.actor_is_zone = function(o)
+    local a = 0
+    pcall(function() a = o:GetAddress() end)
+    return a ~= 0 and M.house_is_zone(a)
+end
 M.house_door_for = function(tx, ty, tz, px, py, pz, dolog, allow_plane)
     if M.house_cache_area ~= M.area_said then
         M.house_cache, M.plane_cache, M.house_cache_area = {}, {}, M.area_said
@@ -6816,6 +6843,7 @@ M.house_door_for = function(tx, ty, tz, px, py, pz, dolog, allow_plane)
         pcall(function() okv = door:IsValid() end)
         local daddr = 0
         if okv then pcall(function() daddr = door:GetAddress() end) end
+        if daddr ~= 0 and M.house_is_zone(daddr) then daddr = 0 end   -- a light switch, no house
         if daddr ~= 0 then
             local dx, dy, dz = read_actor_pos(door)
             local box = dx and M.house_box(door, daddr, dx, dy) or nil
@@ -6868,8 +6896,10 @@ M.house_door_for = function(tx, ty, tz, px, py, pz, dolog, allow_plane)
             if it and not (ipb or ip) and dt < 2500 and dt < bestd then
                 best, bestd, besthow = door, dt, how                -- the door nearest the TARGET
             end
-            if ip and not it and dp < 2500 and dp < pbestd then
-                pbest, pbestd = door, dp                            -- the house the PLAYER is in
+            -- the house the PLAYER is in -- only behind a door that shuts (an open doorway
+            -- needs no detour: the route goes through it)
+            if ip and not it and dp < 2500 and dp < pbestd and M.house_has_door(daddr) then
+                pbest, pbestd = door, dp
             end
         end
     end
@@ -7380,6 +7410,7 @@ M.door_list = function()
             pcall(function() okv = door:IsValid() end)
             local daddr = 0
             if okv then pcall(function() daddr = door:GetAddress() end) end
+            if daddr ~= 0 and M.house_is_zone(daddr) then daddr = 0 end   -- a light switch
             if daddr ~= 0 then
                 local dx, dy, dz = read_actor_pos(door)
                 local pl = dx and M.house_plane(door, daddr, dx, dy)
