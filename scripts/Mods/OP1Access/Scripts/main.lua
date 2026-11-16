@@ -6794,8 +6794,8 @@ end
 -- fields in the object dump: IsOpenFlag (bool, +0x3F8) -- set at load from the save
 -- (the BP's AlreadyOpenCheck) and when you open it. Checked in the study: all 7 open
 -- in Slot 1, none in the older autosave, and "opened" right after E on one. ObjectType
--- (byte, +0x410; 1 and 2 seen there, meaning unknown -- the BP has wood and thief
--- materials) is only logged ("CHESTS opened/type"). Raw SEH reads by address
+-- (byte, +0x410: 1 wood, 2 the plain chest, 3 thief, 4 a hidden item -- see
+-- M.chest_purple) is logged ("CHESTS opened/type"). Raw SEH reads by address
 -- (shim.Peek), fresh at every announce: a chest streamed out meanwhile can't fault.
 -- Returns opened (bool), type (number) -- or nil.
 M.chest_state = function(t)
@@ -6803,6 +6803,32 @@ M.chest_state = function(t)
     local f = shim.Peek(t.addr + 0x3F8, "u8")
     if f == nil then return nil end
     return f ~= 0, shim.Peek(t.addr + 0x410, "u8")
+end
+-- A purple (thief) chest, which only opens with a certain traveler in the party
+-- (2026-11-16): its closed or open mesh (CloseTresture_A_02 +0x3F0, OpenTresture_A_02
+-- +0x3E8) wears the BP's thief material (ObjMI_TreasureClose_Theif +0x420 /
+-- ObjMI_Treasure_Theif +0x418); MeshComponent.OverrideMaterials is at +0x690. Seen on
+-- the flats: ObjectType 1 wears the wood material, 2 (and 4, a hidden item) a third
+-- one; ObjectType 3 (Felsfall, the path to the Whisperwood) is the thief chest by
+-- elimination, so the material decides, not the number. Raw reads, nil if unreadable.
+M.chest_purple = function(t)
+    if not (t and t.addr and shim and shim.Peek) then return nil end
+    local a = t.addr
+    local th_c, th_o = shim.Peek(a + 0x420, "ptr"), shim.Peek(a + 0x418, "ptr")
+    if not th_c and not th_o then return nil end
+    for _, off in ipairs({ 0x3F0, 0x3E8 }) do
+        local comp = shim.Peek(a + off, "ptr")
+        if comp and comp ~= 0 then
+            local arr, n = shim.Peek(comp + 0x690, "ptr"), shim.Peek(comp + 0x698, "i32")
+            if arr and arr ~= 0 and type(n) == "number" and n > 0 and n <= 8 then
+                for i = 0, n - 1 do
+                    local m = shim.Peek(arr + 8 * i, "ptr")
+                    if m and m ~= 0 and (m == th_c or m == th_o) then return true end
+                end
+            end
+        end
+    end
+    return false
 end
 -- Nearest first, but targets known to be unreachable from here (a failed walk or the
 -- background check) last; then queue the list for the background check.
@@ -7102,6 +7128,8 @@ local function nav_announce(prefix)
     if t.cat == "chest" then
         local okc, opened = pcall(M.chest_state, t)
         if okc and opened then who = who .. tr("opened") .. ", " end
+        local okp, purple = pcall(M.chest_purple, t)
+        if okp and purple then who = who .. tr("purple") .. ", " end
     end
     speak(trf("%s%s %d of %d: %s%s, %d%s",
         prefix or "", M.cat_word(t.cat), NV.idx, #NV.list, who, nav_dir(dx, dy), d, lvl))
@@ -7125,7 +7153,9 @@ local function nav_cat_cycle(delta)
                 for _, t in ipairs(NV.list) do
                     local okc, opened, otype = pcall(M.chest_state, t)
                     if okc and opened then nopen = nopen + 1 end
-                    kinds[#kinds + 1] = string.format("%s/%s", tostring(okc and opened), tostring(otype))
+                    local okp, purple = pcall(M.chest_purple, t)
+                    kinds[#kinds + 1] = string.format("%s/%s%s", tostring(okc and opened), tostring(otype),
+                        (okp and purple) and "/purple" or "")
                 end
                 log("CHESTS opened/type: " .. table.concat(kinds, " "))
                 extra = trf(", %d opened", nopen)
