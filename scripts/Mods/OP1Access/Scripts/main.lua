@@ -104,10 +104,8 @@ end
 -- writes money with its own glyph "⑳" (U+2473; GameText eMONEY_UNIT in every language:
 -- "Ein Zimmer kostet Euch ⑳10.", the shop's "3.756 ⑳"). It never names the currency in
 -- words -- the German text has no "Blätter" at all -- so the word comes from this table,
--- by the game's text language (the user wants it in the game's language). The language:
--- the text of BASIC_COMMAND_001 ("None", "Keine", "Rien" ...: different in all nine
--- GameText tables), read again every 30 s (the options can change it). Every spoken line
--- goes through M.money_text.
+-- by the game's text language (the user wants it in the game's language; M.game_lang
+-- below). Every spoken line goes through M.money_text.
 M.MONEY_SIGN = "\226\145\179"
 M.MONEY_WORDS = {
     en = { "leaf", "leaves" }, de = { "Blatt", "Blätter" }, fr = { "feuille", "feuilles" },
@@ -116,15 +114,48 @@ M.MONEY_WORDS = {
 }
 M.LANG_BY_NONE = { ["None"] = "en", ["Keine"] = "de", ["Rien"] = "fr", ["Nada"] = "es",
     ["Nessuno"] = "it", ["なし"] = "ja", ["없음"] = "ko", ["无"] = "zh_cn", ["無"] = "zh_tw" }
+-- The game's own setting first: KSGameStatics:GetLanguage() -> EKSLanguage (the option
+-- "Textsprache"; it switches the text at once). The text of BASIC_COMMAND_001 alone missed
+-- the switch to English (2026-11-16: the mod stayed German). A UFunction call, so only
+-- on the game thread (UE4SS runs queued game-thread work on whatever thread calls one);
+-- other threads get the last answer. Every 5 s, every 2 s until known.
+M.LANG_BY_ENUM = { [0] = "ja", [1] = "en", [2] = "it", [3] = "fr", [4] = "de", [5] = "es",
+    [6] = "zh_tw", [7] = "zh_cn", [8] = "ko" }
 do
-    local lang, lang_t = nil, -99
+    local lang, lang_t, gs, unknown = nil, -99, nil, {}
     M.game_lang = function()
         local now = os.clock()
-        if now - lang_t < (lang and 30 or 2) then return lang or M.lang_last or "en" end
+        if now - lang_t < (lang and 5 or 2) then return lang or M.lang_last or "en" end
+        local gt = false
+        if shim and shim.IsGameThread then
+            local okg, isg = pcall(shim.IsGameThread)
+            gt = okg and isg == true
+        end
+        if lang and not gt then return lang end   -- known: the next game-thread call asks
         lang_t = now
-        local s
-        if M.gt_label then s = M.gt_label("BASIC_COMMAND_001") end
-        local l = s and M.LANG_BY_NONE[s]
+        local l
+        if gt then
+            pcall(function()
+                if not gs then gs = StaticFindObject("/Script/Octopath_Traveler.Default__KSGameStatics") end
+                if gs and gs:IsValid() then
+                    local v = gs:GetLanguage()
+                    l = M.LANG_BY_ENUM[tonumber(v)]
+                    if not l and not unknown[tostring(v)] then
+                        unknown[tostring(v)] = true
+                        log("LANG: GetLanguage() gave " .. tostring(v) .. " (" .. type(v) .. ")")
+                    end
+                end
+            end)
+        end
+        if not l then
+            local s
+            if M.gt_label then s = M.gt_label("BASIC_COMMAND_001") end
+            l = s and M.LANG_BY_NONE[s]
+            if s and not l and not unknown[s] then
+                unknown[s] = true
+                log("LANG: BASIC_COMMAND_001 is '" .. s .. "' (not in the table)")
+            end
+        end
         if l and l ~= lang then
             log("LANG: game text language " .. l)
             if l ~= M.lang_last and M.lang_save then pcall(M.lang_save, l) end
@@ -139,7 +170,7 @@ end
 -- trn("1 thing", "%d things", n) -- English is the key, like gettext. The translations
 -- are gettext .po files, Scripts/lang/<language>.po (de.po; Poedit or any text editor),
 -- made from Scripts/lang/op1access.pot, which scripts/i18n.py extracts from this file.
--- The language follows the game's text language (M.game_lang, re-read every 30 s);
+-- The language follows the game's text language (M.game_lang, re-read every 5 s);
 -- English, or a language without a .po, says the English text. The last language seen
 -- is kept in lang/last.txt, so the first lines after a start ("OP1 Access loaded") are
 -- in it too. N_("text") only marks a text for the .pot (tables of labels: translated
@@ -4373,6 +4404,7 @@ pcall(RegisterKeyBind, Key.F5, function() pcall(M.update_key) end)
 if M.has_update_source() then pcall(M.update_check, false) end
 
 M.fast_steps = {
+    { "lang", function() M.game_lang() end },   -- the text language, before anything speaks
     { "scan", function() if M.scan_scene and not M.field_player and not M.menu_unsafe then M.scan_scene() end end },
     { "active", function() poll_active_menu() end },
     { "saveload", function() M.poll_saveload() end },
