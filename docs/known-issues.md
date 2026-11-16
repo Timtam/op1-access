@@ -74,9 +74,15 @@ Read since 2026-11-14 (8e180e2) from the object dump and a screenshot of the scr
 Heard on 2026-11-15 (Cyrus alone lost a battle on the flats): "Cyrus down", "Game over",
 "Weiter ab letztem Speicherpunkt", Down "Zum Titelbildschirm". Loading a save from the
 title after that crashed the game every time until 2b0e87f (kept title widgets touched
-after the load freed them); three runs since loaded fine, the last with the radar idle
-on the title (0212d98; before, it went "live" there).
+after the load freed them); five runs since loaded fine (English and German, the last
+with every kept object guarded), the radar idle on the title (0212d98). Since 9d9c1ab
+and ec3456c a load says the area and "N Objekte hier" again even at the place you were
+("Return to Title" and the same save: was silence), and "Weiter ab letztem
+Speicherpunkt" says the object count (a jump to the save point, no banner, so no area).
 
+- **A dialog over the world map is untested since dc28732.** After "No" to the fast-travel
+  question the menu no longer says "World Map" while the map is still open (review
+  finding); the saves had no other town to travel to, so it wasn't heard.
 - **The area name can come between the game over items** ("Game over", "Resume from last
   save point", "Atlasdam, Flatlands", "Return to title"; 2026-11-16, English test). The
   walk had crossed into Atlasdam's part of the flats as the battle began; its banner was
