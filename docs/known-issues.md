@@ -563,6 +563,13 @@ Open:
     up-left: all reachable only via the stairs outside the small box). Atlasdam's
     buildings at ~16000 units and one "2922, above" were "not reachable" with the +40
     box; not tried again.
+- **After a battle the walk goes on with its route: built, not tried yet.** (2026-11-16)
+  A battle, a menu, a speech bubble or a scene stops the walk ("Angehalten"), and the
+  route is kept. The next Backspace for the same target walks on with it from where you
+  stand ("Gehe los, dieselbe Route wie vorhin, insgesamt ..."), without a new search: if
+  you stand within 150 of the rest of the route, in the same area, within 15 minutes,
+  and the target (a person) moved less than 100. Otherwise it searches anew, as before.
+  Log line `NAVWALK on with the old route`.
 - **The list is checked in the background, but not everything** (user request
   2026-11-13: offer only targets you can reach, or say which you can't). While you
   explore, the walk router checks the open list quietly (40 traces per tick), nearest

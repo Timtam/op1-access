@@ -9723,6 +9723,46 @@ NV.door_leg_near = function(key, dd)
     local w = NV.door_walked_on
     return not (w and w.key == key and os.clock() - w.t < 30)
 end
+-- WALKING ON AFTER A BATTLE (2026-11-16, user: after a battle the chest wasn't found any
+-- more). A battle -- or a menu, a speech bubble, a scene -- stops the walk, and nav_drive
+-- keeps its route (NV.paused). The next Backspace for the same target walks on with it
+-- from where you stand, without a new search: on the path to the Maiya caves the search
+-- from the battle's spot ran out of traces, yet the route the walk was on was fine. Only
+-- in the same area, within 15 minutes, for the same target (a person who moved more than
+-- 100 since: a new search), and from within 150 of the route's rest.
+-- The leg (i -> i+1) of the rest (from the leg being walked) nearest to (px,py): i, distance.
+NV.resume_index = function(path, wp, px, py)
+    local best, bi = math.huge, nil
+    for i = math.max(1, wp - 1), #path - 1 do
+        local a, b = path[i], path[i + 1]
+        local dx, dy = b.x - a.x, b.y - a.y
+        local l2 = dx * dx + dy * dy
+        local t = (l2 > 0) and math.max(0, math.min(1, ((px - a.x) * dx + (py - a.y) * dy) / l2)) or 0
+        local cx, cy = a.x + dx * t - px, a.y + dy * t - py
+        local d = math.sqrt(cx * cx + cy * cy)
+        if d < best then best, bi = d, i end
+    end
+    return bi, best
+end
+NV.resume_paused = function(pr, key, cat, ox, oy, px, py)
+    local g = pr.goal
+    if not (g and key and g.key == key) or pr.area ~= M.area_said or os.clock() - pr.t > 900 then return false end
+    -- the target itself was the goal (not a door on the way): still where it was?
+    if g.cat == cat and math.sqrt((g.x - ox) ^ 2 + (g.y - oy) ^ 2) > 100 then return false end
+    local i, d = NV.resume_index(pr.path, pr.wp, px, py)
+    if not i or d > 150 then
+        log(string.format("NAVWALK the old route is %.0f away: a new search", d or -1))
+        return false
+    end
+    local pts = { { x = px, y = py } }
+    for j = i + 1, #pr.path do pts[#pts + 1] = pr.path[j] end
+    NV.goal = g
+    NV.push, NV.retries, NV.bestgoal, NV.noimprove = nil, 0, nil, 0
+    NV.escapes, NV.last_escape, NV.approach, NV.iapproach = 0, nil, nil, nil
+    log(string.format("NAVWALK on with the old route: %.0f from its leg %d of %d", d, i, #pr.path - 1))
+    nav_walk_begin_path(pts, tr("same route as before"))
+    return true
+end
 local function nav_walk_start(quiet)
     NV.ctrlkey_t = os.clock()
     -- plain Backspace is also the GAME's cancel key ("Rück Zurück"): pressed in a menu,
@@ -9754,6 +9794,10 @@ local function nav_walk_start(quiet)
     if not (px and ox) then speak(tr("Target lost")); return end
     oz = oz or pz
     local key = NV.tkey(t)
+    -- the route a battle (a menu, a scene) cut short: on with it (NV.resume_paused)
+    local pr = NV.paused
+    NV.paused = nil
+    if pr and NV.resume_paused(pr, key, t.walkcat or t.cat, ox, oy, px, py) then return end
     NV.goal = { x = ox, y = oy, z = oz, cat = t.walkcat or t.cat, key = key }
     if NV.is_stepin(t) then   -- a shop without a keeper: reached at its prompt
         NV.goal.stepin = true
@@ -9840,6 +9884,8 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
         -- (NV.face) too: it held its keys through the scene.
         if nav_walking or NV.route or NV.face then
             local waswalking = nav_walking
+            -- (not a route the walk is just freeing itself from: it got stuck on it)
+            local path, wp = (not NV.unwedge) and NV.path or nil, NV.wp
             -- the game may miss this release (M.unstick_arm): key-ups again later
             M.unstick_arm(NV.held, NV.unwedge and NV.unwedge.held, NV.face and NV.face.held)
             nav_walking = false
@@ -9854,6 +9900,12 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
             local into_exit = NV.goal and NV.goal.cat == "exit" and (NV.push or (NV.lastgd or 1e9) < 450)
             -- a story event's spot: its scene starting is the arrival, as an exit's fade
             local into_event = NV.goal and NV.goal.cat == "event" and (NV.lastgd or 1e9) < 450
+            -- a battle (a menu, a scene) cut the walk short: its route is kept for the next
+            -- Backspace (NV.resume_paused). Only values here -- no actor reads while the
+            -- battle's transition may be tearing the field down.
+            if waswalking and path and wp and NV.goal and not (into_exit or into_event) then
+                NV.paused = { path = path, wp = wp, goal = NV.goal, area = M.area_said, t = os.clock() }
+            end
             if waswalking and not (into_exit or into_event) then speak(tr("Walk stopped")) end
             if into_exit then log("NAVWALK through exit") end
             if into_event then log("NAVWALK into the event") end
