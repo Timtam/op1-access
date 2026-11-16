@@ -25,7 +25,7 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
 
 - Title screen, character select, save and load (also at save points), options and confirm
   dialogs.
-- Main menu: categories, the current objective (also with Q), inventory (tabs, items with count
+- Main menu: categories, the current objective (also with Q, at any time), inventory (tabs, items with count
   and description, whom an item is for), abilities (learning skills with costs, support skills),
   equipment (slots, items and what they would change), the tutorials and the
   Miscellaneous submenu (settings, tutorial, back to the title, quit). Back from a list, the

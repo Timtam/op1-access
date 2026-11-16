@@ -350,14 +350,12 @@ Open:
   lock bookkeeping as the c0000264 crash (one Leave too many), here as a deadlock. No
   shim frames; nothing in the mod can repair the lock. Seen once; the game had to be
   killed.
-- **Q says "No objective" until the menu was opened once.** The objective comes from
-  the menu's party panel (`PartyCharacterList_C.NowPlayingStoryPanel`), which is filled
-  when the menu opens. After a load, Q in the field had nothing to read; after opening
-  and closing the menu it read "Objective: Zum unterirdischen Studierzimmer gehen."
-  The game picks it from /Game/Mission/Database/NextPurposeData by story flags
-  (IsEventFlagCheck, ShowStartFlag/ShowEndFlag); reading those flags from Lua would mean
-  calling Blueprint functions with out parameters, which crashed before. Between
-  chapters there is no objective at all (Slot 1 after Cyrus' chapter 1).
+- **The objective with several travelers was not heard.** Since f4c904f Q and the menu
+  take the objective from the story flags (NextPurposeData, KSSaveGame:GetBitFlag), for
+  each main party member, leader first, with the traveler's name when several have one
+  ("Cyrus: ..."). Tried with Cyrus alone (academy autosave, Slot 1 between chapters,
+  both through "Return to Title"). The names are a fixed list (Olberic ... Alfyn), the
+  same in German and English.
 
 ## Menus
 
