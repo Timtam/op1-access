@@ -9346,6 +9346,24 @@ M.poll_area_name = function()
         end
     end
     local key = area .. "|" .. (region or "")
+    -- A story title on the same banner ('So begins the tale of "Kit, the Traveler."',
+    -- 2026-11-16: said as an area, with the danger level of the place): no region text
+    -- and no region label (areas have eAREA_NAME_xx; this one SMR_SS_EX1_013100_TITLE /
+    -- None). Said as it is, once; the area stays what it was (no walk stop, no rescan).
+    if not region or region == "" then
+        local rl
+        pcall(function() rl = w.RegionNameLabel:ToString() end)
+        if not (type(rl) == "string" and rl:find("^eAREA")) then
+            if key ~= M.title_banner_said then
+                M.title_banner_said = key
+                local ml
+                pcall(function() ml = w.MapNameLabel:ToString() end)
+                log("AREA title banner: " .. area .. " labels=" .. tostring(ml) .. "/" .. tostring(rl))
+                speak(area, false)
+            end
+            return
+        end
+    end
     if key == M.area_said then return end
     M.area_said = key
     M.area_t = os.clock()   -- a walk into an exit ends here (nav_walk_watch)
