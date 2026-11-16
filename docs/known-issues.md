@@ -417,11 +417,12 @@ Open:
 - **A picked-up hidden item stays on the minimap.** Its "!" was still there a minute
   later, so the marker list keeps it, as "hidden item, collected" (the chest's open
   flag).
-- **The walker's "another side" is tried at one item only.** Since 37a2b95 it waits for
-  the prompt at an unopened chest or hidden item and else tries up to three other sides
-  ("No prompt here, trying another side"). Tried from behind the ledge at Atlasdam's
-  hidden item (dev teleport): it went around and got "Untersuchen, E". Not tried at a
-  normal chest, nor where no side works ("No prompt at this item").
+- **The walker's "another side" was needed at one item only.** Since 37a2b95 it waits
+  for the prompt at an unopened chest or hidden item and else tries up to three other
+  sides ("No prompt here, trying another side"). Tried from behind the ledge at
+  Atlasdam's hidden item (dev teleport): it went around and got "Untersuchen, E". At a
+  normal chest on the flats the prompt came on arrival ("Öffnen, E", 2026-11-16). Not
+  seen: a place where no side works ("No prompt at this item").
 - **Side stories are named, not explained.** Since ea8078c the marker list says "Kit,
   side story" (icon type 7, seen on the flats); "traveler to recruit" (17) wasn't seen yet.
   What a side story is about is only in its dialogue.
