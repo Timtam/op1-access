@@ -1511,18 +1511,22 @@ M.save_game = function()
     if m then pcall(function() sg = m.SaveGame end) end
     return sg
 end
--- the objective of traveler id1 (1-8), or nil
+-- The objective of traveler id1 (1-8): its text, or nil and why -- "none" (the flags say
+-- there is none) or "unreadable" (a table, a flag or the text couldn't be read: then the
+-- caller asks the menu's panel; review 2026-11-16, a failure used to say "No objective").
 M.objective_of = function(sg, id1)
-    if not (sg and shim and shim.DtFind and shim.PeekFName and M.dt_addr) then return nil end
+    if not (sg and shim and shim.DtFind and shim.PeekFName and M.dt_addr) then return nil, "unreadable" end
     local lst = M.dt_addr("/Game/Mission/Database/NextPurposeDataList")
     local dat = M.dt_addr("/Game/Mission/Database/NextPurposeData")
-    if not (lst and dat) then return nil end
+    if not (lst and dat) then return nil, "unreadable" end
     local kc, kn = M.fname_of(tostring(id1))
-    local row = kc and shim.DtFind(lst, kc, kn)
-    if not row then return nil end
+    if not kc then return nil, "unreadable" end
+    local row = shim.DtFind(lst, kc, kn)
+    if not row then return nil, "none" end   -- (no list for this traveler)
     local data, n = shim.Peek(row, "ptr"), shim.Peek(row + 8, "i32")
-    if not data or data == 0 or type(n) ~= "number" or n <= 0 or n > 1000 then return nil end
-    local function flag(i)
+    if n == 0 then return nil, "none" end
+    if not data or data == 0 or type(n) ~= "number" or n < 0 or n > 1000 then return nil, "unreadable" end
+    local function flag(i)   -- true / false, nil if it can't be read
         local ok, v = pcall(function() return sg:GetBitFlag(i) end)
         if ok then return v == true end
         return nil
@@ -1532,17 +1536,20 @@ M.objective_of = function(sg, id1)
         local r = lc and lc > 0 and shim.DtFind(dat, lc, ln)
         if r then
             local st, en = shim.Peek(r + 0x0C, "i32"), shim.Peek(r + 0x10, "i32")
-            local sok = (st == 0) or (type(st) == "number" and flag(st) == true)
-            local eok = (en == 0) or (type(en) == "number" and flag(en) == false)
-            if sok and eok then   -- (the panel stops at the first such row)
+            if type(st) ~= "number" or type(en) ~= "number" then return nil, "unreadable" end
+            local fs, fe
+            if st ~= 0 then fs = flag(st) end
+            if en ~= 0 then fe = flag(en) end
+            if (st ~= 0 and fs == nil) or (en ~= 0 and fe == nil) then return nil, "unreadable" end
+            if (st == 0 or fs == true) and (en == 0 or fe == false) then   -- (the panel stops here)
                 local tc, tn = shim.PeekFName(r + 0x18)
                 local text = tc and tc > 0 and M.gametext(tc, tn)
                 if text and text ~= "" then return text end
-                return nil
+                return nil, "unreadable"
             end
         end
     end
-    return nil
+    return nil, "none"
 end
 -- { {name, text}... } for the party's main members, leader first, and how many there are
 M.party_objectives = function()
@@ -1556,13 +1563,14 @@ M.party_objectives = function()
             if type(v) == "number" and v >= 0 and v <= 7 then ids[#ids + 1] = v end
         end
     end)
-    local out = {}
+    local out, unreadable = {}, false
     for _, id in ipairs(ids) do
-        local ok, t = pcall(M.objective_of, sg, id + 1)
-        if ok and t then out[#out + 1] = { name = M.TRAVELERS[id] or tostring(id + 1), text = t } end
+        local ok, t, why = pcall(M.objective_of, sg, id + 1)
+        if ok and t then out[#out + 1] = { name = M.TRAVELERS[id] or tostring(id + 1), text = t }
+        elseif not ok or why ~= "none" then unreadable = true end
     end
-    log(string.format("OBJECTIVE flags: party=%d with one=%d", #ids, #out))
-    return out, #ids
+    log(string.format("OBJECTIVE flags: party=%d with one=%d%s", #ids, #out, unreadable and ", some unreadable" or ""))
+    return out, #ids, unreadable
 end
 
 -- Current objective reader. The menu's "current story" panel lives at
@@ -1571,7 +1579,7 @@ end
 -- on menu open; queue=false (the Q keybind) interrupts and reads on demand. The story
 -- flags come first (M.party_objectives); the panel is the fallback.
 M.read_objective = function(queue)
-    local okf, objs, nparty = pcall(M.party_objectives)
+    local okf, objs, nparty, unreadable = pcall(M.party_objectives)
     if okf and objs and #objs > 0 then
         local parts = {}
         for _, o in ipairs(objs) do
@@ -1584,7 +1592,7 @@ M.read_objective = function(queue)
     -- the menu shows it. The panel below keeps an old text across a load (2026-11-16:
     -- Slot 1 got the autosave's objective after "Return to Title"), so it is only asked
     -- when the flags can't be read.
-    if okf and objs and (nparty or 0) > 0 then
+    if okf and objs and (nparty or 0) > 0 and not unreadable then
         if not queue then speak(tr("No objective")) end
         return
     end
