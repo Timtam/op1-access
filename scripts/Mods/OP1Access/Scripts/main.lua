@@ -1759,9 +1759,10 @@ do
     M.poll_gameover = function()
         local w, cls = M.get_active_screen()
         if cls ~= "UIGameOver_C" then
-            -- left with "Weiter ab letztem Speicherpunkt" (the first item): a load, see
-            -- M.load_pending (poll_dialog)
-            if go.idx == 0 then M.load_pending = true end
+            -- left with "Weiter ab letztem Speicherpunkt" (the first item): no load with a
+            -- fade but a jump to the save point (tried 2026-11-16) -- the area and the
+            -- object count are said again right away (see M.load_pending in poll_dialog)
+            if go.idx == 0 then M.area_said = nil; M.load_resay = true end
             go.idx = nil
             return
         end
