@@ -6805,6 +6805,7 @@ M.trace_setup = function(ksl, p)
     end
     M.pawn_fidx = a.pf
     M.tr_native = true
+    M.pfoot = df - 20   -- your capsule's center over the floor (82)
     log(string.format("TRACE ready (floor %.0f below)", df))
 end
 -- -> ok, hit, {Distance} (on a hit). ok = false: no trace (not set up, or the call
@@ -7710,12 +7711,15 @@ local function nav_ground(R, ksl, p, bx, by, za)
     if c ~= nil then return c, 0 end
     local wx, wy = R.px + bx * NV.STEP, R.py + by * NV.STEP
     R.traces = R.traces + 1
-    local ok, hit, oh = line_blocked(ksl, p, wx, wy, za + 160, wx, wy, za - 240)
+    -- (R.groundch: a step-in route measures floors with the capsule's own profile, which
+    -- sees steps channel 0 misses -- the Flammhuld inn's side stairs, NV.stepin_leg)
+    local ok, hit, oh = line_blocked(ksl, p, wx, wy, za + 160, wx, wy, za - 240, R.groundch)
     local z = false
     if ok and hit then
         local dist
         pcall(function() if type(oh.Distance) == "number" then dist = oh.Distance end end)
         z = dist and (za + 160 - dist) or za
+        if R.groundch then z = NV.stepin_floor(R, wx, wy, z) end
     end
     R.gcache[gk] = z
     return z, 1
@@ -7734,6 +7738,7 @@ local function nav_route_finish(goalnode)
             local s0 = R.shifted or { x = R.px, y = R.py, z = R.pz }
             local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, s0.x, s0.y, s0.z)
             W.nopeople, W.blame = true, R.people
+            W.stepin, W.ofl_p, W.groundch = R.stepin, R.ofl_p, R.groundch
             W.saidlong = R.saidlong
             log("ROUTE again without people")
             NV.route = W
@@ -8158,6 +8163,7 @@ NV.route_widen = function(R)
     local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, R.px, R.py, R.pz, pad)
     W.gcache, W.ecache, W.eside, W.gcache2, W.slides = R.gcache, R.ecache, R.eside, R.gcache2, R.slides
     W.people, W.nopeople, W.blame, W.ppl_hit = R.people, R.nopeople, R.blame, R.ppl_hit
+    W.stepin, W.ofl_p, W.pl_all, W.groundch = R.stepin, R.ofl_p, R.pl_all, R.groundch
     W.traces, W.pops, W.started, W.saidlong = R.traces, R.pops, R.started, R.saidlong
     W.cpu, W.ticks = R.cpu, R.ticks
     W.shifted, W.pops0, W.shift_i = R.shifted, R.pops0, R.shift_i
@@ -8195,6 +8201,7 @@ NV.route_shift = function(R)
                 local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, ax, ay, az, R.pad)
                 W.shifted, W.shift_i = base, i
                 W.people, W.nopeople, W.blame, W.ppl_hit = R.people, R.nopeople, R.blame, R.ppl_hit
+                W.stepin, W.ofl_p, W.pl_all, W.groundch = R.stepin, R.ofl_p, R.pl_all, R.groundch
                 W.pops0 = R.shifted and R.pops0 or R.pops
                 W.traces, W.started, W.saidlong = R.traces, R.started, R.saidlong
                 W.cpu, W.ticks = R.cpu, R.ticks
@@ -8257,11 +8264,13 @@ end
 -- halfway decides (stairs: about halfway up; a ledge: one of the two ends).
 NV.FLOOR_SAME = 100
 -- the floor under (x, y) seen from height z; nil = none, or the trace began in something
--- solid. (ksl may be nil once the traces are set up.)
-NV.floor_at = function(ksl, p, x, y, z)
-    local ok, hit, oh = line_blocked(ksl, p, x, y, z + 50, x, y, z - 400)
+-- solid. (ksl may be nil once the traces are set up.) ch: the trace (default channel 0,
+-- NV_TRACE = the capsule's own profile); up: start this far over z (default 50).
+NV.floor_at = function(ksl, p, x, y, z, ch, up)
+    up = up or 50
+    local ok, hit, oh = line_blocked(ksl, p, x, y, z + up, x, y, z - 400, ch)
     if not (ok and hit and oh and type(oh.Distance) == "number") or oh.Distance < 10 then return nil end
-    return z + 50 - oh.Distance
+    return z + up - oh.Distance
 end
 -- from floor fa at (ax, ay) to floor fb at (bx, by): one level? true / false
 NV.floor_link = function(ksl, p, ax, ay, fa, bx, by, fb)
@@ -8320,6 +8329,77 @@ NV.goal_floor_ok = function(R, ksl, p, best)
     end
     return ok
 end
+-- THE LAST LEG INTO A STEP-IN TARGET (NV.is_stepin; 2026-11-16, Flammhuld inn, walked in
+-- the game): the way in goes round the stone base on its left and up stairs behind it to
+-- the landing, 96 up; "Gasthaus, E" came at (-1180,-1608). Channel 0 sees none of it, so
+-- the search took the start beside the base for the goal (within one cell) and the walk
+-- went straight at the base, where a man stands. A node is the goal only when the
+-- capsule's own trace walks in from it: from its real floor (the same profile, from 200
+-- over the node; at the start 82 under you) at knee height to 30 short of the target at
+-- its floor's knee height. A hit at a person blocks only while the search keeps away from
+-- people (R.goal_ppl: the search without them then follows at once and names who stands
+-- there); any other hit: not the goal.
+NV.stepin_leg = function(R, ksl, p, best)
+    if R.ofl_p == nil then
+        R.ofl_p = NV.floor_at(ksl, p, R.ox, R.oy, R.oz, NV_TRACE) or false
+        R.traces = R.traces + 1
+        log(string.format("ROUTE step-in target floor %s (z %.0f)", tostring(R.ofl_p), R.oz))
+    end
+    local tf = R.ofl_p
+    if not tf then return true end            -- no floor under it: the walk's prompt decides
+    local wx = R.px + best.x * NV.STEP + (best.ox or 0)
+    local wy = R.py + best.y * NV.STEP + (best.oy or 0)
+    local nf
+    if best.k == R.startk then
+        nf = R.shifted and R.pz or (R.pz - (M.pfoot or 82))
+    else
+        nf = NV.floor_at(ksl, p, wx, wy, best.z, NV_TRACE, 200)
+        R.traces = R.traces + 1
+        if not nf then return false end       -- inside something solid
+        nf = NV.stepin_floor(R, wx, wy, nf)
+    end
+    local dx, dy = R.ox - wx, R.oy - wy
+    local d = math.sqrt(dx * dx + dy * dy)
+    if d <= 30 then return math.abs(nf - tf) <= 60 end
+    local ex, ey = R.ox - dx / d * 30, R.oy - dy / d * 30
+    local sz, ez = nf + 55, tf + 55
+    R.traces = R.traces + 1
+    local ok, hit, oh = line_blocked(ksl, p, wx, wy, sz, ex, ey, ez, NV_TRACE)
+    if not ok then return false end
+    local q = nil
+    if hit then
+        local pl = R.people or R.blame
+        if not pl then
+            if R.pl_all == nil then
+                local okp, ppl = pcall(NV.people_scan, R.px, R.py, R.pz)
+                R.pl_all = okp and ppl or false
+            end
+            pl = R.pl_all or nil
+        end
+        local len = math.sqrt((ex - wx) ^ 2 + (ey - wy) ^ 2 + (ez - sz) ^ 2)
+        local t = (len > 0 and type(oh.Distance) == "number") and math.min(1, oh.Distance / len) or 0
+        local hx, hy = wx + (ex - wx) * t, wy + (ey - wy) * t
+        for _, c in ipairs(pl or {}) do
+            if math.abs(c.z - (nf + 82)) < 250 and (c.x - hx) ^ 2 + (c.y - hy) ^ 2 < 60 * 60 then q = c; break end
+        end
+        if not q then
+            if not R.leglog then
+                R.leglog = true
+                log(string.format("ROUTE step-in: no way in from cell %d,%d (floor %.0f, target floor %.0f, hit at %.0f)",
+                    best.x, best.y, nf, tf, type(oh.Distance) == "number" and oh.Distance or -1))
+            end
+            return false
+        end
+    elseif R.people then
+        q = NV.person_on(R.people, wx, wy, nf + 82, R.ox, R.oy)   -- the body is wider than the line
+    end
+    if q and R.people then
+        R.ppl_hit = (R.ppl_hit or 0) + 1
+        R.goal_ppl = true
+        return false
+    end
+    return true
+end
 -- "above" / "below" for the lists (a msgid, nil = level with you): a floor up or down
 -- (|dz| over LEVEL_THRESH), or a terrace or a hollow (floors over NV.FLOOR_SAME apart)
 NV.level_word = function(p, px, py, pz, tx, ty, tz)
@@ -8335,13 +8415,14 @@ end
 
 -- STEP-IN TARGETS (2026-11-16, Flammhuld inn, after c38e2eb didn't help). A shop without
 -- a keeper opens at its trigger, a box in its entrance: there the game shows "Gasthaus,
--- E", and only there. The inn's door is three steps up; two people stand at their foot
--- with ~40 between them (the walker, tried by hand, stuck between both at 80). Channel 0
--- sees neither the steps nor the stone base beside them (CHPROBE "up ch0=- ch1=28"), so
--- floors and routes take it all for street: "Arrived" 152 away beside the base, E went to
--- the follower. Now such a walk ends only at the shop's prompt (also when it comes up on
--- the way); stuck within 250 of it, or 2 s of pushing at the end without it: "Entrance
--- not reached", with the people standing there.
+-- E", and only there. The inn's door is on a landing 96 up behind a stone base; three
+-- people stand in a row in front of the base (no way between them), and the way in goes
+-- round the base's left end and up stairs behind it (NV.stepin_leg). Channel 0 sees
+-- neither the base nor the stairs (CHPROBE "up ch0=- ch1=28"), so floors and routes took
+-- it all for street: "Arrived" 152 away beside the base, E went to the follower. Now such
+-- a walk ends only at the shop's prompt (also when it comes up on the way); stuck within
+-- 250 of it, or 2 s of pushing at the end without it: "Entrance not reached", with the
+-- people standing there.
 NV.is_stepin = function(t) return t ~= nil and t.cat == "shop" and not t.keeper end
 -- the shop's own prompt is up ("Gasthaus, E"; any prompt when the name is unknown)
 NV.stepin_prompt = function()
@@ -8468,15 +8549,76 @@ NV.ground_at = function(R, ksl, p, wx, wy, za)
     local c = R.gcache2[gk]
     if c ~= nil then return c, 0 end
     R.traces = R.traces + 1
-    local ok, hit, oh = line_blocked(ksl, p, wx, wy, za + 160, wx, wy, za - 240)
+    -- (R.groundch: a step-in route measures floors with the capsule's own profile, which
+    -- sees steps channel 0 misses -- the Flammhuld inn's side stairs, NV.stepin_leg)
+    local ok, hit, oh = line_blocked(ksl, p, wx, wy, za + 160, wx, wy, za - 240, R.groundch)
     local z = false
     if ok and hit then
         local dist
         pcall(function() if type(oh.Distance) == "number" then dist = oh.Distance end end)
         z = dist and (za + 160 - dist) or za
+        if R.groundch then z = NV.stepin_floor(R, wx, wy, z) end
     end
     R.gcache2[gk] = z
     return z, 1
+end
+-- STEP-IN ROUTES know their floors (R.groundch, the capsule's own profile), so two more
+-- rules there (test_inn.lua: a corner cut through the inn's base wall, and a 96 ledge
+-- taken as a step because the knee-high line rose with it):
+-- a rise over 45 between two cells is a step only on stairs (the floor halfway about
+-- halfway up), not at a ledge
+NV.stepin_rise_ok = function(R, ksl, p, best, nx, ny, zb)
+    local bz = best.z
+    if best.k == R.startk and not R.shifted then bz = R.pz - (M.pfoot or 82) end
+    local dz = zb - bz
+    if math.abs(dz) <= 45 then return true end
+    local ax = R.px + best.x * NV.STEP + (best.ox or 0)
+    local ay = R.py + best.y * NV.STEP + (best.oy or 0)
+    local bx, by = R.px + nx * NV.STEP, R.py + ny * NV.STEP
+    local zm = NV.ground_at(R, ksl, p, (ax + bx) / 2, (ay + by) / 2, math.max(bz, zb))
+    if not zm then return false end
+    return math.abs(zm - (bz + zb) / 2) <= math.abs(dz) / 4
+end
+-- ...and the capsule's trace hitting something is a wall, unless a person stands at the
+-- line (people are the people rules' business: kept away from, or named)
+NV.stepin_person_at = function(R, ax, ay, bx, by, z)
+    local pl = R.people or R.blame
+    if not pl then
+        if R.pl_all == nil then
+            local okp, ppl = pcall(NV.people_scan, R.px, R.py, R.pz)
+            R.pl_all = okp and ppl or false
+        end
+        pl = R.pl_all or nil
+    end
+    if not pl then return false end
+    local dx, dy = bx - ax, by - ay
+    local l2 = dx * dx + dy * dy
+    for _, q in ipairs(pl) do
+        if math.abs(q.z - z) < 250 then
+            local t = (l2 > 0) and math.max(0, math.min(1, ((q.x - ax) * dx + (q.y - ay) * dy) / l2)) or 0
+            local cx, cy = ax + dx * t - q.x, ay + dy * t - q.y
+            if cx * cx + cy * cy < 60 * 60 then return true end
+        end
+    end
+    return false
+end
+-- ...and that profile also lands on people's heads: there the floor is the one under the
+-- person (else a person on the stairs made them a ledge, also for the search without
+-- people that names who is in the way)
+NV.stepin_floor = function(R, x, y, z)
+    if not z then return z end
+    local pl = R.people or R.blame
+    if not pl then
+        if R.pl_all == nil then
+            local okp, ppl = pcall(NV.people_scan, R.px, R.py, R.pz)
+            R.pl_all = okp and ppl or false
+        end
+        pl = R.pl_all or nil
+    end
+    for _, q in ipairs(pl or {}) do
+        if (q.x - x) ^ 2 + (q.y - y) ^ 2 < 45 * 45 and z > q.z then return q.z - (M.pfoot or 82) end
+    end
+    return z
 end
 NV.slide_step = function(R, ksl, p, best, d, nx, ny)
     local used = 0
@@ -8537,7 +8679,9 @@ NV.slide_step = function(R, ksl, p, best, d, nx, ny)
                 -- out: at a house door in lower Felsfall the route took one into an
                 -- invisible wall (ch0 blind, Pawn 28) instead of the door, and the walk
                 -- stuck there (2026-11-15). Along the stairs the slid line runs parallel to
-                -- the walls and stays clear.
+                -- the walls and stays clear. (A person on it doesn't count in the search
+                -- without people: it is there to name who stands in a narrow way.)
+                if okp and hitp and R.nopeople and NV.stepin_person_at(R, fx, fy, bx, by, fz) then hitp = false end
                 if okp and not hitp then
                     if s ~= 0 then R.slides = (R.slides or 0) + 1 end
                     return true, { qx * s, qy * s, pre = pre }, zb, used
@@ -8579,7 +8723,8 @@ NV.route_slice = function(R, budget, itercap, deadline)
             -- ...on the goal's floor: below the Flammhuld inn's terrace the start counted
             -- (2026-11-16, NV.goal_floor_ok)
             if math.abs(best.x - R.gx) <= 1 and math.abs(best.y - R.gy) <= 1
-                and math.abs(best.z - R.oz) <= 300 and NV.goal_floor_ok(R, ksl, p, best) then
+                and math.abs(best.z - R.oz) <= 300 and NV.goal_floor_ok(R, ksl, p, best)
+                and (not R.stepin or NV.stepin_leg(R, ksl, p, best)) then
                 return "found", best
             end
             -- 8 neighbours (2026-11-14, user: too many wall bumps and re-routes): the 4
@@ -8611,7 +8756,8 @@ NV.route_slice = function(R, budget, itercap, deadline)
                 elseif inbox then
                     local zb, used = nav_ground(R, ksl, p, nx, ny, best.z)
                     budget = budget - used
-                    if zb and math.abs(zb - best.z) <= 200 then
+                    if zb and math.abs(zb - best.z) <= 200
+                        and (not R.stepin or NV.stepin_rise_ok(R, ksl, p, best, nx, ny, zb)) then
                         local nk = key3(nx, ny, zlayer(R, zb))
                         -- wall check at knee height between the two ground points
                         local ekey = best.k .. ">" .. nk
@@ -8646,11 +8792,19 @@ NV.route_slice = function(R, budget, itercap, deadline)
                             -- profile hit at 28). The pawn-profile trace as a high COST,
                             -- not a wall: as a wall it also shut a way the character can
                             -- walk (the chest in the study became "not reachable").
-                            if w and not diag then
+                            -- (a step-in route: a wall, also diagonally, unless a person
+                            -- stands there -- NV.stepin_person_at)
+                            if w and (not diag or R.stepin) then
                                 R.traces = R.traces + 1
                                 budget = budget - 1
                                 local okp, hitp = line_blocked(ksl, p, ax0, ay0, best.z + 55, bx0, by0, zb + 55, NV_TRACE)
-                                if okp and hitp then w = "soft" end
+                                if okp and hitp then
+                                    if diag or (R.stepin and not NV.stepin_person_at(R, ax0, ay0, bx0, by0, best.z)) then
+                                        w = false
+                                    else
+                                        w = "soft"
+                                    end
+                                end
                             end
                             -- blocked: maybe by a SHUT DOOR -- the step crosses a
                             -- doorway plane within its width. Then it is a door edge
@@ -8777,7 +8931,9 @@ local function nav_route_step()
         -- out of cells in the box, or out of traces ("cap": 7000 ran out after 788 cells
         -- on the way back to the study's chest 3): a bigger box with more traces, then
         -- the shifted grid
-        local W = (node == "box" or node == "cap") and (NV.route_widen(R) or NV.route_shift(R))
+        -- (not when people stood at a step-in target's entrance, NV.stepin_leg: the search
+        -- without people follows at once and names them)
+        local W = (node == "box" or node == "cap") and not R.goal_ppl and (NV.route_widen(R) or NV.route_shift(R))
         if W then NV.route = W; return end
         nav_route_finish(nil); return
     end
@@ -8797,7 +8953,19 @@ local function nav_route_begin(mode, ox, oy, oz)
     if samelevel and ksl and NV.level_link(ksl, p, px, py, pz, ox, oy, oz) == false then samelevel = false end
     local gx = math.floor((ox - px) / NV.STEP + 0.5)
     local gy = math.floor((oy - py) / NV.STEP + 0.5)
-    if gx == 0 and gy == 0 and samelevel then
+    -- a step-in target (a shop without a keeper): the search must check the last leg in
+    -- (NV.stepin_leg), so no "close by" shortcut
+    local stepin = false
+    if mode == "walk" then
+        stepin = (NV.goal and NV.goal.stepin and NV.goal.x == ox and NV.goal.y == oy) and true or false
+    else
+        local t = nav_target()
+        if t and NV.is_stepin(t) then
+            local tx, ty = NV.tpos(t)
+            stepin = (tx == ox and ty == oy)
+        end
+    end
+    if gx == 0 and gy == 0 and samelevel and not stepin then
         if mode == "walk" then
             nav_walk_begin_path({ { x = px, y = py }, { x = ox, y = oy } }, tr("close by"))
         else
@@ -8826,6 +8994,8 @@ local function nav_route_begin(mode, ox, oy, oz)
     end
     NV.route = NV.route_job(mode, ox, oy, oz, px, py, pz)
     NV.route.people = people
+    NV.route.stepin = stepin
+    if stepin then NV.route.groundch = NV_TRACE end
     if people then log(string.format("ROUTE keeps away from %d people", #people)) end
     if #walls > 0 then log(string.format("ROUTE keeps off %d learned walls", #walls)) end
 end
@@ -8914,18 +9084,23 @@ NV.bg_new = function(t, p, px, py, pz)
     if not ksl then return nil end
     local gx = math.floor((tx - px) / NV.STEP + 0.5)
     local gy = math.floor((ty - py) / NV.STEP + 0.5)
-    if math.abs(tz - pz) <= 200 and NV.level_link(ksl, p, px, py, pz, tx, ty, tz) ~= false and ((gx == 0 and gy == 0)
+    local stepin = NV.is_stepin(t)
+    if math.abs(tz - pz) <= 200 and NV.level_link(ksl, p, px, py, pz, tx, ty, tz) ~= false and ((gx == 0 and gy == 0 and not stepin)
         or (NV.corridor_clear(ksl, p, px, py, pz, tx, ty) and not NV.walls_cross(NV.walls_here(), px, py, tx, ty, pz))) then
         NV.bg_record(job, true, "straight")
         return nil
     end
     job.R = NV.route_job("bg", tx, ty, tz, px, py, pz)
+    job.R.stepin = stepin
     job.R.maxt = 60          -- slower slices: same trace budget, more time
     -- checks from the same spot share their ground / wall caches (each one re-traced
     -- the same cells otherwise); the walk router never uses them -- a door opened in
     -- between would still look shut
+    -- (a step-in check measures its floors by another trace: no sharing)
     local c = NV.bg_cache
-    if c and c.x == px and c.y == py and c.z == pz and os.clock() - c.t < 30 then
+    if stepin then
+        job.R.groundch = NV_TRACE
+    elseif c and c.x == px and c.y == py and c.z == pz and os.clock() - c.t < 30 then
         job.R.gcache, job.R.ecache = c.g, c.e
     else
         NV.bg_cache = { x = px, y = py, z = pz, t = os.clock(), g = job.R.gcache, e = job.R.ecache }

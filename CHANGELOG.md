@@ -69,7 +69,9 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   someone blocks the only way, it says who ("Armer is in the way"). At a chest or a hidden
   item it waits for the game's prompt and tries another side when none comes. A shop
   that opens at its entrance (no keeper) counts as reached only when its prompt shows;
-  otherwise the walker says the entrance wasn't reached and how many people stand there.
+  the route there follows the character's own collision, so it finds side stairs the
+  other traces miss. Otherwise the walker says the entrance wasn't reached and how many
+  people stand there.
 
 ### Battles
 

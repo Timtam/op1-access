@@ -455,24 +455,32 @@ Open:
 
 ## Navigation
 
-- **The Flammhuld inn: its steps are blocked by two people.** (2026-11-16) The inn's
-  door is three stone steps up, about 170 over the street; its trigger (the "Gasthaus, E"
-  prompt) stands in the doorway. At the foot of the steps stand two people about 120
-  apart (centers): a man with a fur hat ("???", talkable) and a child (not talkable).
-  Tried by hand: walking up between them, the character stuck with both 80 away; the
-  gap (~40) is narrower than the character (~80). So the inn can't be entered right now,
-  by the walker or by hand. Unknown whether they move later.
-  - The walker said "Arrived" 152 away, beside the steps in front of the stone base.
-    Channel 0 sees neither the base nor the steps (CHPROBE "up ch0=- ch1=28 prof=28"),
-    so floors and routes took it all for street. The floor check (c38e2eb, below) didn't
-    help here for the same reason.
-  - Since then a shop without a keeper (its trigger is the target) is reached only when
-    its prompt shows, also on the way; at the end of the route the walker pushes on to
-    the trigger for 2 s. Stuck within 250 of it or no prompt: "Eingang nicht erreicht,
-    dort stehen 2 Personen" (people within 220 of the trigger; the follower doesn't
-    count). Unit test only; the inn's message is not heard yet.
-  - Not done: routes over steps and walls that channel 0 doesn't see. That needs floors by
-    the character's own collision profile, which isn't tried yet.
+- **The Flammhuld inn: the way in goes round the side. Built, not walked by the walker
+  yet.** (2026-11-16) The inn stands on a stone base, its door on a landing 96 over the
+  street (you at z 286, on the landing 382; the trigger at (-1140,-1510,415)). In front
+  of the base three people stand in a row at x=-1314 (y -1532 "???", -1412 a child,
+  -1298 a woman), 115-120 apart: no way between them (tried: stuck with two at 80). The
+  way in, found by hand after a sighted check: round the base's left end (y < -1690), then
+  right along stairs behind the base onto the landing; "Gasthaus, E" came at
+  (-1180,-1608).
+  - The walker said "Arrived" 152 away beside the base and went straight at it. Channel 0
+    sees neither the base nor the stairs nor the landing (CHPROBE "up ch0=- ch1=28
+    prof=28"), so floors and routes took it all for street, and the search took the start
+    for the goal (within one cell). The floor check (c38e2eb, below) didn't help for the
+    same reason.
+  - Since 43c6784 a shop without a keeper (its trigger is the target) is reached only at
+    its prompt, also on the way; at the end of the route the walker pushes on to the
+    trigger for 2 s. Stuck within 250 of it or no prompt: "Eingang nicht erreicht, dort
+    stehen 2 Personen" (people within 220 of the trigger; the follower, a ResidentGame
+    actor, doesn't count).
+  - Since then the route to such a shop measures floors with the character's own collision
+    profile, takes what that profile hits as a wall (but people stay people), allows a
+    rise over 45 between cells only on stairs, and takes a cell as the goal only when that
+    profile walks in from it to the trigger at knee height (`ROUTE step-in` log lines).
+    In a model of the inn (test_inn.lua) the route goes round the left end, up the stairs
+    and onto the landing, from beside the base and from down the street; a person on the
+    stairs is named. Not tried in the game; the cell grid (130) is coarse for the ~100-deep
+    landing, so watch for "not reachable" there.
 - **Targets on a terrace: built, not walked yet.** Every "same level" test took heights
   within 200-300 as one level. Since c38e2eb a target's floor counts, not its height: a
   down-trace under it (people and triggers don't block it). Floors over 100 apart are one
