@@ -3663,8 +3663,13 @@ M.poll_menu_list = function()
         end
         if scr == "items" and stv == 1 then say = trf("%s, not usable here", say) end
         if scr == "abilities" then
+            -- learned = the row's check mark (RefImg_Strikethrough shown). ItemStatus 1 only
+            -- means greyed: with too few LBP every skill is greyed, and "Analyse, erlernt"
+            -- was said for a skill not learned (2026-11-16, 33 of 100 LBP)
+            local mark
+            pcall(function() mark = M.wvis(row.RefImg_Strikethrough) end)
             if c1 == "???" then say = tr("Locked skill")
-            elseif stv == 1 then say = trf("%s, learned", say) end
+            elseif mark == 0 or mark == 3 or mark == 4 then say = trf("%s, learned", say) end
         end
         -- equipment: a greyed category is one this traveler can't use (swords for
         -- Cyrus); in an item list the greyed row is the piece worn now
