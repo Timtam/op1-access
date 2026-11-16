@@ -535,7 +535,7 @@ Open:
   Whisperwood). No purple chest was reachable from the test saves, so only the negative
   case is checked (the flats' two chests). "opened" (252661f) is checked in the study;
   opened chests still sort by distance and still ring in the radar.
-- **The whole area is searched before "not reachable": built, not walked yet.**
+- **The whole area is searched before "not reachable": walked once in the game.**
   (2026-11-16, user: a blind player can't first walk a bit the right way on luck until
   the walker takes over.) The router searches the start/goal rectangle plus 9 cells,
   then plus 20 (~2600 units, 6000 more traces); the third try, until then +40 cells and
@@ -550,7 +550,9 @@ Open:
   - Speed: the walk's search computes 40 ms of every 100 while you wait (8 until
     2026-11-16: the 105-cell route on the Maiya path waited 2.8 s and computed for 0.24 s
     of it), ~50000 traces a second. The picture stutters during a search; you stand
-    still then anyway. Not seen in the game yet.
+    still then anyway. In the game (2026-11-16, 22:26): the 132-cell route from the Maiya
+    path's entrance to chest 3 (19023 long) came in 0.3 s, its cells traced already by the
+    background check.
   - Why: on the path to the Maiya caves (Küstenland) chest 3 lay behind an invisible
     wall; the way round went through the north of the map (105 cells, 14840 long). After
     a battle 300 further along that way, every try ran out of traces (53040 in all) and
@@ -566,7 +568,7 @@ Open:
     up-left: all reachable only via the stairs outside the small box). Atlasdam's
     buildings at ~16000 units and one "2922, above" were "not reachable" with the +40
     box; not tried again.
-- **Water and invisible floors: built, not walked yet.** (2026-11-16, user: "er will immer
+- **Water and invisible floors: walked in the game.** (2026-11-16, user: "er will immer
   durch das Wasser, er müsste über die Brücke") On the path to the Maiya caves the water is
   filled with invisible blocking volumes (the level file F_Sea_1_1: convex "Box brushes",
   z -475 to 1525), and the bridge's deck is four invisible slabs (z 425 to 507, x 1295 to
@@ -582,8 +584,14 @@ Open:
     steps), the new one crosses on the bridge, also with a person standing on it, and
     reaches a target on the deck. Without the bridge, "not reachable" (the whole area ran
     out of cells), no wading.
-  - Not tried in the game. Log: `no-room=` and `capsule-floors=` in `ROUTE ok` / `ROUTE
-    fail`, and `@z` in `ROUTE cells` where the floor changes by more than 40.
+  - In the game (2026-11-16, 22:26-22:50, Slot 1 in Rippeltiden, then onto the path):
+    from the entrance to chest 3 the route crossed the bridge on its deck (floors 496 to
+    541 over the river), went down a slope south of it and back north on the beach to the
+    chest under the bridge (floor ~0): "Öffnen, E", no bump, no learned wall, no new route,
+    ~30 s of walking with a battle between. From there to chest 4 (920 higher) the same:
+    no bump. Log: `no-room=` and `capsule-floors=` in `ROUTE ok` / `ROUTE fail` (they
+    count the search's own traces: 0 when the background check traced the cells), and
+    `@z` in `ROUTE cells` where the floor changes by more than 40.
   - Gaps between invisible volumes: a straight step now also traces the character's own
     profile 40 to each side (the capsule's radius is ~42). Both hit: narrower than the
     body, no step (one under the bridge's east side looks ~72 wide in the level file); one
@@ -592,13 +600,15 @@ Open:
     in an invisible wall is no way, a 160-wide one is. Costs ~20% more traces. Log:
     `too-narrow=` in `ROUTE ok` / `ROUTE fail`.
   - The level files hold all blocking volumes: `scripts/level-dump.py` lists them.
-- **After a battle the walk goes on with its route: built, not tried yet.** (2026-11-16)
+- **After a battle the walk goes on with its route: tried twice.** (2026-11-16)
   A battle, a menu, a speech bubble or a scene stops the walk ("Angehalten"), and the
   route is kept. The next Backspace for the same target walks on with it from where you
   stand ("Gehe los, dieselbe Route wie vorhin, insgesamt ..."), without a new search: if
   you stand within 150 of the rest of the route, in the same area, within 15 minutes,
   and the target (a person) moved less than 100. Otherwise it searches anew, as before.
-  Log line `NAVWALK on with the old route`.
+  Log line `NAVWALK on with the old route`. On the Maiya path after both battles (to chest
+  3: "4 from its leg 26 of 43"; to chest 4: "2 from its leg 18 of 26"), each walk then
+  reached its chest.
 - **The list is checked in the background, but not everything** (user request
   2026-11-13: offer only targets you can reach, or say which you can't). While you
   explore, the walk router checks the open list quietly (40 traces per tick), nearest
@@ -618,8 +628,9 @@ Open:
   checked with 10 ms slices instead of 4, so its cells are often traced before you press
   Backspace. In a mock street (test_share.lua) the walk right after the check needed 508
   new traces instead of 6482, the same route, still clear of a person standing in the
-  way. Not tried in the game; log line `ROUTE takes over the traces of the checks from
-  here`.
+  way. In the game: the walk to chest 4 took over the check's traces ("ROUTE takes over
+  the traces of the checks from here", 491 traces, 0.2 s); the one to chest 3 came after
+  a finished check (1451 traces, 0.3 s).
 - **Room detection only works for some buildings.** "Inside a building" comes from the
   box around a door's `Actor_Room` actors (good for the Atlasdam library), and since
   2026-11-14 the target must also be on the inner side of the doorway plane, so people
