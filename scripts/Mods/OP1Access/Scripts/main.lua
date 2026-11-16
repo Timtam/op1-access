@@ -1523,20 +1523,68 @@ pcall(RegisterKeyBind, Key.Q, function() if M.battle_now then return end M.read_
 -- a MenuText text block carrying the localized label. So: GetChildAt(cursor).MenuText.
 -- Announce the selected category on open + each move (interrupt behaviour via say_item).
 do
-    local mm_idx
+    local mm_idx, sub_idx, mm_away
     -- back from a sub-screen that left the list as it was (the world map): say the
     -- selected category again, without the objective
-    M.mainmenu_reannounce = function() mm_idx = nil; M.mm_no_objective = true end
+    M.mainmenu_reannounce = function() mm_idx = nil; sub_idx = nil; M.mm_no_objective = true end
     M.poll_mainmenu = function()
         local mw
         for i = 1, #scene_widgets do
             local e = scene_widgets[i]
-            if e[2] == "MainMenuWidget_C" then
+            if e[2] == "MainMenuWidget_C" and M.sw_ok(e) then
                 local vis = false; pcall(function() vis = e[1]:IsValid() and e[1]:IsVisible() end)
                 if vis then mw = e[1] end
             end
         end
-        if not mw then mm_idx = nil; return end
+        if not mw then mm_idx = nil; sub_idx = nil; mm_away = nil; return end
+        -- Another screen on top (an item list, the options, a dialog): nothing to say here.
+        -- Back on the menu, its selected entry again, without the objective.
+        local _, acls = M.get_active_screen()
+        if acls and acls ~= "MainMenuWidget_C" then
+            if not mm_away then log("MAINMENU under " .. acls) end
+            mm_away = acls
+            return
+        end
+        if mm_away and acls == "MainMenuWidget_C" then
+            log("MAINMENU back from " .. tostring(mm_away))
+            mm_away = nil
+            mm_idx, sub_idx = nil, nil
+            M.mm_no_objective = true
+        end
+        -- The "Verschiedenes" submenu (2026-11-16: it was silent): MainMenuEtcWidget_C
+        -- (object dump: CursorSelect @0x260 indexes SubItemList @0x250, MainMenuSubItemPanel_C
+        -- items with MenuText and IsUnEnable: Einstellungen, Tutorial, Zum Titelbildschirm,
+        -- Spiel beenden). Open while MainMenuWidget_C.MainState is 13 (0 = the list, seen in
+        -- game); the widget itself stays Visible after it closes, so that can't tell.
+        local ms, etc
+        pcall(function() ms = mw.MainState end)
+        if ms == 13 then pcall(function() etc = mw.MainMenuEtcWidget end) end
+        if etc then
+            local ci; pcall(function() ci = etc.CursorSelect end)
+            if type(ci) ~= "number" or ci == sub_idx then return end
+            local opening = (sub_idx == nil)
+            sub_idx = ci
+            local items, dis = {}, {}
+            pcall(function()
+                etc.SubItemList:ForEach(function(_, v)
+                    local it, s, un = v:get(), nil, false
+                    pcall(function() s = it.MenuText:GetText():ToString() end)
+                    pcall(function() un = it.IsUnEnable and true or false end)
+                    items[#items + 1] = s or ""
+                    dis[#items] = un
+                end)
+            end)
+            if opening then log(string.format("MAINMENU sub items=[%s] cursor=%d", table.concat(items, "|"), ci)) end
+            local label = items[ci + 1]
+            if not label or label == "" then label = trf("Item %s", tostring(ci + 1)) end
+            M.say_item(dis[ci + 1] and trf("%s, disabled", label) or label)
+            return
+        end
+        if sub_idx ~= nil then   -- back from the submenu: the category again, no objective
+            sub_idx = nil
+            mm_idx = nil
+            M.mm_no_objective = true
+        end
         local list; pcall(function() list = mw.MainMenuList end)
         if not list then mm_idx = nil; return end
         local ci; pcall(function() ci = list.CursorPosition end)
