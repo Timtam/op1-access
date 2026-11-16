@@ -11,9 +11,11 @@ gets fixed, delete its entry (the commit message keeps the history).
   59f846a the language comes from the game's own setting (KSGameStatics:GetLanguage); a
   switch in the options is followed within 2-5 s (title options to English, field menu
   options back to German, 2026-11-16). Heard in English: the title and load menus, the
-  navigator, the main menu and its lists, the world map, one battle and the game over.
-  Not heard in English: shops, the tavern, path actions, event menus. Other languages say
-  English until someone adds a .po.
+  navigator, the main menu and its lists (also the tutorials), the world map, a shop
+  ("Provisioner, 3,756 leaves", "Healing Grape, 50 leaves, On Hand 0"), Kit's side-story
+  dialogue, the character select, one battle and the game over. Not heard in English:
+  the tavern, path-action screens, event menus. Other languages say English until
+  someone adds a .po.
 - **Some German words are guesses at the game's own terms**: "Speer" for the polearm
   weakness (the user says "Lanze"), "EXP" and "JP" in the battle result, "HP", "SP" and
   "BP" kept as they are, "Wege-Aktion" from the tutorials. Each is one line in de.po.
