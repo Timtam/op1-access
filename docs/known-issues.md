@@ -455,6 +455,11 @@ Open:
 
 ## Navigation
 
+- **The radar in the background: built, not heard yet.** Since 7fb543a the radar fades
+  out while another window is in front and back in when the game is, the same test the
+  game mutes itself by (the front window belongs to the game's process). Not yet heard
+  in the game: Alt+Tab, minimizing, and the screen reader's own windows (the NVDA menu
+  counts as another window too, for the game as well).
 - **New markers: tried with one hidden item.** Since ea8078c the minimap's icons are
   compared every 2 s while you explore, and a new hidden item, objective, side story,
   exit toward the objective or traveler to recruit is said ("New marker: hidden item,
