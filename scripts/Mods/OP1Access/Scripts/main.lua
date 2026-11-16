@@ -5006,7 +5006,7 @@ poll_dialog = function()
             -- the old world's banner still holds its text until then.
             if dlg_last_focus == 0 and M.sl_save_mode == false and M.sl_seen_t
                 and os.clock() - M.sl_seen_t < 60 then
-                M.load_pending = true
+                M.load_pending, M.load_pending_t = true, os.clock()
                 log("LOAD confirmed: area and object count will be said again")
             end
         end
@@ -11192,6 +11192,12 @@ radar_pump = function(src)
         -- the title screen: after a game over the old field's player still exists there,
         -- so the radar counted the title as exploring (rescans, wall traces; 2026-11-15)
         if acls and (acls:find("^Title") or acls == "UIMainTitle_C") then menu_open = true end
+        -- a confirmed load before its fade: the title's screens are gone, the old world
+        -- is still there, and the radar went "live" there for a moment (2026-11-15). Up
+        -- to 8 s; the fade normally comes within one.
+        if M.load_pending then
+            if now - (M.load_pending_t or 0) < 8 then menu_open = true else M.load_pending = nil end
+        end
         -- choosing an action in the J menu leaves ~1 s with no focused screen before
         -- the first bubble: keep the radar down across that gap
         if acls == "FieldCommandMenu_C" then M.fc_menu_t = now end
