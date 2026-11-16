@@ -25,6 +25,7 @@
 
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
+#include <windows.h>   // GetForegroundWindow (miniaudio already pulls it in on Windows)
 
 extern "C" {
 #include "phonon.h"
@@ -99,6 +100,23 @@ int g_osPos = 0;
 float g_block[FS * 2];              // one rendered stereo block, interleaved L,R,...
 int   g_blockPos = FS;             // frames consumed; start "empty" so first callback renders
 unsigned long long g_clock = 0;    // global sample clock for ping staggering (audio thread)
+
+// Silent while another app is in front, as the game is: UE4 mutes it then
+// (UnfocusedVolumeMultiplier 0), "focused" meaning the foreground window belongs to this
+// process (FWindowsPlatformProcess::IsThisApplicationForeground, the same test as the
+// shim's IsForeground). The game went quiet when minimized and the radar kept pinging
+// (user, 2026-11-16). Checked once per block (~21 ms) on the audio thread; the whole mix
+// fades out and in over MASTER_FADE.
+float g_master = 1.0f;                  // focus gain (audio thread only)
+constexpr float MASTER_FADE = 0.04f;    // seconds for a full fade
+
+bool app_in_front() {
+    HWND h = GetForegroundWindow();
+    if (!h) return false;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(h, &pid);
+    return pid == GetCurrentProcessId();
+}
 
 void set_status(const char* s) { std::snprintf(g_status, sizeof(g_status), "%s", s); }
 
@@ -204,6 +222,19 @@ void render_block() {
     static float mixR[FS];
     static float revSendL[FS];
     static float revSendR[FS];
+    const bool front = app_in_front();
+    if (!front && g_master <= 0.0f) {
+        // in the background and faded out: nothing to render. A one-shot cue fired
+        // meanwhile is dropped, not kept for later.
+        {
+            std::lock_guard<std::mutex> lk(g_mtx);
+            g_osCue = -1;
+        }
+        std::memset(g_block, 0, sizeof(g_block));
+        g_clock += (unsigned long long)FS;
+        g_blockPos = 0;
+        return;
+    }
     std::memset(mixL, 0, sizeof(mixL));
     std::memset(mixR, 0, sizeof(mixR));
     std::memset(revSendL, 0, sizeof(revSendL));
@@ -383,8 +414,12 @@ void render_block() {
     }
 
     reverb_process(revSendL, revSendR);   // revSend buffers now hold the wet signal
+    const float mtarget = front ? 1.0f : 0.0f;
+    const float mstep = 1.0f / (MASTER_FADE * (float)SR);
     for (int n = 0; n < FS; ++n) {
-        float l = mixL[n] + revSendL[n], r = mixR[n] + revSendR[n];
+        if (g_master < mtarget)      { g_master += mstep; if (g_master > mtarget) g_master = mtarget; }
+        else if (g_master > mtarget) { g_master -= mstep; if (g_master < mtarget) g_master = mtarget; }
+        float l = (mixL[n] + revSendL[n]) * g_master, r = (mixR[n] + revSendR[n]) * g_master;
         if (l > 1.0f) l = 1.0f; else if (l < -1.0f) l = -1.0f;
         if (r > 1.0f) r = 1.0f; else if (r < -1.0f) r = -1.0f;
         g_block[2 * n]     = l;

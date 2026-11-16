@@ -160,10 +160,11 @@ talk, **E** to open doors and chests and to examine, **J** for the path-action m
 ### Exploring
 
 - **The radar** is on whenever you can walk around, and quiet in menus, scenes and
-  battles. Chests, exits, people, buildings and shops each have their own sound, which
-  comes from where the thing is (Steam Audio, 3D) and repeats faster the closer you
-  get. A wall radar sounds the walls ahead and to the sides, a thud plays when you walk
-  into one, and a chirp when you pass through a door. You can put your own sounds in
+  battles; like the game, it also goes silent while another window is in front.
+  Chests, exits, people, buildings and shops each have their own sound, which comes
+  from where the thing is (Steam Audio, 3D) and repeats faster the closer you get. A
+  wall radar sounds the walls ahead and to the sides, a thud plays when you walk into
+  one, and a chirp when you pass through a door. You can put your own sounds in
   `Mods\OP1Access\Assets` (see the `README.md` there).
 - **On arrival** you hear the area, its region and how dangerous it is (“Nördliche
   Atlasdamm-Ebenen, Flachland, Gefahrenstufe 1”) and how many objects the radar found.

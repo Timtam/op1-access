@@ -53,7 +53,7 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   (Challenge, Provoke, Guide, Allure, also when you swap followers), H'aanit's monsters,
   and what Scrutinize and Inquire find out.
 - A 3D radar (Steam Audio) for chests, exits, people, buildings and shops, a wall radar and
-  bump sounds.
+  bump sounds. Like the game, it goes silent while another window is in front.
 - A navigator: categories with Home and End, targets with Page Up and Page Down, Ctrl+Backspace
   for directions. It says which chests are opened or purple, which targets can't be reached, where exits
   lead and how dangerous the area behind them is, and what kind of shop a shop is. A
