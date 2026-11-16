@@ -7809,12 +7809,20 @@ local function nav_route_finish(goalnode)
             R.slides or 0, R.ppl_hit or 0, os.clock() - R.started))
         -- people stood in the way of some steps: was it them? The same search without
         -- people; if that finds a way, the person on it is named (below, R.blame)
-        if R.people and (R.ppl_hit or 0) > 0 and not R.nopeople then
+        if R.people and (R.ppl_hit or 0) > 0 and not R.nopeople and not R.capped then
             local s0 = R.shifted or { x = R.px, y = R.py, z = R.pz }
             local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, s0.x, s0.y, s0.z)
             W.nopeople, W.blame = true, R.people
             W.stepin, W.ofl_p, W.groundch = R.stepin, R.ofl_p, R.groundch
             W.saidlong = R.saidlong
+            if not R.shifted then
+                -- the same grid: its traces hold (2026-11-16: a whole-area search again
+                -- without them would trace the whole area once more). People only make a
+                -- step "soft" there (the pawn trace hits them) -- still a step.
+                W.gcache, W.ecache, W.eside, W.gcache2 = R.gcache, R.ecache, R.eside, R.gcache2
+            end
+            -- as wide as the search that failed (a whole-area search: the whole area)
+            if R.whole then W = NV.route_widen(W, true) or W end
             log("ROUTE again without people")
             NV.route = W
             return
@@ -7881,6 +7889,12 @@ local function nav_route_finish(goalnode)
                         return
                     end
                     speak(tr("Stuck, no way on from here. Step aside, then backspace again"))
+                    return
+                end
+                if R.capped then
+                    -- the whole area ran out of traces (NV.route_widen), not of cells:
+                    -- nothing proven, so no "not reachable" for the list either
+                    speak(tr("No route found, search limit reached"))
                     return
                 end
                 if g and g.key and g.cat ~= "door" then
@@ -8192,13 +8206,14 @@ end
 -- A routing job (the walk router's NV.route, or a background check's NV.bg.R): the
 -- search box is the start/goal rectangle plus `pad` cells (9); it fails after maxtr
 -- traces or maxt seconds. doors / via: see the door edges in NV.route_slice.
-NV.route_job = function(mode, ox, oy, oz, px, py, pz, pad)
+-- wbox: a world rectangle the box takes in as well (the whole area, NV.area_bounds).
+NV.route_job = function(mode, ox, oy, oz, px, py, pz, pad, wbox)
     pad = pad or 9
     local gx = math.floor((ox - px) / NV.STEP + 0.5)
     local gy = math.floor((oy - py) / NV.STEP + 0.5)
     local startk = key3(0, 0, 0)
     local okd, doors = pcall(M.door_list)
-    return {
+    local R = {
         mode = mode, ox = ox, oy = oy, oz = oz, pad = pad,
         px = px, py = py, pz = pz, gx = gx, gy = gy, startk = startk,
         open = { { x = 0, y = 0, z = pz, k = startk, g = 0, f = math.abs(gx) + math.abs(gy) } },
@@ -8210,7 +8225,65 @@ NV.route_job = function(mode, ox, oy, oz, px, py, pz, pad)
         minx = math.min(0, gx) - pad, maxx = math.max(0, gx) + pad,
         miny = math.min(0, gy) - pad, maxy = math.max(0, gy) + pad,
     }
+    if wbox then
+        R.wbox = wbox
+        R.minx = math.min(R.minx, math.floor((wbox.x0 - px) / NV.STEP))
+        R.maxx = math.max(R.maxx, math.ceil((wbox.x1 - px) / NV.STEP))
+        R.miny = math.min(R.miny, math.floor((wbox.y0 - py) / NV.STEP))
+        R.maxy = math.max(R.maxy, math.ceil((wbox.y1 - py) / NV.STEP))
+    end
+    return R
 end
+-- THE WHOLE AREA (2026-11-16, user: the search must always take in the whole area -- a
+-- blind player can't first walk a bit the right way on luck until the walker takes over).
+-- On the path to the Maiya caves a chest lay behind an invisible wall, the way round ran
+-- through the far north of the map (105 cells, 14840 long). Found from one spot (26657
+-- traces in the +40 box), after a battle 300 further along the same way not at all:
+-- every stage ran out of TRACES with cells left (7000, +6000, +20000, the shifted grid
+-- +20000 without the caches) -- "not reachable" without proof. The last stage now takes
+-- in the whole area: where the level's chests, exits, doors, shops and people are (the
+-- lists M.find_all keeps, from its cache only -- no FindAllOf here), 12 cells round them,
+-- and at least the start/goal rectangle + 40; with traces to match its size
+-- (NV.whole_traces). A target is "not reachable" only once that box ran out of cells.
+NV.AREA_CLASSES = { "TreasureBoxBP_C", "LevelTrigger_C", "HouseEnterTriggerBP_C", "ShopTriggerBP_C",
+    "KSFieldNPCCharacter_C" }
+NV.area_bounds = function()
+    local key = M.level_id() or M.area_said
+    if key == nil then return nil end
+    local c = NV.abox
+    if c and c.key == key and os.clock() - c.t < 120 then return c end
+    local x0, y0, x1, y1, n = math.huge, math.huge, -math.huge, -math.huge, 0
+    for _, cls in ipairs(NV.AREA_CLASSES) do
+        local fc = M.fa_cache[cls]
+        if fc and fc.key == key then
+            for i, o in ipairs(fc.list) do
+                if M.handle_ok(fc.hs[i]) then
+                    local x, y = read_actor_pos(o)
+                    if x then
+                        x0, y0 = math.min(x0, x), math.min(y0, y)
+                        x1, y1 = math.max(x1, x), math.max(y1, y)
+                        n = n + 1
+                    end
+                end
+            end
+        end
+    end
+    if n == 0 then return nil end
+    local m = 12 * NV.STEP
+    NV.abox = { key = key, t = os.clock(), n = n, x0 = x0 - m, y0 = y0 - m, x1 = x1 + m, y1 = y1 + m }
+    log(string.format("ROUTE area from %d objects: (%.0f,%.0f)-(%.0f,%.0f)", n, NV.abox.x0, NV.abox.y0,
+        NV.abox.x1, NV.abox.y1))
+    return NV.abox
+end
+-- traces for a whole-area search: ~24 a cell of its box (a cell costs 10-20 to explore),
+-- 40000 at least, 300000 at most (the walk does ~20000 a second, NV.route_step)
+NV.whole_traces = function(R)
+    local cells = (R.maxx - R.minx + 1) * (R.maxy - R.miny + 1)
+    return math.max(40000, math.min(300000, cells * 24))
+end
+-- its time: the walk (you wait, Backspace cancels) 90 s, a background check 300 s of its
+-- own work (NV.bg_step leaves out the time it waits)
+NV.whole_time = function(R) return R.mode == "bg" and 300 or 90 end
 -- The first shut door a found route goes through (in walking order), and the index in
 -- the raw waypoint list (start = 1) of the first cell behind it. nil: no door.
 NV.route_first_door = function(R, goalnode)
@@ -8227,23 +8300,37 @@ end
 -- round may leave the small box. From the academy door the guard up-left counted as
 -- unreachable -- the stairs down lay outside the box -- yet from below he stood in a
 -- straight line (2026-11-14). The traces done so far stay cached (same start cell).
--- With the shim's cheap traces (2026-11-14) a THIRD try follows in a +40 box with
--- 20000 more traces (~2.5 s for the walk): from the Atlasdam library a building
--- "3230, above" ran out of the +20 box after 11675 traces.
-NV.route_widen = function(R)
-    local pad
-    if R.pad < 20 then pad = 20
-    elseif R.pad < 40 then pad = 40
-    else return nil end
-    local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, R.px, R.py, R.pz, pad)
+-- With the shim's cheap traces (2026-11-14) a THIRD try followed in a +40 box with
+-- 20000 more traces: from the Atlasdam library a building "3230, above" ran out of the
+-- +20 box after 11675 traces. Since 2026-11-16 the third try is the WHOLE AREA (see
+-- NV.area_bounds). whole: straight there (walls learned here, nav_route_begin).
+NV.route_widen = function(R, whole)
+    if R.whole then return nil end
+    local pad, wbox
+    if R.pad < 20 and not whole then
+        pad = 20
+    else
+        pad = 40
+        local okb, b = pcall(NV.area_bounds)
+        wbox = okb and b or nil
+    end
+    local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, R.px, R.py, R.pz, pad, wbox)
     W.gcache, W.ecache, W.eside, W.gcache2, W.slides = R.gcache, R.ecache, R.eside, R.gcache2, R.slides
     W.people, W.nopeople, W.blame, W.ppl_hit = R.people, R.nopeople, R.blame, R.ppl_hit
     W.stepin, W.ofl_p, W.pl_all, W.groundch = R.stepin, R.ofl_p, R.pl_all, R.groundch
     W.traces, W.pops, W.started, W.saidlong = R.traces, R.pops, R.started, R.saidlong
-    W.cpu, W.ticks = R.cpu, R.ticks
+    W.cpu, W.ticks, W.ran = R.cpu, R.ticks, R.ran
     W.shifted, W.pops0, W.shift_i = R.shifted, R.pops0, R.shift_i
-    W.maxtr, W.maxt = R.traces + (pad == 40 and 20000 or 6000), R.maxt + 8
-    log(string.format("ROUTE widen: box +%d cells after %d traces", pad, R.traces))
+    if pad == 40 then
+        W.whole = true
+        W.maxtr = R.traces + NV.whole_traces(W)
+        W.maxt = (os.clock() - R.started) + NV.whole_time(W)
+        log(string.format("ROUTE whole area: %dx%d cells, %d more traces, after %d traces",
+            W.maxx - W.minx + 1, W.maxy - W.miny + 1, W.maxtr - R.traces, R.traces))
+    else
+        W.maxtr, W.maxt = R.traces + 6000, R.maxt + 8
+        log(string.format("ROUTE widen: box +%d cells after %d traces", pad, R.traces))
+    end
     return W
 end
 -- A last try on a grid shifted by half a cell (2026-11-14). The grid is anchored where
@@ -8256,8 +8343,11 @@ end
 -- start (<= 3 cells; at the study's chest 3 the first one had no open step) tries the
 -- next shift -- cheap; one that explored an area ends the route's tries.
 NV.SHIFTS = { { 1, 1 }, { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
-NV.route_shift = function(R)
+-- (why: "box" = out of cells, "cap" = out of traces / time. The whole area out of traces:
+-- a shifted grid starts without the traces done so far and can't get further.)
+NV.route_shift = function(R, why)
     if R.shifted and (R.pops or 0) > 3 then return nil end
+    if R.whole and why == "cap" then return nil end
     local base = R.shifted or { x = R.px, y = R.py, z = R.pz }
     local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
     local p = get_player_obj()
@@ -8273,15 +8363,20 @@ NV.route_shift = function(R)
             local az = dist and (base.z + 160 - dist) or base.z
             local okl, hitl = line_blocked(ksl, p, base.x, base.y, base.z + 55, ax, ay, az + 55)
             if math.abs(az - base.z) <= 100 and okl and not hitl then
-                local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, ax, ay, az, R.pad)
-                W.shifted, W.shift_i = base, i
+                local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, ax, ay, az, R.pad, R.wbox)
+                W.shifted, W.shift_i, W.whole = base, i, R.whole
                 W.people, W.nopeople, W.blame, W.ppl_hit = R.people, R.nopeople, R.blame, R.ppl_hit
                 W.stepin, W.ofl_p, W.pl_all, W.groundch = R.stepin, R.ofl_p, R.pl_all, R.groundch
                 W.pops0 = R.shifted and R.pops0 or R.pops
                 W.traces, W.started, W.saidlong = R.traces, R.started, R.saidlong
-                W.cpu, W.ticks = R.cpu, R.ticks
-                W.maxtr = R.traces + (R.pad >= 40 and 20000 or 7000)
-                W.maxt = R.maxt + (R.shifted and 2 or 8)
+                W.cpu, W.ticks, W.ran = R.cpu, R.ticks, R.ran
+                if R.whole then   -- (the whole area again, without caches)
+                    W.maxtr = R.traces + NV.whole_traces(W)
+                    W.maxt = (os.clock() - R.started) + NV.whole_time(W)
+                else
+                    W.maxtr = R.traces + 7000
+                    W.maxt = R.maxt + (R.shifted and 2 or 8)
+                end
                 log(string.format("ROUTE shifted grid #%d (%d,%d) after %d traces, %d cells", i, d[1] * h, d[2] * h,
                     R.traces, R.pops))
                 return W
@@ -8995,25 +9090,42 @@ end
 local function nav_route_step()
     local R = NV.route
     if not R then return end
-    -- Up to 1500 traces per tick, but at most 8 ms of it (the game thread's Lua hooks
-    -- wait for the Lua lock meanwhile). Through UE4SS's own trace call 110 traces took
-    -- ~10 ms; the shim's are ~9 times cheaper.
+    -- Up to 3000 traces per tick, but at most 16 ms of it: this runs on the game thread
+    -- (the pump), and you stand waiting meanwhile. (8 ms before 2026-11-16, ~10000 traces
+    -- a second; a whole-area search takes up to 300000.) Through UE4SS's own trace call
+    -- 110 traces took ~10 ms; the shim's are ~9 times cheaper.
     local t0 = os.clock()
-    local res, node = NV.route_slice(R, 1500, 6000, t0 + 0.008)
+    local res, node = NV.route_slice(R, 3000, 12000, t0 + 0.016)
     R.cpu, R.ticks = (R.cpu or 0) + (os.clock() - t0), (R.ticks or 0) + 1
     if res == "found" then nav_route_finish(node); return end
     if res == "fail" then
         -- out of cells in the box, or out of traces ("cap": 7000 ran out after 788 cells
         -- on the way back to the study's chest 3): a bigger box with more traces, then
-        -- the shifted grid
+        -- the whole area, then the shifted grid
         -- (not when people stood at a step-in target's entrance, NV.stepin_leg: the search
         -- without people follows at once and names them)
-        local W = (node == "box" or node == "cap") and not R.goal_ppl and (NV.route_widen(R) or NV.route_shift(R))
-        if W then NV.route = W; return end
+        local W = (node == "box" or node == "cap") and not R.goal_ppl and (NV.route_widen(R) or NV.route_shift(R, node))
+        if W then
+            if W.whole and not R.whole and W.mode == "walk" then
+                W.saidlong = os.clock()
+                speak(tr("Searching the whole area"))
+            end
+            NV.route = W
+            return
+        end
+        -- the whole area ran out of traces, not of cells: nothing proven (nav_route_finish)
+        R.capped = (node == "cap" and not R.goal_ppl) or nil
         nav_route_finish(nil); return
     end
-    if os.clock() - R.started > 2 and not R.saidlong then
-        R.saidlong = true
+    -- a long search says so, and again every 10 s
+    local now = os.clock()
+    if not R.saidlong then
+        if now - R.started > 2 then
+            R.saidlong = now
+            speak(tr("Still routing"))
+        end
+    elseif now - R.saidlong > 10 then
+        R.saidlong = now
         speak(tr("Still routing"))
     end
 end
@@ -9072,7 +9184,14 @@ local function nav_route_begin(mode, ox, oy, oz)
     NV.route.stepin = stepin
     if stepin then NV.route.groundch = NV_TRACE end
     if people then log(string.format("ROUTE keeps away from %d people", #people)) end
-    if #walls > 0 then log(string.format("ROUTE keeps off %d learned walls", #walls)) end
+    if #walls > 0 then
+        log(string.format("ROUTE keeps off %d learned walls", #walls))
+        -- a walk got stuck in this area: its soft steps cost 30 now, yet a small box can
+        -- hold nothing but such steps while the way round runs outside it -- the whole
+        -- area at once (2026-11-16, Maiya path: three more bumps along the same invisible
+        -- wall, a box each, before the +40 box found the way round)
+        NV.route = NV.route_widen(NV.route, true) or NV.route
+    end
 end
 NV.route_begin = nav_route_begin   -- for nav_route_finish (defined above it)
 
@@ -9176,10 +9295,15 @@ NV.bg_new = function(t, p, px, py, pz)
     if stepin then
         job.R.groundch = NV_TRACE
     elseif c and c.x == px and c.y == py and c.z == pz and os.clock() - c.t < 30 then
+        -- (30 s since a check last used them: NV.bg_step keeps c.t fresh while one runs --
+        -- a whole-area check takes longer, and the next one needs the same cells)
         job.R.gcache, job.R.ecache = c.g, c.e
+        c.t = os.clock()
     else
         NV.bg_cache = { x = px, y = py, z = pz, t = os.clock(), g = job.R.gcache, e = job.R.ecache }
     end
+    -- walls learned here: the whole area at once, as for the walk (nav_route_begin)
+    if #job.R.walls > 0 then job.R = NV.route_widen(job.R, true) or job.R end
     return job
 end
 NV.bg_step = function()      -- nav_tick, only while no walk or route runs
@@ -9204,15 +9328,31 @@ NV.bg_step = function()      -- nav_tick, only while no walk or route runs
         if not job then return end
         NV.bg = job
     end
+    -- its clock counts its own work only: while a walk, a route, a menu or a battle runs
+    -- it waits (2026-11-16: a chest's check waited through two walks and a battle, its
+    -- 76 s ran out meanwhile, and it said "not reachable" -- the walk found the way)
+    local now = os.clock()
+    if job.R.ran and now - job.R.ran > 0.5 then job.R.started = job.R.started + (now - job.R.ran) end
     -- quiet background work: traces for at most 4 ms per tick
-    local res, why = NV.route_slice(job.R, 800, 3000, os.clock() + 0.004)
+    local res, why = NV.route_slice(job.R, 800, 3000, now + 0.004)
+    job.R.ran = os.clock()
+    local bc = NV.bg_cache
+    if bc and bc.g == job.R.gcache then bc.t = job.R.ran end
     if res == "fail" and (why == "box" or why == "cap") then
-        -- the same tries as a walk: wider boxes, then the half-shifted grid
-        local W = NV.route_widen(job.R) or NV.route_shift(job.R)
+        -- the same tries as a walk: wider boxes, the whole area, then the half-shifted grid
+        local W = NV.route_widen(job.R) or NV.route_shift(job.R, why)
         if W then job.R = W; return end
     end
     if res then
         NV.bg = nil
+        if res == "fail" and why == "cap" and job.R.whole then
+            -- the whole area ran out of traces, not of cells: nothing proven. No verdict;
+            -- the next list build checks it again
+            log(string.format("REACH %s %s: search limit reached (traces=%d, pops=%d, %.1fs), no verdict",
+                tostring(job.cat), tostring(job.name or job.key), job.R.traces or 0, job.R.pops or 0,
+                os.clock() - job.R.started))
+            return
+        end
         if res == "fail" and (job.R.pops or 0) <= 3 and (job.R.pops0 or 0) <= 3 then
             -- the search died where we stand (a corner): nothing about the target. Not
             -- "not reachable" -- queue it again and wait until we stand elsewhere
@@ -9223,7 +9363,7 @@ NV.bg_step = function()      -- nav_tick, only while no walk or route runs
             return
         end
         local door = (res == "found") and NV.route_first_door(job.R, why) or nil
-        NV.bg_record(job, res == "found", (job.R.pad > 9 and "wide route" or "route")
+        NV.bg_record(job, res == "found", (job.R.whole and "whole area" or (job.R.pad > 9 and "wide route" or "route"))
             .. (job.R.shifted and ", shifted grid" or "")
             .. (door and (", door " .. tostring(door.name)) or ""), door ~= nil)
     end

@@ -535,18 +535,34 @@ Open:
   Whisperwood). No purple chest was reachable from the test saves, so only the negative
   case is checked (the flats' two chests). "opened" (252661f) is checked in the study;
   opened chests still sort by distance and still ring in the radar.
-- **"Not reachable" can still be wrong for very long detours.** The router searches
-  the start/goal rectangle plus 9 cells. When that runs out of cells (or, since
-  bc28ced, of traces) it searches once more with 20 cells (~2600 units) and 6000 more
-  traces. With native traces it then tries a third time with 40 cells (~5200 units) and
-  20000 more (since 2026-11-14), and last on a grid shifted by half a cell. A passage
-  150-210 wide is open on some grid alignments only; the shift made chest 1 in the
-  study reachable from the save point.
-  The +20 box fixed the Palasttor cases (the study and the palace exits, a guard
-  up-left: all reachable only via the stairs outside the small box). A way round that
-  leaves the +40 box, or needs more traces, still fails. Atlasdam's buildings at
-  ~16000 units and one "2922, above" stay "not reachable"; the town region you can
-  walk ends inside that box. A failing search now takes ~1.5-3 s.
+- **The whole area is searched before "not reachable": built, not walked yet.**
+  (2026-11-16, user: a blind player can't first walk a bit the right way on luck until
+  the walker takes over.) The router searches the start/goal rectangle plus 9 cells,
+  then plus 20 (~2600 units, 6000 more traces); the third try, until then +40 cells and
+  20000 traces, is now the whole area: where the level's chests, exits, doors, shops and
+  people are, 12 cells round them (at least +40 round start and goal), with ~24 traces per
+  cell of that box (40000 to 300000). Last comes a grid shifted by half a cell, over the
+  whole area too (a passage 150-210 wide is open on some grid alignments only; the shift
+  made chest 1 in the study reachable from the save point). "Not reachable" now means the
+  whole area ran out of cells. Running out of traces says "Kein Weg gefunden,
+  Suchgrenze erreicht" and leaves the list alone. The walk searches twice as fast (16 ms
+  a tick, ~20000 traces a second), says "Suche im ganzen Gebiet" when the third try
+  starts and "Suche noch den Weg" every 10 s.
+  - Why: on the path to the Maiya caves (Küstenland) chest 3 lay behind an invisible
+    wall; the way round went through the north of the map (105 cells, 14840 long). After
+    a battle 300 further along that way, every try ran out of traces (53040 in all) and
+    the walk said "not reachable" twice.
+  - Once a walk got stuck in an area (a learned wall), every search there takes the
+    whole area at once: on the Maiya path three more bumps along the same invisible wall
+    came from small boxes that held only routes through it.
+  - In mock maps (test_whole.lua) a way round beyond the old +40 box is found (57000
+    traces); a target with no way fails on cells after the shifted grid (190000 traces,
+    ~10 s in the game). Not tried in the game: watch how long a failing search takes in a
+    big town, and the `ROUTE area from` / `ROUTE whole area` log lines.
+  - The +20 box fixed the Palasttor cases (the study and the palace exits, a guard
+    up-left: all reachable only via the stairs outside the small box). Atlasdam's
+    buildings at ~16000 units and one "2922, above" were "not reachable" with the +40
+    box; not tried again.
 - **The list is checked in the background, but not everything** (user request
   2026-11-13: offer only targets you can reach, or say which you can't). While you
   explore, the walk router checks the open list quietly (40 traces per tick), nearest
@@ -555,6 +571,11 @@ Open:
   inside a house you're not in (they say "inside a building"; the walk goes to the door)
   and, from inside a house, targets outside it. A result only holds within 600 of where
   you stood, so after walking off the list is checked again on the next build.
+  Since 2026-11-16 a check's time limit counts only its own work: it waits while you
+  walk or fight, and that wait had used up its 76 s on the Maiya path, so the chest
+  said "not reachable" though the walk found the way. It also takes the whole area, as
+  the walk does, and running out of traces there gives no verdict (checked again on the
+  next list build).
 - **Room detection only works for some buildings.** "Inside a building" comes from the
   box around a door's `Actor_Room` actors (good for the Atlasdam library), and since
   2026-11-14 the target must also be on the inner side of the doorway plane, so people
