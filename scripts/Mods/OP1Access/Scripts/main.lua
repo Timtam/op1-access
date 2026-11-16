@@ -1764,7 +1764,10 @@ do
             -- said again right away (see M.load_pending in poll_dialog). The area is not:
             -- the game shows no banner there, and the banner may still hold the text of
             -- where the battle was (marked said when the screen opened)
-            if go.idx == 0 then M.load_resay = true end
+            -- It is also a teleport (the bump watch saw it once, not always): the minimap's
+            -- icons come back with new actors ("Neue Markierung: Nebengeschichte" for Kit,
+            -- who was there all along -- 2026-11-16), and the navigator's list is stale.
+            if go.idx == 0 then M.load_resay = true; M.jump_t = os.clock() end
             go.idx = nil
             return
         end
