@@ -79,18 +79,17 @@ with every kept object guarded), the radar idle on the title (0212d98). Since 9d
 and ec3456c a load says the area and "N Objekte hier" again even at the place you were
 ("Return to Title" and the same save: was silence), and "Weiter ab letztem
 Speicherpunkt" says the object count (a jump to the save point, no banner, so no area).
+Since bb11e65 the radar stays idle between "Ja" and the load's fade; since f1ce369 the
+area banner waits 2.5 s after a battle and the game over screen marks its text said.
 
 - **A dialog over the world map is untested since dc28732.** After "No" to the fast-travel
   question the menu no longer says "World Map" while the map is still open (review
   finding); the saves had no other town to travel to, so it wasn't heard.
-- **The area name can come between the game over items** ("Game over", "Resume from last
-  save point", "Atlasdam, Flatlands", "Return to title"; 2026-11-16, English test). The
-  walk had crossed into Atlasdam's part of the flats as the battle began; its banner was
-  read when the pump ran again between the battle's end and the game over screen.
-
-- **Between "Ja" and the load's fade the radar is live for a moment** ("RADAR live" then
-  "suspended" in the same second, 2026-11-15): the title's screen is gone, the fade not
-  up yet. Nothing was heard and nothing crashed.
+- **The area banner can't tell whether it is on screen.** Its widget keeps Visibility 0
+  and IsOpenKeep set after the banner faded (checked against a screenshot), so the mod
+  goes by the text changing. A banner shown as a battle began is said up to 2.5 s after
+  the battle (f1ce369); the case that put "Atlasdam, Flatlands" between the game over
+  items didn't recur in the test after the fix.
 
 ## World map, route finder and danger levels
 
@@ -339,9 +338,10 @@ Open:
   after the polls moved.
   Opening the main menu stalled the game for 75-86 ms every time: the objective reader
   searched all objects. Since c4502cc the search runs once per session (the list it
-  found is kept); later openings had no `[mainmenu]` slow run. Still slow once per
-  opening: the world map (~125 ms, building all 147 places), a dialog over the map
-  (~90 ms `[active]`) and the tavern's story select (~80 ms).
+  found is kept); later openings had no `[mainmenu]` slow run. Every Yes/No question in
+  a menu stalled 80-130 ms (`[active]`, the learn dialog's parts searched each time)
+  until 40a66e6. Still slow once per opening: the world map (~125 ms, building all 147
+  places) and the tavern's story select (~80 ms).
 - **UE4SS's c0000264 crash happened once in the middle of play** (2026-11-15, after
   leaving a shop, on the End key; dump `build/user-logs/crash-20261115-130952.dmp`).
   Same signature as the known exit crash: `RtlLeaveCriticalSection` on a lock the thread
