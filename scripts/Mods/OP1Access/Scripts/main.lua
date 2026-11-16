@@ -466,16 +466,18 @@ log("game-thread exec driver: " .. (ExecuteInGameThread and "ExecuteInGameThread
 -- under a lock that stops the game thread at its next ProcessEvent -- but not inside
 -- Blueprint code, so their game calls still raced it. Every RegisterKeyBind below goes
 -- through this wrapper; work a handler queues itself (M.in_gt) runs right after it.
+-- (M.key_t: when the last key bind fired, on UE4SS's thread -- how long a key's work then
+-- waited for the game thread, for the log)
 do
     local raw = RegisterKeyBind
     if raw and ExecuteInGameThread then
         RegisterKeyBind = function(key, a, b)
             if type(a) == "function" then
                 local f = a
-                return raw(key, function() M.in_gt(f) end)
+                return raw(key, function() M.key_t = os.clock(); M.in_gt(f) end)
             end
             local f = b
-            return raw(key, a, function() M.in_gt(f) end)
+            return raw(key, a, function() M.key_t = os.clock(); M.in_gt(f) end)
         end
     end
 end
@@ -2979,7 +2981,17 @@ M.poll_event_menus = function()
         pcall(poll_dialog)      -- a dialog on top, or its close
     end
     if cls == "MenuSaveLoad_C" then pcall(M.poll_saveload, w) end
-    if M.battle_now and M.poll_battle then pcall(M.poll_battle) end
+    if M.battle_now and M.poll_battle then
+        local t0 = os.clock()
+        pcall(M.poll_battle)
+        local ms = (os.clock() - t0) * 1000
+        if ms > 60 then
+            M.bt_slow = (M.bt_slow or 0) + 1
+            if M.bt_slow <= 20 or M.bt_slow % 50 == 0 then
+                log(string.format("BATTLE poll slow: %.0f ms (#%d)", ms, M.bt_slow))
+            end
+        end
+    end
     if cls == "BattleResultPanelWidget_C" and M.poll_battle_result then pcall(M.poll_battle_result, w) end
     M.evm_active = false
 end
@@ -3800,21 +3812,27 @@ for _, k in ipairs({ "Adhesive", "Avoid", "Break", "BuffUnavailable", "Confu", "
     "Speed", "Spoison" }) do
     M.TEX_NAMES[#M.TEX_NAMES + 1] = "IconStatus_Down_" .. k
 end
--- texture address -> name ("IconStatus_Down_Poison"), once per battle (M.bt)
-M.tex_map = function()
-    if M.bt.texmap then return M.bt.texmap end
-    local map = {}
-    for _, n in ipairs(M.TEX_NAMES) do
-        for _, dir in ipairs({ "Texture_x2", "Texture" }) do
-            pcall(function()
-                local o = StaticFindObject("/Game/UI/Battle/" .. dir .. "/UiTX_Battle_" .. n .. ".UiTX_Battle_" .. n)
-                local a = o and M.addr_of(o)
-                if a and a ~= 0 then map[a] = n end
-            end)
-        end
+-- texture NAME -> "IconStatus_Down_Poison", by the FName's comparison index: the
+-- texture's own name is read raw (UObject NamePrivate, +0x18). Built once a session --
+-- FNames never change. It used to be the textures' addresses, found with ~150
+-- StaticFindObject calls at the first weakness or status read of EVERY battle -- that
+-- first read is a number key at the start of a fight (user, 2026-11-16: "the first press
+-- takes quite a while"). Names the FName table doesn't know yet (FNAME_Find) are asked
+-- again later, at most once a second.
+M.tex_names = { map = {}, missing = nil, t = -9 }
+M.tex_fname_map = function()
+    local T = M.tex_names
+    local now = os.clock()
+    if T.missing and (#T.missing == 0 or now - T.t < 1) then return T.map end
+    T.t = now
+    local todo = T.missing or M.TEX_NAMES
+    local still = {}
+    for _, n in ipairs(todo) do
+        local c, num = M.fname_of("UiTX_Battle_" .. n)
+        if c and num == 0 then T.map[c] = n else still[#still + 1] = n end
     end
-    M.bt.texmap = map
-    return map
+    T.missing = still
+    return T.map
 end
 -- the texture name of an icon widget's image (its UImage* at imgoff; Brush 0xF8 +
 -- ResourceObject 0x48 = 0x140)
@@ -3822,7 +3840,15 @@ M.icon_tex = function(icon, imgoff)
     local img = M.peekp(icon, imgoff)
     if not img then return nil end
     local tex = shim.Peek(img + 0x140, "ptr")
-    return tex and M.tex_map()[tex]
+    if not tex or tex == 0 or not shim.PeekFName then return nil end
+    local c, num = shim.PeekFName(tex + 0x18)
+    if not c or c <= 0 or num ~= 0 then return nil end
+    local name = M.tex_fname_map()[c]
+    if not name and #(M.tex_names.missing or {}) > 0 then
+        M.tex_names.t = -9   -- a texture we don't know yet: ask for the missing names now
+        name = M.tex_fname_map()[c]
+    end
+    return name
 end
 -- the unused copies' filler: "0123456", "0124", "0123" and Japanese "ああ...". Only
 -- digit runs that START "012" -- a real "8" (an SP cost) is no placeholder.
@@ -3836,11 +3862,17 @@ M.bt_addinfo = function(a)
     if n then return trf("%s left", n) end
     return a
 end
--- FindAllOf for the battle widgets, kept 3 s (the copies live as long as the battle UI)
+-- FindAllOf for the battle widgets. The copies live as long as the battle UI, so a list is
+-- kept 15 s while every widget in it still checks out (an empty one is asked again after
+-- 1 s). Each FindAllOf walks every object, 80-100 ms on the game thread: kept 3 s, the four
+-- lists of the battle poll were searched again together every 3 s -- 350 ms stalls, and a
+-- number key pressed meanwhile waited (2026-11-16). The lifetimes differ by 0.6 s per class
+-- (in the order they were first asked for), so the searches fall into different polls.
 M.bt_list = function(cls)
     M.bt.lists = M.bt.lists or {}
     local c, now = M.bt.lists[cls], os.clock()
-    if c and now - c.t < 3 then
+    local life = (c and #c.l > 0) and (15 + (c.k % 8) * 0.6) or 1
+    if c and now - c.t < life then
         -- (only while every kept widget's handle still matches in the shim's reads)
         local all = true
         for i = 1, #c.l do
@@ -3860,7 +3892,12 @@ M.bt_list = function(cls)
             end
         end
     end)
-    M.bt.lists[cls] = { t = now, l = l, h = hs }
+    local ms = (os.clock() - now) * 1000
+    if (ms > 40 and not c) or ms > 150 then
+        log(string.format("BT FindAllOf %s: %d widgets, %.0f ms", cls, #l, ms))
+    end
+    if not c then M.bt.nlist = (M.bt.nlist or 0) + 1 end
+    M.bt.lists[cls] = { t = now, l = l, h = hs, k = c and c.k or M.bt.nlist }
     return l
 end
 -- the enemies on the field, in the order of their panels. Only ADDRESSES of battle
@@ -4455,9 +4492,16 @@ end
 -- 1-5: enemy N, 6-9: party member N-5, 0: turn order. Battle only.
 M.bt_key = function(n)
     if not M.battle_now then return end
+    local t0 = os.clock()
+    local waited = M.key_t and (t0 - M.key_t) * 1000 or -1
+    M.bt_key_read(n)
+    log(string.format("BKEY %d: read %.0f ms after the press, took %.0f ms", n, waited, (os.clock() - t0) * 1000))
+end
+M.bt_key_read = function(n)
     if n >= 1 and n <= 5 then
         local en = M.bt_enemies()
         if en[n] then speak(trf("Enemy %d of %d: %s", n, #en, M.bt_enemy_text(en[n])))
+        elseif #en == 0 and not M.bt.started then speak(tr("The battle is starting"))   -- (no panels yet)
         else speak(#en == 0 and tr("No enemies") or trn("Only %d enemy", "Only %d enemies", #en)) end
     elseif n >= 6 and n <= 9 then
         local pa = M.bt_party()
