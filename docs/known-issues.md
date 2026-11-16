@@ -193,6 +193,18 @@ against one Eissentinel in the study dungeon. Weaknesses in the game's tile orde
 
 ## Walker (user report 2026-11-14)
 
+- **An arrow stuck after a battle — fixed 2026-11-16, not yet seen in the game.** A random
+  encounter stopped a walk ("Walk stopped" as the battle began). The walker let go of "up"
+  then, but the game missed that release: after the battle the character walked off alone
+  (the pawn's input stayed 1.00) and pushed into a corner, and each new walk said "Walk
+  interrupted" a second in, because its "down" against the stuck "up" made no input. Now
+  each arrow let go as a battle, a scene, a menu or a fade takes over gets a second
+  key-up 0.3 s after the field is back and once more a second later (`NAVWALK key-up
+  again` in the log, with the input before it), and a walk without input first lets go
+  of the arrows it doesn't hold before it gives up. Mock tests pass (19). Not seen yet:
+  a walk into a battle with the new code — the log line should show input 1.00 at the
+  first key-up and the character should stand still after the battle. Pressing the stuck
+  arrow once also frees it.
 - **The first step of a route on the shifted grid can bump.** Since 2026-11-14
   (bc28ced) a failed search runs again on a grid shifted by half a cell, and the walk
   then goes from where you stand to that grid's start first. Twice that first waypoint

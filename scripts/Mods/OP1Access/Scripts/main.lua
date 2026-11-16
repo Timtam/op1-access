@@ -7349,6 +7349,7 @@ local function nav_walk_begin_path(pts, label)
     NV.prog = { t = NV.started, x = pts[1].x, y = pts[1].y }
     NV.attempt_start = { x = pts[1].x, y = pts[1].y }
     NV.unwedged = false
+    NV.unstuck = false
     NV.unwedge = nil
     local total = 0
     for i = 2, #pts do
@@ -8475,6 +8476,50 @@ local function nav_info()
     end
 end
 
+-- The game can miss the walker's key release: an arrow let go just as a battle, a scene
+-- or a menu takes over stays down for the game, and afterwards the character walks on by
+-- itself (2026-11-16: after a random encounter it marched off alone, and every new walk
+-- said "Walk interrupted" -- its "down" against the stuck "up" made no input at all).
+-- So once the field is back, each arrow let go then gets a second key-up. A lone key-up
+-- for a key that is up does nothing; an arrow the walker holds again is skipped.
+M.ARROW_VK = { UP_ARROW = 0x26, DOWN_ARROW = 0x28, LEFT_ARROW = 0x25, RIGHT_ARROW = 0x27 }
+M.arrows_up = function(keys, why)
+    if not (shim and shim.KeyEvent) then return end
+    local cur = (nav_walking and NV.held) or (NV.face and NV.face.held) or {}
+    local sent = {}
+    for k in pairs(keys) do
+        if M.ARROW_VK[k] and not cur[k] then
+            pcall(function() shim.KeyEvent(M.ARROW_VK[k], false) end)
+            sent[#sent + 1] = k
+        end
+    end
+    table.sort(sent)
+    if #sent > 0 then log(string.format("NAVWALK key-up again (%s): %s", why, table.concat(sent, " "))) end
+end
+-- remember the arrows let go now (any number of key sets; nil ones are skipped)
+M.unstick_arm = function(...)
+    local keys = {}
+    for i = 1, select("#", ...) do
+        local h = select(i, ...)
+        if type(h) == "table" then for k in pairs(h) do keys[k] = true end end
+    end
+    if next(keys) then NV.unstick = { keys = keys, live = nil, n = 0 } end
+end
+-- nav_drive, while the field is live: 0.3 s after it came back, then once more 1 s later
+M.unstick_step = function()
+    local u = NV.unstick
+    if not u then return end
+    local now = os.clock()
+    if not u.live then u.live = now; return end
+    if now - u.live < 0.3 then return end
+    local inp = -1
+    local p = get_player_obj()
+    if p then pcall(function() local iv = p:GetLastMovementInputVector(); inp = math.sqrt(iv.X * iv.X + iv.Y * iv.Y) end) end
+    u.n = u.n + 1
+    M.arrows_up(u.keys, string.format("field back, try %d, input %.2f", u.n, inp))
+    if u.n >= 2 then NV.unstick = nil else u.live = now + 0.7 end
+end
+
 local function nav_walk_stop(msg)
     nav_walking = false
     NV.path = nil
@@ -8805,16 +8850,21 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
     -- a menu / dialog / speech bubble came up (M.menu_now, from the pump): held arrow
     -- keys would now move a menu cursor -- stop like for a scene
     if world_susp or M.menu_now then
+        if NV.unstick then NV.unstick.live = nil end   -- its key-ups wait for the field
         -- scene/transition: end any walk or routing NOW and release the keys.
         -- (The driver runs outside the pump's gate, so it must check itself --
         -- it once kept keys held through a whole cutscene and the character
-        -- marched through a door into the next crash.)
-        if nav_walking or NV.route then
+        -- marched through a door into the next crash.) The short tap after "Arrived"
+        -- (NV.face) too: it held its keys through the scene.
+        if nav_walking or NV.route or NV.face then
             local waswalking = nav_walking
+            -- the game may miss this release (M.unstick_arm): key-ups again later
+            M.unstick_arm(NV.held, NV.unwedge and NV.unwedge.held, NV.face and NV.face.held)
             nav_walking = false
             NV.path = nil
             NV.route = nil
             NV.unwedge = nil
+            NV.face = nil
             NV.held = nil
             pcall(function() shim.HoldKeys(false, false, false, false) end)
             -- walking INTO an exit ends in its transition fade: that is the arrival,
@@ -8828,6 +8878,7 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
         end
         return
     end
+    if NV.unstick then M.unstick_step() end
     if NV.face then
         -- after "Arrived": a short tap toward the target so the character faces it --
         -- the save point said "Save point" only after a manual tap left (2026-11-14)
@@ -8875,6 +8926,7 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
     if p then px, py = read_actor_pos(p) end
     if not px then
         -- world unstable (transition in progress): stop NOW, never idle with keys held
+        M.unstick_arm(NV.held)
         nav_walking = false
         NV.path = nil
         NV.held = nil
@@ -9133,6 +9185,18 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
         local inpMag = 0
         pcall(function() local iv = p:GetLastMovementInputVector(); inpMag = math.sqrt(iv.X * iv.X + iv.Y * iv.Y) end)
         if NV.held and inpMag < 0.3 then
+            -- ...or an arrow the game still takes as down cancels ours: its release was
+            -- lost in a battle or a scene, and "down" against a stuck "up" is no input
+            -- (2026-11-16). Once per walk: key-ups for the other arrows, then go on.
+            if not NV.unstuck then
+                NV.unstuck = true
+                local others = {}
+                for k in pairs(M.ARROW_VK) do if not NV.held[k] then others[k] = true end end
+                M.arrows_up(others, string.format("no input while walking, %.2f", inpMag))
+                NV.prog = { t = now, x = px, y = py }
+                return
+            end
+            M.unstick_arm(NV.held)
             nav_walk_stop(tr("Walk interrupted"))
             return
         end
