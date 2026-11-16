@@ -520,6 +520,15 @@ Open:
   ForceHouseOut, no door object) are no buildings at all, and "Leaving the building
   first" needs a door that shuts; by the study's entrance SchoolLighting_Out had sent
   every walk to an unreachable spot a floor up. Other towns' triggers were not dumped.
+  Room boxes overlap: in Flammhuld the tavern's box reaches 1600 past its door, over
+  House_B, and the first door in the list that held a target won. The walk to the
+  Söldner in House_B (its door 116 away) went to the tavern's door and then round House_B's
+  walls (user, 2026-11-16). Now every door is weighed: the one nearest the target wins (a
+  door on another floor counts farther), unless your own house holds the target and its
+  door is about as near. And the walk now goes to the target's door from 60–120 away
+  too (before, it routed straight in, failed after 10 s and said "press E" where the
+  prompt doesn't show). Only checked with the logged positions in a unit test so far,
+  not yet in the game.
 - **Exit names are only checked in Atlasdam.** "exit 2 of 5: to Palast von Atlasdamm"
   comes from the exit's own labels; all five Palasttor exits had one. An exit without
   labels falls back to its level's town name (never seen yet), and a field or dungeon

@@ -7336,14 +7336,21 @@ M.actor_is_zone = function(o)
     pcall(function() a = o:GetAddress() end)
     return a ~= 0 and M.house_is_zone(a)
 end
+-- WHICH house, when several hold the target: room boxes overlap -- in Flammhuld the
+-- tavern's reaches 1600 past its door, over House_B next to it, and the first door in
+-- the list that held the target won. The Söldner in House_B (its door 116 from the
+-- player) then got the tavern's door, 1194 away, and from there a route round House_B's
+-- walls; no try reached him (user, 2026-11-16). So every door is looked at first, and
+-- the one nearest the target wins (a door on another floor counts farther) -- unless the
+-- player's own house holds the target too and its door is about as near.
 M.house_door_for = function(tx, ty, tz, px, py, pz, dolog, allow_plane)
     if M.house_cache_area ~= M.area_said then
         M.house_cache, M.plane_cache, M.house_cache_area = {}, {}, M.area_said
     end
     local list = M.find_all("HouseEnterTriggerBP_C", 600)
     if not list then return nil end
-    local best, bestd, besthow = nil, 1e9, nil
-    local pbest, pbestd = nil, 1e9
+    local cands = {}                    -- the houses that may hold the target
+    local mine, mined = nil, 1e9        -- the house the PLAYER is in (nearest such door)
     for _, door in pairs(list) do
         local okv = false
         pcall(function() okv = door:IsValid() end)
@@ -7377,9 +7384,9 @@ M.house_door_for = function(tx, ty, tz, px, py, pz, dolog, allow_plane)
                     it, how = true, "plane"
                 end
             end
+            local nm = "?"
+            if dolog then pcall(function() nm = door:GetFName():ToString() end) end
             if dolog and dx and math.sqrt((dx - tx) ^ 2 + (dy - ty) ^ 2) < 3000 then
-                local nm = "?"
-                pcall(function() nm = door:GetFName():ToString() end)
                 log(string.format("HOUSE %s door=(%.0f,%.0f,%.0f) room=%s plane=%s target_in=%s(%s) player_in=%s/%s entered=%s",
                     nm, dx, dy, dz or 0,
                     box and string.format("%d actors x%.0f..%.0f y%.0f..%.0f z%.0f..%.0f mean(%.0f,%.0f)", box.n,
@@ -7392,26 +7399,39 @@ M.house_door_for = function(tx, ty, tz, px, py, pz, dolog, allow_plane)
             -- 17000 away whose room actors spread over half the map matched Russell)
             local dt = dx and math.sqrt((dx - tx) ^ 2 + (dy - ty) ^ 2) or 1e9
             local dp = dx and math.sqrt((dx - px) ^ 2 + (dy - py) ^ 2) or 1e9
-            if it and (ipb or ip) and dt < 2500 then
-                -- the player is in the target's house ("same"), or just outside its door
-                -- ("atdoor", with the door: it may still be shut -- the walk goes to it
-                -- first when it's more than 250 away)
-                if ip then return nil, "same" end
-                return door, "atdoor"
+            if it and dt < 2500 then
+                -- rank: the door nearest the target; one on another floor counts farther
+                local zpen = (tz and dz) and math.max(0, math.abs(tz - dz) - 250) or 0
+                cands[#cands + 1] = { door = door, addr = daddr, how = how, ipb = ipb, ip = ip,
+                                      score = dt + zpen, name = nm }
             end
-            if it and not (ipb or ip) and dt < 2500 and dt < bestd then
-                best, bestd, besthow = door, dt, how                -- the door nearest the TARGET
-            end
-            -- the house the PLAYER is in -- only behind a door that shuts (an open doorway
-            -- needs no detour: the route goes through it)
-            if ip and not it and dp < 2500 and dp < pbestd and M.house_has_door(daddr) then
-                pbest, pbestd = door, dp
-            end
+            if ip and dp < 2500 and dp < mined then mine, mined = { door = door, addr = daddr }, dp end
         end
     end
-    -- third result: the door of the house the player is in (and the target is not):
-    -- house doors close behind you, so leaving needs E at that door first (library)
-    return best, besthow, pbest
+    table.sort(cands, function(a, b) return a.score < b.score end)
+    local t = cands[1]
+    if t and mine and t.door ~= mine.door then
+        for _, c in ipairs(cands) do
+            if c.door == mine.door and c.score <= t.score + 300 then t = c; break end
+        end
+    end
+    if dolog and #cands > 1 then
+        local parts = {}
+        for _, c in ipairs(cands) do parts[#parts + 1] = string.format("%s %.0f", c.name, c.score) end
+        log(string.format("HOUSE pick %s of %s", t.name, table.concat(parts, ", ")))
+    end
+    -- the player is in the target's house
+    if t and t.ip then return nil, "same" end
+    -- third result: the door of the house the player is in (and the target is not) --
+    -- only behind a door that shuts (an open doorway needs no detour: the route goes
+    -- through it). House doors close behind you, so leaving needs E at that door first
+    -- (library)
+    local leave = mine and (not t or mine.door ~= t.door) and M.house_has_door(mine.addr) and mine.door or nil
+    if not t then return nil, nil, leave end
+    -- just outside the target's house ("atdoor", with the door: it may still be shut --
+    -- the walk goes to it first)
+    if t.ipb and not leave then return t.door, "atdoor" end
+    return t.door, t.how, leave
 end
 
 -- A target's identity for the "router failed" memory: actor address, else position.
@@ -9162,6 +9182,17 @@ end
 -- actor. The "Öffnen, E" prompt shows only ~35 in front of the door's center; with 250,
 -- someone 240 away (at the Wachmann, outside the library) was told to press E there.
 NV.ATDOOR = 120
+-- ...but the door leg still runs from closer for a door that may be shut (the target's,
+-- or the one of the house you are leaving): a route straight in fails at a shut door
+-- only after a 10-second search, and "open it with E" there did nothing -- the prompt
+-- needs the door's center. The Söldner in Flammhuld, 116 from House_B's door
+-- (2026-11-16). Not within 60 (where the push ends), and not once the push found this
+-- door open (NV.door_walked_on, 30 s).
+NV.door_leg_near = function(key, dd)
+    if dd <= 60 then return false end
+    local w = NV.door_walked_on
+    return not (w and w.key == key and os.clock() - w.t < 30)
+end
 local function nav_walk_start(quiet)
     NV.ctrlkey_t = os.clock()
     -- plain Backspace is also the GAME's cancel key ("Rück Zurück"): pressed in a menu,
@@ -9211,17 +9242,18 @@ local function nav_walk_start(quiet)
         NV.goal.samehouse = samehouse
         -- LEAVING a house first: its door closes behind you and opens only with E, from
         -- inside too (the walk out of the library wedged at the shut door, 2026-11-13)
+        local atmydoor = false
         if okd and pdoor and not samehouse then
             local dx, dy, dz = read_actor_pos(pdoor)
-            if dx and math.sqrt((dx - px) ^ 2 + (dy - py) ^ 2) > NV.ATDOOR then
+            local dd = dx and math.sqrt((dx - px) ^ 2 + (dy - py) ^ 2)
+            if dd and (dd > NV.ATDOOR or NV.door_leg_near(key, dd)) then
                 NV.goal = { x = dx, y = dy, z = dz or pz, cat = "door", key = key }
-                speak(trf("Leaving the building first. Routing to its door, %d",
-                    math.floor(math.sqrt((dx - px) ^ 2 + (dy - py) ^ 2) + 0.5)))
+                speak(trf("Leaving the building first. Routing to its door, %d", math.floor(dd + 0.5)))
                 nav_route_begin("walk", dx, dy, dz or pz)
                 return
             end
             NV.goal.samehouse = true   -- at the door: a failed route means "open it first"
-            samehouse = true
+            samehouse, atmydoor = true, true
         end
         -- or a door found earlier after the router failed (doorway-plane test)
         if not samehouse and not (okd and door) and NV.is_noroute(key, px, py) and NV.noroute[key].door then
@@ -9231,11 +9263,13 @@ local function nav_walk_start(quiet)
         end
         if okd and door then
             local dx, dy, dz = read_actor_pos(door)
-            if dx and math.sqrt((dx - px) ^ 2 + (dy - py) ^ 2) > NV.ATDOOR then
-                NV.goal = { x = dx, y = dy, z = dz or pz, cat = "door", key = key }
+            local dd = dx and math.sqrt((dx - px) ^ 2 + (dy - py) ^ 2)
+            if dd and (dd > NV.ATDOOR or (how == "atdoor" and NV.door_leg_near(key, dd))) then
+                -- standing at the shut door of the house you are in: a failed route to
+                -- this door means "open that one first"
+                NV.goal = { x = dx, y = dy, z = dz or pz, cat = "door", key = key, samehouse = atmydoor or nil }
                 local who = t.name and t.name:match("^[^,]+") or M.cat_word(t.cat)
-                speak(trf("%s is inside a building. Routing to its door, %d", who,
-                    math.floor(math.sqrt((dx - px) ^ 2 + (dy - py) ^ 2) + 0.5)))
+                speak(trf("%s is inside a building. Routing to its door, %d", who, math.floor(dd + 0.5)))
                 nav_route_begin("walk", dx, dy, dz or pz)
                 return
             end
