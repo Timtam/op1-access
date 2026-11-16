@@ -154,7 +154,8 @@ against one Eissentinel in the study dungeon. Weaknesses in the game's tile orde
   more is logged ("WEAK"). A locked tile (WeakLocked) is said "locked". Neither seen.
 - **Several enemies or party members.** Enemies are numbered in the order of their
   panels (widget order), the turn order lists icons in widget order. Whether both match
-  the screen's left-to-right order needs a fight with more than one enemy. Party keys
+  the screen's left-to-right order needs a fight with more than one enemy; four random
+  encounters on the flats by Atlasdam (2026-11-16) were all single enemies. Party keys
   6-9 were only tried with one traveler.
 - **"N targets" for an all-enemies skill** was not heard: Feuerball against one enemy
   showed a single target.
@@ -168,7 +169,9 @@ against one Eissentinel in the study dungeon. Weaknesses in the game's tile orde
   HP", "Eissentinel recovers, shield 1". Checked against one enemy. Not yet heard: SP
   and BP recovery, misses ("miss"), criticals (their DamageType is unknown: only
   0/3/4/5 were seen, 3 and 5 say "weak").
-- **Not read at all:** what a boosted command does, and the boost help.
+- **Not read at all:** what a boosted command does. The boost help itself
+  (BattleCommandBoostHelp_C) only holds the word "Boost" and the key hints O / Q, which
+  the mod already knows (object dump, 2026-11-16); there is nothing more in it to read.
 - **Who acts is guessed for several enemies** (0e0e5d7). An action right after your
   own input is your character's; otherwise it is the only enemy's, or the one whose
   turn-order icon fades (IsFade, seen once). Not tried with two or more enemies or
