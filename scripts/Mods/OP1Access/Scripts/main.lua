@@ -1349,7 +1349,7 @@ end
 -- in seconds). Announce the focused slot on open and on every cursor move.
 -- State lives in a do-block; the fn hangs off M (no new chunk local -- cap is 200).
 do
-    local sl_menu, sl_idx
+    local sl_menu, sl_idx, sl_h
     M.saveload_reset = function() sl_idx = nil end
     -- evw: the menu handed over by M.poll_event_menus when it is open INSIDE an event
     -- (the save point's "Speichern"): then no visibility walk, property reads only, and
@@ -1362,7 +1362,7 @@ do
             -- save" over and over (2026-11-14)
             if M.ev_now then return end
             local alive = false
-            if m then pcall(function() alive = m:IsValid() end) end
+            if m and M.kept(sl_h) then alive = true end   -- (the shim's reads first)
             if not alive then
                 -- the screen is the focused one while it's up (title "Fortsetzen" too; in
                 -- an event the event reader hands it over). FindFirstOf walked every
@@ -1371,6 +1371,7 @@ do
                 local aw, acls = M.get_active_screen()
                 if acls == "MenuSaveLoad_C" then m = aw end
                 sl_menu = m
+                sl_h = m and M.handle(m) or nil
             end
             if not m or not widget_is_visible(m) then sl_idx = nil; return end
         end
@@ -1499,14 +1500,15 @@ M.read_objective = function(queue)
     -- The FindAllOf search walks every object and stalled the game 75-86 ms each time the
     -- menu opened (known issue 2026-11-14). The list that had the text is kept, so on menu
     -- open the search runs once per session; Q searches again while none is known.
-    if M.obj_list then from({ M.obj_list }) end
+    local kept = M.kept(M.obj_list_h)   -- (a handle: the list may be gone after a load)
+    if kept then from({ kept }) end
     if not txt and (not queue or not M.obj_searched) then
         M.obj_searched = true
         local lst
         pcall(function() lst = FindAllOf("PartyCharacterList_C") end)
         local w = from(lst)
         if w then
-            M.obj_list = w
+            M.obj_list_h = M.handle(w)
             log(string.format("OBJECTIVE from party list %X (%d lists)", M.addr_of(w) or 0, #(lst or {})))
         end
     end
@@ -2070,11 +2072,9 @@ M.wm_what = function(row)
     return (k == "T" and N_("town")) or (k == "F" and N_("path")) or (k == "D" and N_("dungeon")) or nil
 end
 M.wm_find = function()
-    local w = M.wm_widget
-    local ok = false
-    if w then pcall(function() ok = w:IsValid() end) end
-    if ok then return w end
-    M.wm_widget = nil
+    local w = M.kept(M.wm_widget_h)   -- (a handle: checked with the shim first)
+    if w then return w end
+    M.wm_widget, M.wm_widget_h = nil, nil
     for i = 1, #scene_widgets do
         local e = scene_widgets[i]
         if e[2] == "MainMenuWidget_C" and M.sw_ok(e) then
@@ -2085,6 +2085,7 @@ M.wm_find = function()
             if M.wm_widget then break end
         end
     end
+    M.wm_widget_h = M.wm_widget and M.handle(M.wm_widget) or nil
     return M.wm_widget
 end
 -- The story chapters a town hosts, from the TownTable (TownInfoData, object dump: ID @8,
@@ -2541,10 +2542,12 @@ end
 M.current_level = function()
     local id
     pcall(function()
-        local lm = M.levelmgr
-        local okm = false
-        if lm then pcall(function() okm = lm:IsValid() end) end
-        if not okm then lm = FindFirstOf("LevelManagerBP_C"); M.levelmgr = lm end
+        local lm = M.kept(M.levelmgr_h)   -- (shared with M.level_id)
+        if not lm then
+            M.levelmgr_h = nil
+            local x = FindFirstOf("LevelManagerBP_C")
+            if x and x:IsValid() then lm = x; M.levelmgr_h = M.handle(x) end
+        end
         id = lm.CurrentLevelID
     end)
     return type(id) == "number" and id or nil
@@ -3179,24 +3182,24 @@ M.ml_list = function(cls)
         if #c.l == 0 then
             if now - c.t < 3 then return c.l end
         else
+            -- (each kept widget's handle first: the shim's reads, then UE4SS's IsValid)
             local all = true
-            for _, w in ipairs(c.l) do
-                local v = false
-                pcall(function() v = w:IsValid() end)
-                if not v then all = false; break end
+            for i = 1, #c.l do
+                if not M.kept(c.h[i]) then all = false; break end
             end
             if all then return c.l end
         end
     end
-    local l = {}
+    local l, hs = {}, {}
     pcall(function()
         for _, w in ipairs(FindAllOf(cls) or {}) do
             local ok = false
             pcall(function() ok = w:IsValid() end)
-            if ok then l[#l + 1] = w end
+            local h = ok and M.handle(w)
+            if h then l[#l + 1] = w; hs[#hs + 1] = h end
         end
     end)
-    M.ml_cache[cls] = { t = now, l = l }
+    M.ml_cache[cls] = { t = now, l = l, h = hs }
     return l
 end
 -- "items" / "abilities" / "equip" / nil, with the owner widget and which of its lists.
@@ -3687,19 +3690,27 @@ end
 M.bt_list = function(cls)
     M.bt.lists = M.bt.lists or {}
     local c, now = M.bt.lists[cls], os.clock()
-    if c and now - c.t < 3 then return c.l end
-    local l = {}
+    if c and now - c.t < 3 then
+        -- (only while every kept widget's handle still matches in the shim's reads)
+        local all = true
+        for i = 1, #c.l do
+            if not M.handle_ok(c.h[i]) then all = false; break end
+        end
+        if all then return c.l end
+    end
+    local l, hs = {}, {}
     pcall(function()
         local all = FindAllOf(cls)
         if all then
             for _, w in ipairs(all) do
                 local ok = false
                 pcall(function() ok = w:IsValid() end)
-                if ok then l[#l + 1] = w end
+                local h = ok and M.handle(w)
+                if h then l[#l + 1] = w; hs[#hs + 1] = h end
             end
         end
     end)
-    M.bt.lists[cls] = { t = now, l = l }
+    M.bt.lists[cls] = { t = now, l = l, h = hs }
     return l
 end
 -- the enemies on the field, in the order of their panels. Only ADDRESSES of battle
@@ -5456,16 +5467,20 @@ local FIELD_CMD_NAME = {
 }
 local fcmd_mgr = nil
 local function get_fcmd_mgr()
-    if fcmd_mgr and fcmd_mgr:IsValid() then return fcmd_mgr, "cache" end
-    fcmd_mgr = nil
+    -- (the kept one only while the shim's reads show the same object: M.fcmd_h)
+    if fcmd_mgr and M.kept(M.fcmd_h) then return fcmd_mgr, "cache" end
+    fcmd_mgr, M.fcmd_h = nil, nil
     pcall(function()
         local cdo = StaticFindObject("/Script/Octopath_Traveler.Default__FieldCommandManager")
         if cdo then fcmd_mgr = cdo:GetInstance() end
     end)
-    if fcmd_mgr and fcmd_mgr:IsValid() then return fcmd_mgr, "GetInstance" end
+    local ok = false
+    pcall(function() ok = fcmd_mgr ~= nil and fcmd_mgr:IsValid() end)
+    if ok then M.fcmd_h = M.handle(fcmd_mgr); return fcmd_mgr, "GetInstance" end
     fcmd_mgr = nil
     pcall(function() fcmd_mgr = FindFirstOf("FieldCommandManagerBP_C") end)
-    if fcmd_mgr and fcmd_mgr:IsValid() then return fcmd_mgr, "FindFirstOf" end
+    pcall(function() ok = fcmd_mgr ~= nil and fcmd_mgr:IsValid() end)
+    if ok then M.fcmd_h = M.handle(fcmd_mgr); return fcmd_mgr, "FindFirstOf" end
     fcmd_mgr = nil
     return nil, "none"
 end
@@ -5538,6 +5553,15 @@ M.handle_ok = function(h)
         vt = shim.Peek(h.a, "ptr"); cls = shim.Peek(h.a + 0x10, "ptr"); fl = shim.Peek(h.a + 8, "i32")
     end)
     return vt == h.vt and cls == h.cls and fl ~= nil and (math.floor(fl) & 0x18000) == 0
+end
+-- The object of a handle while it lives, else nil: the shim's reads first, then UE4SS's
+-- IsValid. For the managers and widgets kept between polls (2026-11-16: the balloon and
+-- level managers, the area banner, the action prompt, KSFade ... had only IsValid).
+M.kept = function(h)
+    if not M.handle_ok(h) then return nil end
+    local ok = false
+    pcall(function() ok = h.o:IsValid() end)
+    return ok and h.o or nil
 end
 
 -- The level the player is in (LevelManagerBP_C.CurrentLevelID, e.g. 77 = the academy's
@@ -8360,7 +8384,8 @@ NV.door_auto_start = function()
     if not (NV.AUTO_DOORS and shim and shim.KeyEvent) then return false end
     local cls
     pcall(function()
-        local ta = M.popup_widget.TargetActor
+        local pw = M.kept(M.popup_widget_h)
+        local ta = pw and pw.TargetActor
         if ta and ta:IsValid() then cls = class_name_of(ta) end
     end)
     if cls ~= "HouseEnterTriggerBP_C" and cls ~= "LevelTrigger_C" then
@@ -9217,20 +9242,17 @@ M.scan_scene = scan_scene_registry
 -- The manager is a persistent UI widget; cached, re-found at most every 2 s. Only
 -- called from the pump's gate when the world isn't suspended (never mid-fade).
 M.balloon_active = function()
-    local bm = M.balloon_mgr
-    local okb = false
-    if bm then pcall(function() okb = bm:IsValid() end) end
-    if not okb then
-        M.balloon_mgr = nil
+    local bm = M.kept(M.balloon_h)   -- (a handle: checked with the shim first)
+    if not bm then
+        M.balloon_h = nil
         local now = os.clock()
         if now - (M.balloon_find_t or -10) < 2.0 then return false end
         M.balloon_find_t = now
         pcall(function()
             local x = FindFirstOf("BalloonManagerBP_C")
             if not (x and x:IsValid()) then x = FindFirstOf("BalloonManager") end
-            if x and x:IsValid() then M.balloon_mgr = x end
+            if x and x:IsValid() then bm = x; M.balloon_h = M.handle(x) end
         end)
-        bm = M.balloon_mgr
         if not bm then return false end
     end
     local n = 0
@@ -9267,19 +9289,16 @@ end
 -- Read from the pump only while the world isn't suspended (never mid-fade); the
 -- widget is cached and re-found at most every 2 s.
 M.poll_area_name = function()
-    local w = M.area_widget
-    local ok = false
-    if w then pcall(function() ok = w:IsValid() end) end
-    if not ok then
-        M.area_widget = nil
+    local w = M.kept(M.area_widget_h)   -- (a handle: checked with the shim first)
+    if not w then
+        M.area_widget_h = nil
         local now = os.clock()
         if now - (M.area_find_t or -10) < 2.0 then return end
         M.area_find_t = now
         pcall(function()
             local x = FindFirstOf("MapNameNotificationWidget_C")
-            if x and x:IsValid() then M.area_widget = x end
+            if x and x:IsValid() then w = x; M.area_widget_h = M.handle(x) end
         end)
-        w = M.area_widget
         if not w then return end
     end
     -- plain property reads (TextBlock.Text): lighter than calling GetText() on the
@@ -9326,10 +9345,12 @@ M.poll_area_name = function()
     -- @0x440, EncounterLevel @0x3DC, CurrentEncounter @0x3A8 = border/icons/danger), to
     -- check M.level_danger against
     pcall(function()
-        local em = M.encmgr
-        local okm = false
-        if em then pcall(function() okm = em:IsValid() end) end
-        if not okm then em = FindFirstOf("EncountManagerBP_C"); M.encmgr = em end
+        local em = M.kept(M.encmgr_h)
+        if not em then
+            M.encmgr_h = nil
+            local x = FindFirstOf("EncountManagerBP_C")
+            if x and x:IsValid() then em = x; M.encmgr_h = M.handle(x) end
+        end
         local a = 0
         pcall(function() a = em:GetAddress() end)
         if a ~= 0 then
@@ -9352,21 +9373,19 @@ end
 -- like "Ⓔ") and the action text ("Öffnen"). Speak "Öffnen, E" when it appears or
 -- changes; nothing when it goes away. Property reads only, cached widget.
 M.poll_action_popup = function()
-    local w = M.popup_widget
-    local ok = false
-    if w then pcall(function() ok = w:IsValid() end) end
-    if not ok then
-        M.popup_widget = nil
+    local w = M.kept(M.popup_widget_h)   -- (a handle: checked with the shim first)
+    if not w then
+        M.popup_widget, M.popup_widget_h = nil, nil
         local now = os.clock()
         if now - (M.popup_find_t or -10) < 2.0 then return end
         M.popup_find_t = now
         pcall(function()
             local x = FindFirstOf("ActionPopupWidget_C")
-            if x and x:IsValid() then M.popup_widget = x end
+            if x and x:IsValid() then w = x; M.popup_widget_h = M.handle(x) end
         end)
-        w = M.popup_widget
         if not w then return end
     end
+    M.popup_widget = w   -- (for the walker's prompt target: read with M.kept(M.popup_widget_h))
     local shown = false
     pcall(function() shown = (w.isEnable == true) and (w.Visibility == 0) end)
     if not shown then M.popup_said = nil; return end
@@ -9690,11 +9709,9 @@ end
 -- 2026-11-15 -- the level is only told when you try). One instance, found once (FindAllOf
 -- walks every object: at most every 10 s while there is none).
 M.fc_judge = function()
-    local j = M.fc_judge_w
-    local ok = false
-    if j then pcall(function() ok = j:IsValid() end) end
-    if ok then return j end
-    M.fc_judge_w = nil
+    local j = M.kept(M.fc_judge_h)   -- (a handle: checked with the shim first)
+    if j then return j end
+    M.fc_judge_w, M.fc_judge_h = nil, nil
     local now = os.clock()
     if now - (M.fc_judge_t or -99) < 10 then return nil end
     M.fc_judge_t = now
@@ -9708,6 +9725,7 @@ M.fc_judge = function()
             end
         end
     end)
+    M.fc_judge_h = M.fc_judge_w and M.handle(M.fc_judge_w) or nil
     return M.fc_judge_w
 end
 -- whether the balloon is over the person at `addr` yet (nil: no balloon widget found)
@@ -10452,11 +10470,9 @@ end
 -- The story progress: the active save game is KSSaveDataManager.SaveGame (object dump),
 -- the manager found once (FindAllOf, ~50 ms; the class default object skipped).
 M.main_progress = function()
-    local m = M.savemgr
-    local ok = false
-    if m then pcall(function() ok = m:IsValid() end) end
-    if not ok then
-        M.savemgr = nil
+    local m = M.kept(M.savemgr_h)   -- (a handle: checked with the shim first)
+    if not m then
+        M.savemgr_h = nil
         local now = os.clock()
         if now - (M.savemgr_t or -99) < 5 then return nil end
         M.savemgr_t = now
@@ -10464,10 +10480,10 @@ M.main_progress = function()
             for _, o in pairs(FindAllOf("KSSaveDataManagerBP_C") or {}) do
                 local fn = ""
                 pcall(function() fn = o:GetFullName() end)
-                if o:IsValid() and not fn:find("Default__", 1, true) then M.savemgr = o; break end
+                if o:IsValid() and not fn:find("Default__", 1, true) then m = o; break end
             end
         end)
-        m = M.savemgr
+        M.savemgr_h = m and M.handle(m) or nil
     end
     local p
     if m then pcall(function() p = m.SaveGame.MainProgressPoint end) end
@@ -10699,7 +10715,7 @@ radar_pump = function(src)
     -- Fade-gated so FindAllOf never iterates GUObjectArray during a streamed-actor teardown.
     if pump_count % 10 == 3 then
         local fading = false
-        if WS.fade then pcall(function() fading = WS.fade:IsFadeVisible() end) end
+        if WS.fade and M.handle_ok(WS.fade_h) then pcall(function() fading = WS.fade:IsFadeVisible() end) end
         if not fading then scan_scene_registry() end
     end
     local s = src or "key"
@@ -10787,11 +10803,13 @@ radar_pump = function(src)
                 -- actor is mid-teardown and read_actor_pos AVs UE4SS (the crash). KSFade
                 -- is a PERSISTENT manager, so reading it is safe mid-transition (unlike
                 -- the streamed player actor). Cached; only re-found if the handle dies.
-                local kf = WS.fade
-                local okf = false; if kf then pcall(function() okf = kf:IsValid() end) end
-                if not okf then
-                    WS.fade = nil
-                    pcall(function() local x = FindFirstOf("KSFade"); if x and x:IsValid() then WS.fade = x end end)
+                local kf = M.kept(WS.fade_h)   -- (a handle: checked with the shim first)
+                if not kf then
+                    WS.fade, WS.fade_h = nil, nil
+                    pcall(function()
+                        local x = FindFirstOf("KSFade")
+                        if x and x:IsValid() then WS.fade = x; WS.fade_h = M.handle(x) end
+                    end)
                     kf = WS.fade
                 end
                 local faded = nil
@@ -10820,7 +10838,12 @@ radar_pump = function(src)
         -- (narrower than world_susp). WS.fade is nil on the title -> false there.
         local fade_now = false
         if M.trace then log("TR pump fade2") end
-        if WS.fade then pcall(function() fade_now = (WS.fade:IsFadeVisible() == true) end) end
+        if WS.fade and M.handle_ok(WS.fade_h) then
+            pcall(function() fade_now = (WS.fade:IsFadeVisible() == true) end)
+        elseif WS.fade then
+            WS.fade, WS.fade_h = nil, nil   -- freed (a teardown): unsafe this once, found again later
+            fade_now = true
+        end
         if M.trace then log("TR pump after") end
         -- A screen fade is always a teardown window. An EVENT is only one IN-GAME
         -- (cutscene) -- on the TITLE screen IsEventPlaying is true (boot/title sequence)
