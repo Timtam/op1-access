@@ -1760,9 +1760,11 @@ do
         local w, cls = M.get_active_screen()
         if cls ~= "UIGameOver_C" then
             -- left with "Weiter ab letztem Speicherpunkt" (the first item): no load with a
-            -- fade but a jump to the save point (tried 2026-11-16) -- the area and the
-            -- object count are said again right away (see M.load_pending in poll_dialog)
-            if go.idx == 0 then M.area_said = nil; M.load_resay = true end
+            -- fade but a jump to the save point (tried 2026-11-16) -- the object count is
+            -- said again right away (see M.load_pending in poll_dialog). The area is not:
+            -- the game shows no banner there, and the banner may still hold the text of
+            -- where the battle was (marked said when the screen opened)
+            if go.idx == 0 then M.load_resay = true end
             go.idx = nil
             return
         end
@@ -1791,6 +1793,8 @@ do
         if not label or label == "" then label = trf("Item %s", tostring(ci + 1)) end
         if opening then
             log(string.format("GAMEOVER items=[%s] cursor=%d", table.concat(items, "|"), ci))
+            -- the area banner's text counts as said (poll_area_name, mark_only)
+            pcall(M.poll_area_name, true)
             speak(tr("Game over"), true)
             M.await_first_item = true
         end
@@ -9539,7 +9543,7 @@ end
 -- Speak "<area>, <region>" whenever that text changes -- also right after loading.
 -- Read from the pump only while the world isn't suspended (never mid-fade); the
 -- widget is cached and re-found at most every 2 s.
-M.poll_area_name = function()
+M.poll_area_name = function(mark_only)
     local w = M.kept(M.area_widget_h)   -- (a handle: checked with the shim first)
     if not w then
         M.area_widget_h = nil
@@ -9572,6 +9576,17 @@ M.poll_area_name = function()
         end
     end
     local key = area .. "|" .. (region or "")
+    -- mark_only (the game over screen): what the banner holds counts as said, so a text
+    -- left from before the battle isn't said after "Weiter ab letztem Speicherpunkt" at a
+    -- save point somewhere else
+    if mark_only then
+        if not region or region == "" then M.title_banner_said = key else M.area_said = key end
+        return
+    end
+    -- Right after a battle: wait. A banner shown as the battle began was read between
+    -- the battle's end and the game over screen ("Atlasdam, Flatlands" between its items,
+    -- 2026-11-16); the game over screen then marks it said (mark_only above).
+    if M.battle_end_t and os.clock() - M.battle_end_t < 2.5 then return end
     -- A story title on the same banner ('So begins the tale of "Kit, the Traveler."',
     -- 2026-11-16: said as an area, with the danger level of the place): no region text
     -- and no region label (areas have eAREA_NAME_xx; this one SMR_SS_EX1_013100_TITLE /
@@ -11035,6 +11050,7 @@ radar_pump = function(src)
             M.battle_now = battle
             M.bt = {}   -- the battle reader starts afresh (enemy list, menus, widget lists)
             log("BATTLE " .. (battle and "started" or "ended"))
+            if not battle then M.battle_end_t = now end   -- (the area banner waits: poll_area_name)
         end
         if battle then ev = true end
         if ev then WS.ev_t = now end
