@@ -1478,11 +1478,116 @@ do
     end
 end
 
+-- THE OBJECTIVE FROM THE STORY FLAGS (2026-11-16; Q said "No objective" until the menu
+-- had been opened once, and a pressed Q before that kept the menu from reading it). Done
+-- the way the menu's story panel does it (object dump: NowPlayingStoryPanel_C:
+-- SetPlayingStory, EventFunctionBP_C:IsEventFlagCheck): the DataTable NextPurposeDataList,
+-- row "<traveler ID 1-8>", lists NextPurposeData rows (ShowStartFlag @0xC, ShowEndFlag
+-- @0x10, TextLabel @0x18); the first whose start flag is set (or 0) and whose end flag is
+-- not (or 0) -- KSSaveGame:GetBitFlag -- names the text. Checked in game: Cyrus in the
+-- academy, "Speak with the Royal Academy's headmaster.", as the menu showed it.
+-- Travelers by the party's 0-based IDs (the save's PlayerParty lists).
+M.TRAVELERS = { [0] = "Olberic", "Tressa", "Cyrus", "Primrose", "H'aanit", "Therion", "Ophilia", "Alfyn" }
+M.PARTY_MAIN = "MainMemberID_26_B4144D6B4009D87793E65DB3D8FD1F30"
+-- the active save game (KSSaveDataManagerBP_C.SaveGame; the manager found once, ~50 ms,
+-- its class default object skipped), or nil
+M.save_game = function()
+    local m = M.kept(M.savemgr_h)   -- (a handle: checked with the shim first)
+    if not m then
+        M.savemgr_h = nil
+        local now = os.clock()
+        if now - (M.savemgr_t or -99) < 5 then return nil end
+        M.savemgr_t = now
+        pcall(function()
+            for _, o in pairs(FindAllOf("KSSaveDataManagerBP_C") or {}) do
+                local fn = ""
+                pcall(function() fn = o:GetFullName() end)
+                if o:IsValid() and not fn:find("Default__", 1, true) then m = o; break end
+            end
+        end)
+        M.savemgr_h = m and M.handle(m) or nil
+    end
+    local sg
+    if m then pcall(function() sg = m.SaveGame end) end
+    return sg
+end
+-- the objective of traveler id1 (1-8), or nil
+M.objective_of = function(sg, id1)
+    if not (sg and shim and shim.DtFind and shim.PeekFName and M.dt_addr) then return nil end
+    local lst = M.dt_addr("/Game/Mission/Database/NextPurposeDataList")
+    local dat = M.dt_addr("/Game/Mission/Database/NextPurposeData")
+    if not (lst and dat) then return nil end
+    local kc, kn = M.fname_of(tostring(id1))
+    local row = kc and shim.DtFind(lst, kc, kn)
+    if not row then return nil end
+    local data, n = shim.Peek(row, "ptr"), shim.Peek(row + 8, "i32")
+    if not data or data == 0 or type(n) ~= "number" or n <= 0 or n > 1000 then return nil end
+    local function flag(i)
+        local ok, v = pcall(function() return sg:GetBitFlag(i) end)
+        if ok then return v == true end
+        return nil
+    end
+    for j = 0, n - 1 do
+        local lc, ln = shim.PeekFName(data + j * 8)
+        local r = lc and lc > 0 and shim.DtFind(dat, lc, ln)
+        if r then
+            local st, en = shim.Peek(r + 0x0C, "i32"), shim.Peek(r + 0x10, "i32")
+            local sok = (st == 0) or (type(st) == "number" and flag(st) == true)
+            local eok = (en == 0) or (type(en) == "number" and flag(en) == false)
+            if sok and eok then   -- (the panel stops at the first such row)
+                local tc, tn = shim.PeekFName(r + 0x18)
+                local text = tc and tc > 0 and M.gametext(tc, tn)
+                if text and text ~= "" then return text end
+                return nil
+            end
+        end
+    end
+    return nil
+end
+-- { {name, text}... } for the party's main members, leader first, and how many there are
+M.party_objectives = function()
+    local sg = M.save_game()
+    if not sg then return nil end
+    local ids = {}
+    pcall(function()
+        local a = sg.PlayerParty[M.PARTY_MAIN]
+        for i = 1, 4 do
+            local v = a[i]
+            if type(v) == "number" and v >= 0 and v <= 7 then ids[#ids + 1] = v end
+        end
+    end)
+    local out = {}
+    for _, id in ipairs(ids) do
+        local ok, t = pcall(M.objective_of, sg, id + 1)
+        if ok and t then out[#out + 1] = { name = M.TRAVELERS[id] or tostring(id + 1), text = t } end
+    end
+    log(string.format("OBJECTIVE flags: party=%d with one=%d", #ids, #out))
+    return out, #ids
+end
+
 -- Current objective reader. The menu's "current story" panel lives at
 -- PartyCharacterList_C.NowPlayingStoryPanel.characterName (a KSTextBlock holding the
 -- objective text, e.g. "Zur Bibliothek gehen."). queue=true appends after the category
--- on menu open; queue=false (the Q keybind) interrupts and reads on demand.
+-- on menu open; queue=false (the Q keybind) interrupts and reads on demand. The story
+-- flags come first (M.party_objectives); the panel is the fallback.
 M.read_objective = function(queue)
+    local okf, objs, nparty = pcall(M.party_objectives)
+    if okf and objs and #objs > 0 then
+        local parts = {}
+        for _, o in ipairs(objs) do
+            parts[#parts + 1] = (#objs > 1) and trf("%s: %s", o.name, o.text) or o.text
+        end
+        speak(trf("Objective: %s", table.concat(parts, " ")), not queue)
+        return
+    end
+    -- The flags were read and no traveler has one (between chapters): no objective, as
+    -- the menu shows it. The panel below keeps an old text across a load (2026-11-16:
+    -- Slot 1 got the autosave's objective after "Return to Title"), so it is only asked
+    -- when the flags can't be read.
+    if okf and objs and (nparty or 0) > 0 then
+        if not queue then speak(tr("No objective")) end
+        return
+    end
     local txt
     local function from(lst)
         for _, w in ipairs(lst or {}) do
@@ -10552,23 +10657,9 @@ end
 -- The story progress: the active save game is KSSaveDataManager.SaveGame (object dump),
 -- the manager found once (FindAllOf, ~50 ms; the class default object skipped).
 M.main_progress = function()
-    local m = M.kept(M.savemgr_h)   -- (a handle: checked with the shim first)
-    if not m then
-        M.savemgr_h = nil
-        local now = os.clock()
-        if now - (M.savemgr_t or -99) < 5 then return nil end
-        M.savemgr_t = now
-        pcall(function()
-            for _, o in pairs(FindAllOf("KSSaveDataManagerBP_C") or {}) do
-                local fn = ""
-                pcall(function() fn = o:GetFullName() end)
-                if o:IsValid() and not fn:find("Default__", 1, true) then m = o; break end
-            end
-        end)
-        M.savemgr_h = m and M.handle(m) or nil
-    end
+    local sg = M.save_game()
     local p
-    if m then pcall(function() p = m.SaveGame.MainProgressPoint end) end
+    if sg then pcall(function() p = sg.MainProgressPoint end) end
     return type(p) == "number" and p or nil
 end
 -- Level ID -> { display, danger, border, progress } for the story progress now, or nil
