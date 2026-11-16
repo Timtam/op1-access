@@ -545,9 +545,12 @@ Open:
   whole area too (a passage 150-210 wide is open on some grid alignments only; the shift
   made chest 1 in the study reachable from the save point). "Not reachable" now means the
   whole area ran out of cells. Running out of traces says "Kein Weg gefunden,
-  Suchgrenze erreicht" and leaves the list alone. The walk searches twice as fast (16 ms
-  a tick, ~20000 traces a second), says "Suche im ganzen Gebiet" when the third try
-  starts and "Suche noch den Weg" every 10 s.
+  Suchgrenze erreicht" and leaves the list alone. The walk says "Suche im ganzen Gebiet"
+  when the third try starts and "Suche noch den Weg" every 10 s.
+  - Speed: the walk's search computes 40 ms of every 100 while you wait (8 until
+    2026-11-16: the 105-cell route on the Maiya path waited 2.8 s and computed for 0.24 s
+    of it), ~50000 traces a second. The picture stutters during a search; you stand
+    still then anyway. Not seen in the game yet.
   - Why: on the path to the Maiya caves (Küstenland) chest 3 lay behind an invisible
     wall; the way round went through the north of the map (105 cells, 14840 long). After
     a battle 300 further along that way, every try ran out of traces (53040 in all) and
@@ -557,8 +560,8 @@ Open:
     came from small boxes that held only routes through it.
   - In mock maps (test_whole.lua) a way round beyond the old +40 box is found (57000
     traces); a target with no way fails on cells after the shifted grid (190000 traces,
-    ~10 s in the game). Not tried in the game: watch how long a failing search takes in a
-    big town, and the `ROUTE area from` / `ROUTE whole area` log lines.
+    ~4 s in the game at that speed). Not tried in the game: watch how long a failing
+    search takes in a big town, and the `ROUTE area from` / `ROUTE whole area` log lines.
   - The +20 box fixed the Palasttor cases (the study and the palace exits, a guard
     up-left: all reachable only via the stairs outside the small box). Atlasdam's
     buildings at ~16000 units and one "2922, above" were "not reachable" with the +40

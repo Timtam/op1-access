@@ -8276,7 +8276,7 @@ NV.area_bounds = function()
     return NV.abox
 end
 -- traces for a whole-area search: ~24 a cell of its box (a cell costs 10-20 to explore),
--- 40000 at least, 300000 at most (the walk does ~20000 a second, NV.route_step)
+-- 40000 at least, 300000 at most (the walk does ~50000 a second, nav_route_step)
 NV.whole_traces = function(R)
     local cells = (R.maxx - R.minx + 1) * (R.maxy - R.miny + 1)
     return math.max(40000, math.min(300000, cells * 24))
@@ -9090,12 +9090,14 @@ end
 local function nav_route_step()
     local R = NV.route
     if not R then return end
-    -- Up to 3000 traces per tick, but at most 16 ms of it: this runs on the game thread
-    -- (the pump), and you stand waiting meanwhile. (8 ms before 2026-11-16, ~10000 traces
-    -- a second; a whole-area search takes up to 300000.) Through UE4SS's own trace call
-    -- 110 traces took ~10 ms; the shim's are ~9 times cheaper.
+    -- Up to 8000 traces per tick, but at most 40 ms of it: this runs on the game thread
+    -- (the pump, every 100 ms), and you stand waiting meanwhile -- the picture stutters, the
+    -- sound doesn't. Until 2026-11-16 8 ms: the 105-cell route on the Maiya path waited
+    -- 2.8 s and computed for 0.24 s of it; now ~50000 traces a second (a whole-area search
+    -- takes up to 300000). Through UE4SS's own trace call 110 traces took ~10 ms; the
+    -- shim's are ~9 times cheaper.
     local t0 = os.clock()
-    local res, node = NV.route_slice(R, 3000, 12000, t0 + 0.016)
+    local res, node = NV.route_slice(R, 8000, 30000, t0 + 0.040)
     R.cpu, R.ticks = (R.cpu or 0) + (os.clock() - t0), (R.ticks or 0) + 1
     if res == "found" then nav_route_finish(node); return end
     if res == "fail" then
