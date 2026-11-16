@@ -745,6 +745,24 @@ M.reg_add = function(w, cls, label)
     scene_widgets[#scene_widgets + 1] = { w, cls, label, addr, M.handle and M.handle(w) or nil }
     if cls == "TitlePlayerSelect_C" then cs_instance = w end
 end
+-- An entry UE4SS may touch: its handle still shows the same object in the shim's guarded
+-- reads. A freed widget handed to UE4SS faults in IsA, past any pcall (the load crash of
+-- 2026-11-15 was poll_active_menu; the other readers of this list had no check at all).
+M.sw_ok = function(e)
+    return e ~= nil and (e[5] == nil or M.handle_ok(e[5]))
+end
+-- Drop the entries whose widget is gone: the fast polls' first step, during a fade too
+-- (only the shim's reads), so no reader after it in that run sees a freed widget.
+M.sw_prune = function()
+    for i = #scene_widgets, 1, -1 do
+        local e = scene_widgets[i]
+        if not M.sw_ok(e) then
+            if M.trace then log("TR widget gone: " .. tostring(e[2])) end
+            if e[1] == cs_instance then cs_instance = nil end
+            table.remove(scene_widgets, i)
+        end
+    end
+end
 
 local function on_widget_created(NewObject)
     -- NotifyOnNewObject passes the UObject directly, NOT a hook-style
@@ -1138,7 +1156,7 @@ local function poll_title_selection(active_cls)
     local instance = nil
     for i = #scene_widgets, 1, -1 do
         local entry = scene_widgets[i]
-        if entry[2] == active_cls then
+        if entry[2] == active_cls and M.sw_ok(entry) then
             local w = entry[1]
             local alive = false
             pcall(function() alive = w and w:IsValid() end)
@@ -2011,7 +2029,7 @@ M.wm_find = function()
     M.wm_widget = nil
     for i = 1, #scene_widgets do
         local e = scene_widgets[i]
-        if e[2] == "MainMenuWidget_C" then
+        if e[2] == "MainMenuWidget_C" and M.sw_ok(e) then
             pcall(function()
                 local x = e[1].WorldMap
                 if x and x:IsValid() then M.wm_widget = x end
@@ -2653,7 +2671,9 @@ do
         local m2
         for i = 1, #scene_widgets do
             local e = scene_widgets[i]
-            if e[2] == "TitleOptionScene_C" then
+            if not M.sw_ok(e) then
+                -- gone (the shim's reads): not touched
+            elseif e[2] == "TitleOptionScene_C" then
                 local vis = false; pcall(function() vis = e[1]:IsValid() and e[1]:IsVisible() end)
                 if vis then pcall(function() m2 = e[1].RefOptionMenu end) end
             elseif e[2] == "OptionMenuWBP_C" or e[2] == "OptionMenuSteamWBP_C" then
@@ -4404,6 +4424,7 @@ pcall(RegisterKeyBind, Key.F5, function() pcall(M.update_key) end)
 if M.has_update_source() then pcall(M.update_check, false) end
 
 M.fast_steps = {
+    { "prune", function() M.sw_prune() end },   -- freed screen widgets out, before any reader
     { "lang", function() M.game_lang() end },   -- the text language, before anything speaks
     { "scan", function() if M.scan_scene and not M.field_player and not M.menu_unsafe then M.scan_scene() end end },
     { "active", function() poll_active_menu() end },
@@ -4735,7 +4756,7 @@ cs_live_instance = function()
     end
     for i = #scene_widgets, 1, -1 do
         local e = scene_widgets[i]
-        if e[2] == "TitlePlayerSelect_C" then
+        if e[2] == "TitlePlayerSelect_C" and M.sw_ok(e) then
             local w, x, y = probe(e[1])
             if w then return w, x, y end
         end
@@ -4914,7 +4935,7 @@ poll_character_select = function()
         if not cs_item_positions then cs_load_positions(instance) end  -- retry anchors
         local n, vis, rd = 0, 0, 0
         for i = 1, #scene_widgets do
-            if scene_widgets[i][2] == "TitlePlayerSelect_C" then
+            if scene_widgets[i][2] == "TitlePlayerSelect_C" and M.sw_ok(scene_widgets[i]) then
                 n = n + 1
                 local w = scene_widgets[i][1]
                 if widget_is_visible(w) then vis = vis + 1 end
@@ -5030,7 +5051,7 @@ end
 find_visible_instance = function(cls)
     for i = #scene_widgets, 1, -1 do
         local entry = scene_widgets[i]
-        if entry[2] == cls then
+        if entry[2] == cls and M.sw_ok(entry) then
             local w = entry[1]
             local alive = false
             pcall(function() alive = w and w:IsValid() end)
@@ -5352,7 +5373,7 @@ pcall(RegisterKeyBind, Key.F10, { ModifierKey.CONTROL }, function()
     for i = #scene_widgets, 1, -1 do
         local entry = scene_widgets[i]
         local w, cls, label = entry[1], entry[2], entry[3]
-        if widget_is_visible(w) then
+        if M.sw_ok(entry) and widget_is_visible(w) then
             result_class = cls
             result_label = label
             break
@@ -10860,7 +10881,7 @@ radar_pump = function(src)
         if not menu_open then
             for i = 1, #scene_widgets do
                 local e = scene_widgets[i]
-                if BLOCKING_CLASSES[e[2]] and widget_is_visible(e[1]) then menu_open = true; break end
+                if BLOCKING_CLASSES[e[2]] and M.sw_ok(e) and widget_is_visible(e[1]) then menu_open = true; break end
             end
         end
         if M.trace then log("TR pump balloon") end
