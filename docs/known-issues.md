@@ -312,9 +312,11 @@ Open:
 
 ## Threads
 
-- **A few ExecuteWithDelay callbacks still call game functions off the game thread**
-  (title screen: the char-select anchors and announce, the talk-hook install). Since
-  2026-11-14, everything else runs on the game thread:
+- **Only the talk-hook install still runs off the game thread** (at start, every 2 s
+  until armed): it looks up two UFunctions (StaticFindObject) and hands their addresses
+  to the shim, no game function is called. Since 74be657 the character select's delayed
+  reads (its announce, the cursor, "blocked", the traveler learning) run on the game
+  thread too. Since 2026-11-14 everything else does:
   - work queued for it (11c8ce1); UE4SS 3.0.1 ran that inside whichever thread called a
     UFunction next, and it crashed the game once in the learn-skill dialog;
   - the key binds (8cda17b);
