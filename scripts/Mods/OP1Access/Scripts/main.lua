@@ -5101,10 +5101,11 @@ poll_dialog = function()
             end
         end
         -- the learn-skill dialog's LBP lines, attached under its caption (main menu only:
-        -- the search walks every object, too slow for the game-thread event reader)
+        -- the search walks every object, too slow for the game-thread event reader; not
+        -- on the title before a game is loaded, where no skill can be learned)
         local extra
         M.dlg_extra_at = nil
-        if M.menu_now and not M.evm_active and M.dlg_parts_text then
+        if M.menu_now and not M.evm_active and M.field_player and M.dlg_parts_text then
             local okx, x = pcall(M.dlg_parts_text)
             if okx then extra = x end
             -- the game may fill them a moment after the dialog shows: one more look
@@ -9842,7 +9843,10 @@ M.join_sentences = function(parts) return M.join_text(parts) end
 -- (GetParent) counts -- a detached one from an earlier dialog keeps its old texts.
 M.dlg_parts_text = function()
     local out, seen = nil, {}
-    for _, w in ipairs(FindAllOf("JobAbilityConfirmParts_C") or {}) do
+    -- (the kept list, M.ml_list: the six copies live as long as the menu; a FindAllOf
+    -- on every dialog, twice when nothing was filled yet, stalled each Yes/No question
+    -- in a menu 80-130 ms -- 2026-11-16, "FAST polls slow: 134 ms [active=134]")
+    for _, w in ipairs(M.ml_list("JobAbilityConfirmParts_C") or {}) do
         local ok, par = false, false
         pcall(function() ok = w:IsValid() end)
         if ok then pcall(function() local p = w:GetParent(); par = p ~= nil and p:IsValid() end) end
