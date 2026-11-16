@@ -7461,10 +7461,12 @@ local function nav_announce(prefix)
     local px, py, pz = read_actor_pos(p); if not px then speak(tr("No position")); return end
     local ox, oy, oz = NV.tpos(t)
     if not ox then speak(tr("Target lost")); return end
-    local dx, dy, dz = ox - px, oy - py, (oz or pz) - pz
+    local dx, dy = ox - px, oy - py
     local d = math.floor(math.sqrt(dx * dx + dy * dy) + 0.5)
     local lvl = ""
-    if dz > LEVEL_THRESH then lvl = ", " .. tr("above") elseif dz < -LEVEL_THRESH then lvl = ", " .. tr("below") end
+    -- (a floor up or down, or a terrace: NV.level_word)
+    local okw, w = pcall(NV.level_word, p, px, py, pz, ox, oy, oz)
+    if okw and w then lvl = ", " .. tr(w) end
     -- reachability note: inside a building you're not in, or the router failed here,
     -- or the background check found the way only through a shut door
     local key = NV.tkey(t)
@@ -8242,6 +8244,95 @@ NV.start_diag = function(R)
     end
     log(string.format("ROUTE start diag at (%.0f,%.0f,%.0f): %s", R.px, R.py, R.pz, table.concat(parts, " | ")))
 end
+-- FLOORS, NOT HEIGHTS (2026-11-16, user: "er kann das Gasthaus nicht erreichen"). The
+-- Flammhuld inn's trigger stands on a terrace ~170 over the street, its edge 28 in front
+-- of where the walk ended. 129 over you, it passed every "same level" test (|dz| under
+-- 200 / 250 / 300): the search took the start for the goal (within one cell), the walk
+-- said "Arrived" at once, and E went to the follower. Actor heights don't tell floors: a
+-- shop trigger on your floor sits 43 below you (39 over the floor), people are level with
+-- you, a chest is at the floor. The floor under a target does: a down-trace from just over
+-- it (channel 0 doesn't see people, triggers don't block). One that starts inside
+-- something solid (a chest, a shut door: < 10) tells nothing -- the old height rule then.
+-- Floors within NV.FLOOR_SAME: one level. Further apart: stairs or a ledge -- the floor
+-- halfway decides (stairs: about halfway up; a ledge: one of the two ends).
+NV.FLOOR_SAME = 100
+-- the floor under (x, y) seen from height z; nil = none, or the trace began in something
+-- solid. (ksl may be nil once the traces are set up.)
+NV.floor_at = function(ksl, p, x, y, z)
+    local ok, hit, oh = line_blocked(ksl, p, x, y, z + 50, x, y, z - 400)
+    if not (ok and hit and oh and type(oh.Distance) == "number") or oh.Distance < 10 then return nil end
+    return z + 50 - oh.Distance
+end
+-- from floor fa at (ax, ay) to floor fb at (bx, by): one level? true / false
+NV.floor_link = function(ksl, p, ax, ay, fa, bx, by, fb)
+    local d = math.abs(fb - fa)
+    if d <= NV.FLOOR_SAME then return true end
+    if d > 300 then return false end
+    local mx, my, top = (ax + bx) / 2, (ay + by) / 2, math.max(fa, fb)
+    local ok, hit, oh = line_blocked(ksl, p, mx, my, top + 60, mx, my, math.min(fa, fb) - 60)
+    if not (ok and hit and oh and type(oh.Distance) == "number") then return false end
+    return math.abs(top + 60 - oh.Distance - (fa + fb) / 2) <= d / 4
+end
+-- you at (px, py, pz), a target at (tx, ty, tz) (its floor tf if known): one level?
+-- true / false / nil (a floor not found: the caller keeps its height rule)
+NV.level_link = function(ksl, p, px, py, pz, tx, ty, tz, tf)
+    tf = tf or NV.floor_at(ksl, p, tx, ty, tz)
+    if not tf then return nil end
+    local pf = NV.floor_at(ksl, p, px, py, pz)
+    if not pf then return nil end
+    return NV.floor_link(ksl, p, px, py, pf, tx, ty, tf)
+end
+-- the same for the walk's goal (NV.goal), its floor measured once per walk (g.fl)
+NV.goal_level = function(p, px, py, pz)
+    local g = NV.goal
+    if not (g and g.z) or M.tr_native ~= true then return nil end
+    if g.fl == nil then g.fl = NV.floor_at(nil, p, g.x, g.y, g.z) or false end
+    if not g.fl then return nil end
+    local ok = NV.level_link(nil, p, px, py, pz, g.x, g.y, g.z, g.fl)
+    if ok == false and not g.flog then
+        g.flog = true
+        log(string.format("NAVWALK not at the goal's level: goal floor %.0f (z %.0f), you at (%.0f,%.0f,%.0f)",
+            g.fl, g.z, px, py, pz))
+    end
+    return ok
+end
+-- the A* goal test's floor part (NV.route_slice): the goal's floor once per search
+-- (R.ofl); the start node holds your height, not a floor -- measured; other nodes are
+-- floors (nav_ground)
+NV.goal_floor_ok = function(R, ksl, p, best)
+    if R.ofl == nil then
+        R.ofl = NV.floor_at(ksl, p, R.ox, R.oy, R.oz) or false
+        R.traces = R.traces + 1
+    end
+    if not R.ofl then return true end
+    local fz = best.z
+    if best.k == R.startk then
+        fz = NV.floor_at(ksl, p, R.px, R.py, R.pz)
+        if not fz then return true end
+    end
+    R.traces = R.traces + 1
+    local ok = NV.floor_link(ksl, p, R.px + best.x * NV.STEP + (best.ox or 0),
+        R.py + best.y * NV.STEP + (best.oy or 0), fz, R.ox, R.oy, R.ofl)
+    if not ok and not R.floorlog then
+        R.floorlog = true
+        log(string.format("ROUTE goal floor %.0f (z %.0f): cell %d,%d on floor %.0f is not its level, searching on",
+            R.ofl, R.oz, best.x, best.y, fz))
+    end
+    return ok
+end
+-- "above" / "below" for the lists (a msgid, nil = level with you): a floor up or down
+-- (|dz| over LEVEL_THRESH), or a terrace or a hollow (floors over NV.FLOOR_SAME apart)
+NV.level_word = function(p, px, py, pz, tx, ty, tz)
+    local dz = (tz or pz) - pz
+    if dz > LEVEL_THRESH then return "above" elseif dz < -LEVEL_THRESH then return "below" end
+    if M.tr_native ~= true then return nil end
+    local tf = NV.floor_at(nil, p, tx, ty, tz or pz)
+    local pf = tf and NV.floor_at(nil, p, px, py, pz)
+    if not pf then return nil end
+    if tf - pf > NV.FLOOR_SAME then return "above" elseif pf - tf > NV.FLOOR_SAME then return "below" end
+    return nil
+end
+
 -- A body-wide straight corridor (3 knee-high lines, center and +-42) is clear.
 NV.corridor_clear = function(ksl, p, px, py, pz, ox, oy)
     local ddx, ddy = ox - px, oy - py
@@ -8441,8 +8532,10 @@ NV.route_slice = function(R, budget, itercap, deadline)
             -- clearance trace into it, so the A* can never enter it (-> "No route found")
             -- even though you can stand adjacent and interact. The built path still appends
             -- the real goal position, so the walker finishes the last ~1 cell and arrives.
+            -- ...on the goal's floor: below the Flammhuld inn's terrace the start counted
+            -- (2026-11-16, NV.goal_floor_ok)
             if math.abs(best.x - R.gx) <= 1 and math.abs(best.y - R.gy) <= 1
-                and math.abs(best.z - R.oz) <= 300 then
+                and math.abs(best.z - R.oz) <= 300 and NV.goal_floor_ok(R, ksl, p, best) then
                 return "found", best
             end
             -- 8 neighbours (2026-11-14, user: too many wall bumps and re-routes): the 4
@@ -8654,7 +8747,10 @@ local function nav_route_begin(mode, ox, oy, oz)
     local p = get_player_obj(); if not p then speak(tr("No player")); return end
     local px, py, pz = read_actor_pos(p); if not px then speak(tr("No position")); return end
     oz = oz or pz
+    local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
     local samelevel = math.abs(oz - pz) <= 200
+    -- (a terrace 170 up is no "same level", see NV.FLOOR_SAME)
+    if samelevel and ksl and NV.level_link(ksl, p, px, py, pz, ox, oy, oz) == false then samelevel = false end
     local gx = math.floor((ox - px) / NV.STEP + 0.5)
     local gy = math.floor((oy - py) / NV.STEP + 0.5)
     if gx == 0 and gy == 0 and samelevel then
@@ -8673,7 +8769,6 @@ local function nav_route_begin(mode, ox, oy, oz)
     if not okp then people = nil end
     -- direct-line shortcut (same level only): if a BODY-WIDTH corridor (3 lines,
     -- center +-42) to the target is clear, skip the search entirely
-    local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
     local walls = NV.walls_here()
     if ksl and samelevel and NV.corridor_clear(ksl, p, px, py, pz, ox, oy)
         and not NV.person_on(people, px, py, pz, ox, oy) and not NV.walls_cross(walls, px, py, ox, oy, pz) then
@@ -8775,7 +8870,7 @@ NV.bg_new = function(t, p, px, py, pz)
     if not ksl then return nil end
     local gx = math.floor((tx - px) / NV.STEP + 0.5)
     local gy = math.floor((ty - py) / NV.STEP + 0.5)
-    if math.abs(tz - pz) <= 200 and ((gx == 0 and gy == 0)
+    if math.abs(tz - pz) <= 200 and NV.level_link(ksl, p, px, py, pz, tx, ty, tz) ~= false and ((gx == 0 and gy == 0)
         or (NV.corridor_clear(ksl, p, px, py, pz, tx, ty) and not NV.walls_cross(NV.walls_here(), px, py, tx, ty, pz))) then
         NV.bg_record(job, true, "straight")
         return nil
@@ -8856,10 +8951,11 @@ local function nav_info()
     local ox, oy, oz = NV.tpos(t)
     if not (px and ox) then speak(tr("Target lost")); return end
     oz = oz or pz
-    local dx, dy, dz = ox - px, oy - py, (oz or pz) - pz
+    local dx, dy = ox - px, oy - py
     local d = math.floor(math.sqrt(dx * dx + dy * dy) + 0.5)
     local lvl = tr("same level")
-    if dz > LEVEL_THRESH then lvl = tr("above") elseif dz < -LEVEL_THRESH then lvl = tr("below") end
+    local okw, w = pcall(NV.level_word, p, px, py, pz, ox, oy, oz)
+    if okw and w then lvl = tr(w) end
     local base = trf("%s %d of %d, %s, %d, %s. ", M.cat_word(t.cat), NV.idx, #NV.list, nav_dir(dx, dy), d, lvl)
     local pts = nav_find_path(p, px, py, pz, ox, oy, oz)
     if pts then
@@ -9612,9 +9708,11 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
             if gd < 35 and math.abs(pz - (NV.goal.z or pz)) < LEVEL_THRESH then
                 nav_walk_stop(tr("Arrived")); pcall(NV.face_goal); return
             end
-        elseif gd < 170 and math.abs(pz - (NV.goal.z or pz)) < LEVEL_THRESH then
+        elseif gd < 170 and math.abs(pz - (NV.goal.z or pz)) < LEVEL_THRESH
+            and NV.goal_level(p, px, py, pz) ~= false then
             -- (not when the goal is a floor up or down: in the academy hall a walk to
-            -- a door upstairs said "Arrived" passing beneath it)
+            -- a door upstairs said "Arrived" passing beneath it; nor below a terrace:
+            -- the Flammhuld inn, 2026-11-16)
             nav_walk_stop(tr("Arrived")); pcall(NV.face_goal); return
         end
     end
@@ -9707,7 +9805,7 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
         -- chest's other side (NV.item_spot) likewise)
         local gc = NV.goal and NV.goal.cat
         local reach = (gc == "event") and 60 or (gc == "spot") and 50 or 220
-        if gd >= 0 and gd < reach and gdz < LEVEL_THRESH then
+        if gd >= 0 and gd < reach and gdz < LEVEL_THRESH and NV.goal_level(p, px, py, pz) ~= false then
             speak(tr("Arrived"))                       -- close enough to interact
             pcall(NV.face_goal)
         elseif NV.goal and (NV.noimprove or 0) < 2 and (NV.retries or 0) < 5 then

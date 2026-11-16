@@ -455,6 +455,19 @@ Open:
 
 ## Navigation
 
+- **Targets on a terrace: fixed, not walked yet.** In Flammhuld (2026-11-16) the inn
+  couldn't be reached: its trigger stands on a terrace about 170 over the street, 152
+  from where the walk ended and 129 over you. Every "same level" test took heights within
+  200-300 as one level, so the route search took its start for the goal, the walk said
+  "Arrived" at once below the terrace wall, and E went to the follower. Now a target's
+  floor counts, not its height: a down-trace under it (people and triggers don't block
+  it). Floors over 100 apart are one level only along stairs (the floor halfway is about
+  halfway up); a ledge is not. The search then looks for the way up, the walk doesn't
+  stop below, and the lists say "höher" / "tiefer" for such a target. Where the trace
+  starts inside something solid (a chest, a shut door) the old height rule stays.
+  Checked in a unit test only (a mock street, terrace and stairs). Not tried: the inn
+  itself, NPCs on steep stairs, exits on stairs. Log lines `ROUTE goal floor` and
+  `NAVWALK not at the goal's level`.
 - **The radar in the background: built, not heard yet.** Since 7fb543a the radar fades
   out while another window is in front and back in when the game is, the same test the
   game mutes itself by (the front window belongs to the game's process). Not yet heard

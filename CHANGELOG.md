@@ -55,7 +55,8 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
 - A 3D radar (Steam Audio) for chests, exits, people, buildings and shops, a wall radar and
   bump sounds. Like the game, it goes silent while another window is in front.
 - A navigator: categories with Home and End, targets with Page Up and Page Down, Ctrl+Backspace
-  for directions. It says which chests are opened or purple, which targets can't be reached, where exits
+  for directions. It says which chests are opened or purple, which targets are higher or lower
+  than you (a floor, or a terrace a few steps up), which can't be reached, where exits
   lead and how dangerous the area behind them is, and what kind of shop a shop is. A
   tavern leads to its barkeep, not to the door.
 - The minimap's markers: what each one is (side story with the person's name, hidden item,
@@ -64,7 +65,8 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   when Scrutinize reveals a hidden item: "New marker: hidden item, right, 3872"; the radar
   rings for it right away.
 - A walker: Backspace walks to the target over a computed route, also up and down narrow
-  stairs and around people, opens doors on the way and frees itself when stuck. When
+  stairs, up to terraces and around people, opens doors on the way and frees itself when
+  stuck. When
   someone blocks the only way, it says who ("Armer is in the way"). At a chest or a hidden
   item it waits for the game's prompt and tries another side when none comes.
 
