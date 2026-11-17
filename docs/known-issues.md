@@ -367,6 +367,29 @@ Open:
   cue 9). By the generator formulas the pop was ~6.5 dB below the chime; since
   2026-11-14 it is ~2.7 dB below (louder, a bit longer). Whether that is right needs ears.
 
+## When the radar comes back
+
+- **After a scene: built, not yet tried in the game.** The user (2026-11-17) could press J
+  or E again well before the radar came back after a dialogue. In the logs the radar
+  came back about 2 s after a battle ended or a menu inside an event closed. The radar
+  waited 1.5 s after the game's event flag (IsEventPlaying, IsEventPlayTheater or the
+  battle mode) went off, because between two chained events the flag can drop for a
+  moment. Its object rescan came 0.3 s after that. The player controller knows whom
+  the input goes to (KSPlayerController InputMode @ +0x6C0: 0 MODE_CHARA, 1 MODE_UI, the
+  names from the exe; IsPlayerCharacterInput @ +0x6C1), read raw. Now, when an event
+  took the input away from the character and it has been back for 0.25 s, the radar
+  waits only 0.25 s (M.ev_hold, test_evhold.lua). A controller that never changes, or
+  can't be read, keeps the old 1.5 s. Not known yet: whether the input really leaves
+  the character in dialogues, scenes and battles; whether it comes back before the
+  event flag goes off (then the event flag is the late one); whether it ever comes back
+  between two chained events. The new log lines answer all three: `STATE <seconds>
+  event …, theater …, battle …, fade …, settling …, input <mode>/<flag>` on every change,
+  `RADAR resumed <s> (event off … s ago, wait … s, input with the character … s)`, and
+  `STATE … moved … while the radar waited` when you walked before it came back. Other
+  signals seen in the dump, not used yet: EventManager.TheaterStatus (EEventTheater:
+  NONE, UPDATE, RESTORE, FINISH_PRE, FINISH), EventManagerBP_C's talk blur timers
+  (TalkPostTimerNow/Finish), KSGameStatics GetMainMenuEnable / IsFadeEnd.
+
 ## Threads
 
 - **Only the talk-hook install still runs off the game thread** (at start, every 2 s

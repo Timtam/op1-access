@@ -1,7 +1,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: OP1 Access\n"
-"POT-Creation-Date: 2026-11-17 06:27\n"
+"POT-Creation-Date: 2026-11-17 09:13\n"
 "Language: \n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -80,7 +80,7 @@ msgstr ""
 msgid "Save and load"
 msgstr ""
 
-#: main.lua:542 main.lua:11147
+#: main.lua:542 main.lua:11190
 msgid "Path action"
 msgstr ""
 
@@ -316,7 +316,7 @@ msgstr ""
 msgid "Category %s"
 msgstr ""
 
-#: main.lua:2043 main.lua:2153 main.lua:3979 main.lua:4613 main.lua:11566
+#: main.lua:2043 main.lua:2153 main.lua:3979 main.lua:4613 main.lua:11609
 #, lua-format
 msgid "%s, unavailable"
 msgstr ""
@@ -399,7 +399,7 @@ msgstr ""
 msgid "danger level %d to %d"
 msgstr ""
 
-#: main.lua:2382 main.lua:2765 main.lua:12229
+#: main.lua:2382 main.lua:2765 main.lua:12272
 #, lua-format
 msgid "danger level %d"
 msgstr ""
@@ -604,7 +604,7 @@ msgstr ""
 msgid "%s, next skill %s LBP"
 msgstr ""
 
-#: main.lua:3977 main.lua:11564
+#: main.lua:3977 main.lua:11607
 msgid "on hand"
 msgstr ""
 
@@ -1755,108 +1755,108 @@ msgstr ""
 msgid "No prompt at this item"
 msgstr ""
 
-#: main.lua:11125
+#: main.lua:11168
 msgid "Save point"
 msgstr ""
 
-#: main.lua:11147
+#: main.lua:11190
 msgid "Talk"
 msgstr ""
 
-#: main.lua:11327
+#: main.lua:11370
 #, lua-format
 msgid "action %s"
 msgstr ""
 
-#: main.lua:11395 main.lua:11427
+#: main.lua:11438 main.lua:11470
 msgid "done"
 msgstr ""
 
-#: main.lua:11395 main.lua:11428
+#: main.lua:11438 main.lua:11471
 msgid "not possible"
 msgstr ""
 
-#: main.lua:11429
+#: main.lua:11472
 msgid "unavailable"
 msgstr ""
 
-#: main.lua:11454
+#: main.lua:11497
 #, lua-format
 msgid "%d of %d"
 msgstr ""
 
-#: main.lua:11495
+#: main.lua:11538
 #, lua-format
 msgid "Now: %s"
 msgstr ""
 
-#: main.lua:11495
+#: main.lua:11538
 #, lua-format
 msgid "New: %s"
 msgstr ""
 
-#: main.lua:11565
+#: main.lua:11608
 msgid "stolen"
 msgstr ""
 
-#: main.lua:11565
+#: main.lua:11608
 msgid "bought"
 msgstr ""
 
-#: main.lua:11578
+#: main.lua:11621
 msgid "strength"
 msgstr ""
 
-#: main.lua:11775 main.lua:11776
+#: main.lua:11818 main.lua:11819
 msgid "save point"
 msgstr ""
 
-#: main.lua:11775
+#: main.lua:11818
 msgid "hidden item"
 msgstr ""
 
-#: main.lua:11775
+#: main.lua:11818
 msgid "objective"
 msgstr ""
 
-#: main.lua:11775
+#: main.lua:11818
 msgid "side story"
 msgstr ""
 
-#: main.lua:11776
+#: main.lua:11819
 msgid "exit toward objective"
 msgstr ""
 
-#: main.lua:11776
+#: main.lua:11819
 msgid "traveler to recruit"
 msgstr ""
 
-#: main.lua:11908
+#: main.lua:11951
 #, lua-format
 msgid "Marker gone: %s"
 msgstr ""
 
-#: main.lua:11947
+#: main.lua:11990
 #, lua-format
 msgid "New marker: %s, %s, %d"
 msgstr ""
 
-#: main.lua:12087
+#: main.lua:12130
 #, lua-format
 msgid "marker type %d"
 msgstr ""
 
-#: main.lua:12095
+#: main.lua:12138
 #, lua-format
 msgid "%s, collected"
 msgstr ""
 
-#: main.lua:12107
+#: main.lua:12150
 #, lua-format
 msgid "%s, to %s"
 msgstr ""
 
-#: main.lua:12111
+#: main.lua:12154
 #, lua-format
 msgid "%s place"
 msgstr ""

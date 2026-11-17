@@ -6780,7 +6780,7 @@ local function beacon_rescan()
             end
         end
     end
-    log("BEACON rescan: " .. #beacon_objs .. " objects")
+    log(string.format("BEACON rescan: %d objects %.3f", #beacon_objs, os.clock()))
 end
 local function beacon_step()   -- driven by radar_pump while beacon_on
     -- pending post-door rescan: silence everything, re-enumerate the NEW area's
@@ -10820,6 +10820,49 @@ end
 local WS = { px = nil, py = nil, ev_t = 0.0, hold = 0.0, susp = false }
 local audio_autotry = false   -- one-shot lazy audio init (bump works without radar toggles)
 
+-- WHEN YOU CAN ACT AGAIN (2026-11-17, user: after a dialogue, a scene or a battle J and E
+-- worked long before the radar was back). The radar waited 1.5 s after the event flag
+-- went off (between two chained events it can drop for a moment), then 0.3 s for its
+-- rescan. The player controller itself knows whom the input goes to (KSPlayerController,
+-- native): InputMode, EKSInputMode u8 @ +0x6C0 (0 MODE_CHARA, 1 MODE_UI: the names from
+-- the exe), and IsPlayerCharacterInput, bool @ +0x6C1. Read raw (shim.Peek) through a kept
+-- handle: no game call, safe on any thread. Returns mode, input -- or nil when unknown.
+-- Found again at most every 5 s, and never while a fade is up (FindFirstOf walks the
+-- objects; M.fade_now is the last pump's).
+M.ctrl_state = function()
+    local h = M.pc_h
+    if not M.handle_ok(h) then
+        M.pc_h, h = nil, nil
+        local now = os.clock()
+        if M.fade_now or now - (M.pc_find_t or -99) < 5.0 then return nil end
+        M.pc_find_t = now
+        pcall(function()
+            local x = FindFirstOf("KSPlayerControllerBP_C")
+            if x and x:IsValid() then M.pc_h = M.handle(x) end
+        end)
+        h = M.pc_h
+        if not h then return nil end
+    end
+    local mode, inp
+    pcall(function() mode = shim.Peek(h.a + 0x6C0, "u8"); inp = shim.Peek(h.a + 0x6C1, "u8") end)
+    return mode, inp
+end
+-- How long the radar stays down after an event, from the controller's state: the input
+-- with the character (can_act true), away from it (false), or unknown (nil). Only when the
+-- event took the input away and it has been back with the character for 0.25 s does the
+-- wait shrink from 1.5 s to 0.25 s, so a controller that never changes (or can't be read)
+-- leaves it as it was. W.ev_noact is cleared by the pump when the radar resumes.
+M.ev_hold = function(W, now, ev, can_act)
+    if ev then
+        if can_act == false then W.ev_noact = true end
+        W.act_since = nil
+        return 1.5
+    end
+    if can_act then W.act_since = W.act_since or now else W.act_since = nil end
+    if W.ev_noact and W.act_since and now - W.act_since >= 0.25 then return 0.25 end
+    return 1.5
+end
+
 -- ---------------------------------------------------------------------------
 -- Scene-widget registry rebuild (replaces on_widget_created / NotifyOnNewObject, which
 -- was the focus-out crash: UE4SS's IsA class-match faults on a half-built widget during
@@ -12404,15 +12447,16 @@ radar_pump = function(src)
         end
     end
     do
-        local ev = false
+        local ev, ev_play, ev_theater = false, false, false
         if M.trace then log("TR pump event") end
         pcall(function()
             local ef = StaticFindObject("/Script/Octopath_Traveler.Default__EventFunction")
             if ef then
-                ev = ef:IsEventPlaying() and true or false
-                if not ev then ev = ef:IsEventPlayTheater() and true or false end
+                ev_play = ef:IsEventPlaying() and true or false
+                if not ev_play then ev_theater = ef:IsEventPlayTheater() and true or false end
             end
         end)
+        ev = ev_play or ev_theater
         if M.trace then log("TR pump battle") end
         -- A BATTLE is no event to the game, but the field must stand still too: the
         -- navigator, walker and radar kept going in battle (user, 2026-11-14).
@@ -12502,7 +12546,28 @@ radar_pump = function(src)
                 end
             end
         end
-        local susp = ev or settling or (now - WS.ev_t < 1.5) or (now < WS.hold)
+        -- does the character have the input? (M.ctrl_state; the wait after an event: M.ev_hold)
+        local cmode, cinp
+        if not M.fade_now then cmode, cinp = M.ctrl_state() end
+        local can_act = nil
+        if cmode ~= nil and cinp ~= nil then can_act = (cmode == 0 and cinp ~= 0) end
+        local hold = M.ev_hold(WS, now, ev, can_act)
+        local susp = ev or settling or (now - WS.ev_t < hold) or (now < WS.hold)
+        -- (for the log: you walked while the radar still waited after an event)
+        if ev or settling or not susp then
+            WS.wait_pos, WS.wait_moved = nil, nil
+        elseif WS.px then
+            if not WS.wait_pos then
+                WS.wait_pos = { WS.px, WS.py }
+            elseif not WS.wait_moved then
+                local dm = math.sqrt((WS.px - WS.wait_pos[1]) ^ 2 + (WS.py - WS.wait_pos[2]) ^ 2)
+                if dm > 30 then
+                    WS.wait_moved = true
+                    log(string.format("STATE %.3f moved %.0f while the radar waited (event off %.2f s ago)",
+                        now, dm, now - WS.ev_t))
+                end
+            end
+        end
         -- menu-read danger flag for the async menu pollers (poll_active_menu /
         -- widget_is_visible). Fade up OR event = scene widgets mid-teardown -> their
         -- IsVisible() ProcessEvent AVs. Deliberately NOT "no field player": the title
@@ -12523,6 +12588,18 @@ radar_pump = function(src)
         -- exists" (WS.px). Without this the title menu never announces.
         M.menu_unsafe = fade_now or (ev and WS.px ~= nil)
         M.fade_now, M.ev_now = fade_now, (ev and WS.px ~= nil) and true or false   -- M.poll_event_menus
+        -- THE STATE PROBE: one line with the time (s, ms) whenever one of the signals that
+        -- decide the radar changes -- to see in a log which of them comes back first after
+        -- a dialogue, a scene, a battle or a load ("input" = InputMode/IsPlayerCharacterInput)
+        do
+            local st = string.format("event %s, theater %s, battle %s, fade %s, settling %s, input %s/%s",
+                tostring(ev_play), tostring(ev_theater), tostring(battle), tostring(fade_now), tostring(settling),
+                tostring(cmode), tostring(cinp))
+            if st ~= WS.state then
+                WS.state = st
+                log(string.format("STATE %.3f %s", now, st))
+            end
+        end
         -- a confirmed load's fade is up: forget the last area, and say the object count
         -- after it (poll_dialog; M.idle_from can't just be dropped: the radar's moment
         -- "live" before the fade sets it again)
@@ -12536,7 +12613,13 @@ radar_pump = function(src)
                             -- (it used to re-queue itself forever on stale state)
         if susp ~= WS.susp then
             WS.susp = susp
-            log(susp and "RADAR suspended (event/transition)" or "RADAR resumed")
+            if susp then
+                log(string.format("RADAR suspended (event/transition) %.3f", now))
+            else
+                log(string.format("RADAR resumed %.3f (event off %.2f s ago, wait %.2f s%s)", now, now - WS.ev_t, hold,
+                    WS.act_since and string.format(", input with the character %.2f s", now - WS.act_since) or ""))
+                WS.ev_noact = nil
+            end
             -- a scene or transition may change the map: the kept object lists go, at
             -- its start and at its end (nothing kept from inside it either) -- except the
             -- level's fixed parts after a scene without a fade (M.fa_set_aside)
@@ -12668,7 +12751,8 @@ radar_pump = function(src)
     if explore ~= WS.explore then
         WS.explore = explore
         log("RADAR " .. (explore and "live (exploring)"
-            or ("idle (" .. (menu_open and "menu" or (talk_open and "talk" or "scene")) .. ")")))
+            or ("idle (" .. (menu_open and "menu" or (talk_open and "talk" or "scene")) .. ")"))
+            .. string.format(" %.3f", now))
         if explore then
             beacon_rescan_at  = now + 0.3                    -- re-enumerate this area
             beacon_rescan_say = (WS.idle_reason ~= "menu") or (M.load_resay == true)   -- announce count on area change / load, not menu close
