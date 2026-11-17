@@ -160,8 +160,20 @@ against one Eissentinel in the study dungeon. Weaknesses in the game's tile orde
 (1c473c0) heard on the flats: "weak to Bogen, 2 unknown", then "weak to Bogen, Eis,
 1 unknown". Not yet seen or checked:
 
-- **More than five weaknesses, locked tiles.** The panel has five tiles; an enemy with
-  more is logged ("WEAK"). A locked tile (WeakLocked) is said "locked". Neither seen.
+- **More than five weaknesses.** The panel has five tiles; an enemy with more is logged
+  ("WEAK"). Not seen.
+- **Locked weaknesses: in a unit test only.** A boss that calls helpers has its
+  weaknesses locked until they are gone (user, 2026-11-17). The tile's WeakLocked flag
+  (WeakStatusIcon_C +0x28A) is the game's own. The cooked Blueprint's bytecode sets it in
+  SetAttributeIcon(Icon, Lock, Opened, Index) when a tile is made and in
+  SetWeakLock(Lock), which plays the Lock or UnLock animation. Keys 1-5 and the target
+  cursor said "Schwert blockiert" per tile before; all tiles locked now come out as
+  "Schwächen: Schwert, 2 unbekannt, alle blockiert". Since this change the battle poll
+  also watches it (every 0.5 s). A change is said with the damage line ("Mikk:
+  Schwächen blockiert", "Mikk: Schwächen wieder frei"), and a boss locked from the
+  start gets it in the line that names the enemies ("Kampf: Mikk, Schwächen
+  blockiert"). Checked against mock panels (test_weaklock.lua). Not seen in a real
+  fight yet; log `WEAK lock <name>: <n> of <m> tiles`.
 - **Several enemies or party members.** Enemies are numbered in the order of their
   panels (widget order), the turn order lists icons in widget order. Whether both match
   the screen's left-to-right order needs a fight with more than one enemy; four random

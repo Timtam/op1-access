@@ -91,6 +91,9 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   weaknesses), 6 to 9 a party member, 0 the turn order.
 - The result screen names every level-up, also when two travelers level up in one battle
   or one gains two levels.
+- Blocked weaknesses: when a boss's helpers block its weaknesses, and when they are free
+  again, it is said ("Mikk: weaknesses locked"); a boss blocked from the start has it in
+  the battle's first line.
 - Weaknesses come in the game's own tile order with the unknown ones in place ("weak to
   2 unknown, Dunkelheit"), so you can tell what an unknown one can still be.
 

@@ -4261,18 +4261,21 @@ M.bt_party = function()
 end
 -- The weakness tiles as said: { {name = "Stab"} or {} for a "?", locked = bool } in the
 -- game's order -> "weak to 1 unknown, Stab, Dunkelheit" (a run of "?" as a count, in
--- place), nil for none.
+-- place), nil for none. All of them locked: "weak to Stab, 2 unknown, all locked".
 M.weak_tiles_text = function(tiles)
     if #tiles == 0 then return nil end
+    local all = true
+    for _, t in ipairs(tiles) do if not t.locked then all = false end end
     local out, run = {}, 0
     local function flush()
         if run > 0 then out[#out + 1] = trf("%d unknown", run); run = 0 end
     end
     for _, t in ipairs(tiles) do
+        local lk = t.locked and not all
         if t.name then
             flush()
-            out[#out + 1] = t.locked and trf("%s locked", t.name) or t.name
-        elseif t.locked then
+            out[#out + 1] = lk and trf("%s locked", t.name) or t.name
+        elseif lk then
             flush()
             out[#out + 1] = tr("1 unknown locked")
         else
@@ -4280,7 +4283,48 @@ M.weak_tiles_text = function(tiles)
         end
     end
     flush()
+    if all then return trf("weak to %s, all locked", table.concat(out, ", ")) end
     return trf("weak to %s", table.concat(out, ", "))
+end
+-- LOCKED WEAKNESSES (user, 2026-11-17: a boss that calls helpers has its weaknesses
+-- blocked until they are gone). How many of an enemy's weakness tiles are set up, and
+-- how many of those are locked. WeakStatusIcon_C.WeakLocked (bool @ +0x28A) is the flag:
+-- the cooked Blueprint's bytecode sets it in SetAttributeIcon(Icon, Lock, Opened, Index)
+-- when a tile is made (playing InstantLock or NoLock) and in SetWeakLock(Lock), which
+-- plays the Lock or UnLock animation when it changes.
+M.bt_weak_locked = function(w)
+    local nl, nt = 0, 0
+    for k = 0, 4 do
+        local ic
+        pcall(function() ic = w["WeakStatusIcon_0" .. k] end)
+        local setup, locked = false, false
+        if ic then pcall(function() setup = ic.IsSetup; locked = ic.WeakLocked == true end) end
+        if setup then
+            nt = nt + 1
+            if locked then nl = nl + 1 end
+        end
+    end
+    return nl, nt
+end
+-- From the battle poll, every 0.5 s: weaknesses locked, or free again, go with the damage
+-- line. Locked when the battle starts: in the line that names the enemies (M.poll_battle
+-- reads bt.locks); locked once the tiles are set up after that line: said then.
+M.bt_lock_watch = function(bt, now)
+    if now - (bt.lock_t or -9) < 0.5 then return end
+    bt.lock_t = now
+    bt.locks = bt.locks or {}
+    for _, en in ipairs(M.bt_enemies()) do
+        local nl, nt = M.bt_weak_locked(en.w)
+        if nt > 0 then
+            local lk = nl > 0
+            local was = bt.locks[en.addr]
+            if lk ~= was and (was ~= nil or (lk and bt.started)) then
+                M.dmg_push(lk and trf("%s: weaknesses locked", en.name) or trf("%s: weaknesses free again", en.name))
+            end
+            if lk ~= was then log(string.format("WEAK lock %s: %d of %d tiles", tostring(en.name), nl, nt)) end
+            bt.locks[en.addr] = lk
+        end
+    end
 end
 M.bt_enemy_text = function(en)
     local w = en.w
@@ -4536,6 +4580,7 @@ M.poll_battle = function()
             bt.down[pm.name] = dead
         end
     end
+    pcall(M.bt_lock_watch, bt, now)
     -- damage numbers gathered by the hooks: one line 0.25 s after the last of a burst
     if bt.dmgbuf and #bt.dmgbuf > 0 and now - (bt.dmg_t or 0) > 0.25 then
         local line = table.concat(bt.dmgbuf, ", ")
@@ -4548,7 +4593,9 @@ M.poll_battle = function()
         if #en > 0 then
             bt.started = true
             local names = {}
-            for _, e in ipairs(en) do names[#names + 1] = e.name end
+            for _, e in ipairs(en) do
+                names[#names + 1] = (bt.locks and bt.locks[e.addr]) and trf("%s, weaknesses locked", e.name) or e.name
+            end
             speak(trf("Battle: %s", table.concat(names, ", ")))
         end
     end
