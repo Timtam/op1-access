@@ -87,6 +87,8 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
 - Commands, skills and items with costs, targets, the boost level, actions with their actor,
   damage and healing, breaks, status effects and the results. Keys 1 to 5 read an enemy (shield,
   weaknesses), 6 to 9 a party member, 0 the turn order.
+- The result screen names every level-up, also when two travelers level up in one battle
+  or one gains two levels.
 - Weaknesses come in the game's own tile order with the unknown ones in place ("weak to
   2 unknown, Dunkelheit"), so you can tell what an unknown one can still be.
 

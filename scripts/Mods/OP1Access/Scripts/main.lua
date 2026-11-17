@@ -4666,27 +4666,54 @@ M.poll_battle = function()
     end
 end
 -- The result screen ("Sieg!"): the panel's own totals (GetTotalMoney / Exp / JobPoint
--- ints: 25, 6 = 5 + break bonus, 5 in the first test), said 1.5 s after it opens so
--- the level-ups (BattleResultPlayerWidget_C.PlayLevelUp / PlayerLevel) are set; a
--- level-up that shows later is said on its own. Drops: BattleDropItemWidget_C texts.
+-- ints: 25, 6 = 5 + break bonus, 5 in the first test), said 1.5 s after it opens, with
+-- the level-ups seen so far; one that shows later is said on its own. Drops:
+-- BattleDropItemWidget_C texts.
+-- LEVEL-UPS (BattleResultPlayerWidget_C.PlayLevelUp / PlayerLevel) are watched from the
+-- first poll on (2026-11-17, user: "when two level up, only the last one is read"): the
+-- flag was only looked at from 1.5 s on, and it seems to be up only while that
+-- character's level-up plays, so an early one was over by then. A level that rose since
+-- the screen opened counts too (per widget, by address), a second level in one battle is
+-- said as well, and every change of a player's level or flag is logged ("BT result").
 M.poll_battle_result = function(w)
     local bt, now = M.bt, os.clock()
     local open = false
     pcall(function() open = w.ResultOpen end)
     if not open then return end
     bt.result_t = bt.result_t or now
-    if now - bt.result_t < 1.5 then return end
-    bt.lv_said = bt.lv_said or {}
-    local ups = {}
+    bt.lv_said = bt.lv_said or {}   -- name -> the level said
+    bt.lv0 = bt.lv0 or {}           -- widget address + name -> the level when first read
+    bt.lv_log = bt.lv_log or {}     -- widget address -> what the log said last
+    bt.ups = bt.ups or {}           -- level-ups not said yet
     for _, pw in ipairs(M.bt_list("BattleResultPlayerWidget_C")) do
         local name = M.wtext(pw.CharaName)
-        local lv, up = nil, false
-        pcall(function() lv, up = pw.PlayerLevel, pw.PlayLevelUp end)
-        if up and not M.placeholder(name) and not bt.lv_said[name] then
-            bt.lv_said[name] = true
-            ups[#ups + 1] = trf("%s reaches level %s", name, tostring(lv))
+        if name and not M.placeholder(name) then
+            local lv, up, cu, a = nil, false, nil, 0
+            pcall(function() lv, up = pw.PlayerLevel, pw.PlayLevelUp end)
+            pcall(function() cu = pw.IsCountUp end)
+            pcall(function() a = pw:GetAddress() end)
+            local sig = string.format("%s level %s, level-up %s, counting %s", name, tostring(lv), tostring(up), tostring(cu))
+            local key = (a ~= 0) and a or name
+            if bt.lv_log[key] ~= sig then
+                bt.lv_log[key] = sig
+                log(string.format("BT result %.1f s: %s", now - bt.result_t, sig))
+            end
+            if type(lv) == "number" then
+                -- (the baseline per widget AND name: a slot that still showed another
+                -- traveler's name and level from before can't "rise")
+                local bk = (a ~= 0) and (tostring(a) .. "|" .. name) or nil
+                if bk and lv >= 1 and not bt.lv0[bk] then bt.lv0[bk] = lv end
+                local rose = bk ~= nil and bt.lv0[bk] ~= nil and lv > bt.lv0[bk]
+                if (up or rose) and lv > (bt.lv_said[name] or 0) then
+                    bt.lv_said[name] = lv
+                    bt.ups[#bt.ups + 1] = trf("%s reaches level %s", name, tostring(lv))
+                end
+            end
         end
     end
+    if now - bt.result_t < 1.5 then return end
+    local ups = bt.ups
+    bt.ups = {}
     if not bt.result_said then
         bt.result_said = true
         local ex, jp, mo
