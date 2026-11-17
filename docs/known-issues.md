@@ -442,6 +442,26 @@ Open:
 
 ## Threads
 
+- **UE4SS's async thread can die: a fallback driver since this change, in a unit test
+  only.** At the Pflastersten inn (2026-11-17, "Über Nacht bleiben? Ja") UE4SS wrote
+  crash_2026_11_17_16_46_04.dmp: c0000264 (RtlLeaveCriticalSection on a lock it doesn't
+  own) inside its Lua machinery, on its own async thread. The game ran on, but that
+  thread was gone, and with it both LoopAsyncs: the radar pump's and the polling loop's.
+  Radar, routing ("Suche Weg" never finished) and every menu reader stood still. "Pump
+  loop re-armed" put new loops on the dead thread, and EventManagerBP's tick hook fires
+  only during events (hook=0 in the field). Now, when both loops have been quiet for 5 s
+  (checked by the arrow-key pump and every mod key), a hook on the player controller's
+  MoveForward axis event takes over (log `ASYNC loops quiet …: fallback driver armed`,
+  then `… its first frame`). The controller lives the whole session, and an axis event
+  fires every frame. It drives the walk, the pump and the polling loop's work on the game
+  thread (`PUMP … fallback=N`). It is not armed before that, because more Lua on the game
+  thread while the async thread uses the same Lua state is the very lock that broke.
+  Checked against a mock (test_fallback.lua). Not yet seen in the game; whether the axis
+  event fires every frame there (also in menus) shows in the log. UE4SS v4.0.0
+  (2026-11-12) fixes callbacks run on the wrong thread (#1170), a shared-lock fault
+  (#1445) and random use-after-free crashes (#1271), and adds game-thread loops
+  (`LoopInGameThreadWithDelay`). Not tried with this mod yet; the last upgrade attempt
+  (experimental, December 2024) froze on NPC dialogue with the shim's talk hook.
 - **Only the talk-hook install still runs off the game thread** (at start, every 2 s
   until armed): it looks up two UFunctions (StaticFindObject) and hands their addresses
   to the shim, no game function is called. Since 74be657 the character select's delayed

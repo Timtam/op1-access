@@ -471,13 +471,19 @@ log("game-thread exec driver: " .. (ExecuteInGameThread and "ExecuteInGameThread
 do
     local raw = RegisterKeyBind
     if raw and ExecuteInGameThread then
-        RegisterKeyBind = function(key, a, b)
-            if type(a) == "function" then
-                local f = a
-                return raw(key, function() M.key_t = os.clock(); M.in_gt(f) end)
+        -- (each key also checks that UE4SS's async thread still runs: M.async_check)
+        local function run(f)
+            return function()
+                M.key_t = os.clock()
+                M.in_gt(function()
+                    if M.async_check then pcall(M.async_check, os.clock()) end
+                    f()
+                end)
             end
-            local f = b
-            return raw(key, a, function() M.key_t = os.clock(); M.in_gt(f) end)
+        end
+        RegisterKeyBind = function(key, a, b)
+            if type(a) == "function" then return raw(key, run(a)) end
+            return raw(key, a, run(b))
         end
     end
 end
@@ -5207,7 +5213,9 @@ M.fast_polls = function()
         end
     end
 end
-local ok_loop = pcall(LoopAsync, POLL_INTERVAL_MS, function()
+-- The polling loop's work, one tick (from the LoopAsync below, or from the game-thread
+-- fallback driver once UE4SS's async thread died: M.async_check)
+M.ok_tick = function()
     pcall(M.update_poll)   -- the release check's answer (no game calls)
     if not M.fg_ok() then return end   -- unfocused: skip menu polls (game calls fault)
     pcall(M.event_menus_tick)
@@ -5225,6 +5233,10 @@ local ok_loop = pcall(LoopAsync, POLL_INTERVAL_MS, function()
     -- loop, which can die after a level load). The loop just logs the line.
     -- (dialogue polling moved into the radar pump: this loop dies intermittently
     -- after loads, and talkable-NPC learning must not die with it)
+end
+local ok_loop = pcall(LoopAsync, POLL_INTERVAL_MS, function()
+    M.ok_loop_t = os.clock()   -- (liveness: M.async_check)
+    M.ok_tick()
 end)
 log("Polling loop started: " .. tostring(ok_loop))
 
@@ -11001,6 +11013,51 @@ local function arm_pump_tickhook()
         end
     end
 end
+-- THE FALLBACK DRIVER (2026-11-17, the Pflastersten inn, "Über Nacht bleiben? Ja"). UE4SS's
+-- async thread died there: crash_2026_11_17_16_46_04.dmp, c0000264 (RtlLeaveCriticalSection
+-- on a lock it doesn't own) inside UE4SS's Lua machinery on that thread -- the recurring
+-- UE4SS bug; the game itself ran on. Both LoopAsyncs (this pump's and the polling loop)
+-- live on that thread, so the radar, the walker's routing and every menu reader stood
+-- still, and "Pump loop re-armed" only put new loops on the dead thread. EventManagerBP's
+-- tick hook fires only during events. So once both loops have been quiet for 5 s
+-- (M.async_check, from any other driver: arrow keys, the mod's keys, the tick hook), a
+-- hook on the player controller's MoveForward axis event takes over -- the controller
+-- lives for the whole session, and an input axis event fires every frame -- and drives
+-- nav_drive, the pump and the polling loop's work on the game thread. Not before: a
+-- per-frame Lua hook all the time would put more Lua on the game thread while the async
+-- thread uses the same Lua state -- the very lock that broke.
+M.FALLBACK_HOOKS = {
+    "/Game/Character/BP/KSPlayerControllerBP.KSPlayerControllerBP_C:InpAxisEvt_MoveForward_K2Node_InputAxisEvent_79",
+}
+M.fallback_armed = false
+M.arm_fallback = function(why)
+    if M.fallback_armed then return end
+    for _, path in ipairs(M.FALLBACK_HOOKS) do
+        local ok = pcall(RegisterHook, path, function()
+            if not M.fg_ok() then return end
+            M.fb_t = os.clock()
+            if not M.fb_first then M.fb_first = true; log("ASYNC fallback driver: its first frame") end
+            pcall(nav_drive)
+            if radar_pump then pcall(radar_pump, "fallback") end
+            local now = os.clock()
+            if now - (M.ok_loop_t or -99) > 1.0 and now - (M.ok_fb_t or -99) >= POLL_INTERVAL_MS / 1000 then
+                M.ok_fb_t = now
+                pcall(M.ok_tick)
+            end
+        end)
+        log(string.format("ASYNC %s: fallback driver %s: %s", why, ok and "armed" or "FAILED", path))
+        if ok then M.fallback_armed = true end
+    end
+end
+-- (now: os.clock) Both async loops quiet for 5 s: UE4SS's async thread is gone.
+M.async_check = function(now)
+    if M.fallback_armed then return end
+    local pl, ol = pump_loop_t, M.ok_loop_t
+    if (pl or 0) <= 0 or not ol then return end   -- (not running yet)
+    if now - pl > 5.0 and now - ol > 5.0 then
+        M.arm_fallback(string.format("loops quiet for %.0f / %.0f s", now - pl, now - ol))
+    end
+end
 local function start_pump_loop()
     return pcall(LoopAsync, 100, function()
         pump_loop_t = os.clock()
@@ -13002,6 +13059,9 @@ radar_pump = function(src)
         if WS.px and M.marker_watch then pcall(M.marker_watch, WS.px, WS.py) end
     end
     if pump_count % 30 == 1 then pcall(arm_pump_tickhook) end
+    -- UE4SS's async thread gone (both loops quiet)? Then the game-thread fallback driver
+    -- (M.async_check) -- before the re-arm below resets the pump loop's clock
+    if src ~= "loop" then pcall(M.async_check, now) end
     -- self-heal: LoopAsyncs can die on level load; if ours has gone quiet, start a
     -- fresh one (multi-driving is throttled-safe, dead loops just stay dead)
     if src ~= "loop" and pump_loop_t > 0 and now - pump_loop_t > 5.0 and pump_heals < 30 then
@@ -13011,8 +13071,8 @@ radar_pump = function(src)
         log("Pump loop re-armed (#" .. pump_heals .. "): " .. tostring(ok))
     end
     if (beacon_on or wall_on) and pump_count % 64 == 0 then
-        log(string.format("PUMP #%d hook=%d loop=%d key=%d", pump_count,
-            pump_n.hook or 0, pump_n.loop or 0, pump_n.key or 0))
+        log(string.format("PUMP #%d hook=%d loop=%d key=%d fallback=%d", pump_count,
+            pump_n.hook or 0, pump_n.loop or 0, pump_n.key or 0, pump_n.fallback or 0))
     end
 end
 do
