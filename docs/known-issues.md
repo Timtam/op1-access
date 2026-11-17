@@ -397,6 +397,15 @@ Open:
 
 ## When the radar comes back
 
+- **After a battle: tried in the game (2026-11-17, Maiya caves).** In a battle the input
+  is away from the character all along: 0/0 during actions, 1/0 (MODE_UI) in the
+  command menus. It comes back (0/1) in the same moment the battle mode ends. The radar
+  came back 0.4 s after the battle ended (before: about 2 s). One bug showed and is
+  fixed: the radar went down again for a second right after, because the "the event
+  took the input away" mark was cleared when it came back. It is now cleared when the
+  next event starts. A load: the controller is new (nil) until the field is there, and
+  the radar comes 0.5 s after the character appears, as before. Dialogues and story
+  scenes are still to be seen in a log.
 - **After a scene: built, not yet tried in the game.** The user (2026-11-17) could press J
   or E again well before the radar came back after a dialogue. In the logs the radar
   came back about 2 s after a battle ended or a menu inside an event closed. The radar

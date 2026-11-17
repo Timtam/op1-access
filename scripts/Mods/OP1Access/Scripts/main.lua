@@ -10959,13 +10959,20 @@ end
 -- with the character (can_act true), away from it (false), or unknown (nil). Only when the
 -- event took the input away and it has been back with the character for 0.25 s does the
 -- wait shrink from 1.5 s to 0.25 s, so a controller that never changes (or can't be read)
--- leaves it as it was. W.ev_noact is cleared by the pump when the radar resumes.
+-- leaves it as it was. A new event starts over. (W.ev_noact was cleared when the radar
+-- came back: the next pump, still within 1.5 s of the event, took the radar down again
+-- for a second -- seen after a battle in the game, 2026-11-17.)
+-- Seen in the game: a battle keeps the input away from the character all along (0/0
+-- during actions, 1/0 = MODE_UI in the command menus); it comes back (0/1) the moment
+-- the battle mode ends. A load: nil (a new controller) until the field is there.
 M.ev_hold = function(W, now, ev, can_act)
     if ev then
+        if not W.in_ev then W.in_ev, W.ev_noact = true, nil end   -- (a new event)
         if can_act == false then W.ev_noact = true end
         W.act_since = nil
         return 1.5
     end
+    W.in_ev = false
     if can_act then W.act_since = W.act_since or now else W.act_since = nil end
     if W.ev_noact and W.act_since and now - W.act_since >= 0.25 then return 0.25 end
     return 1.5
@@ -12726,7 +12733,6 @@ radar_pump = function(src)
             else
                 log(string.format("RADAR resumed %.3f (event off %.2f s ago, wait %.2f s%s)", now, now - WS.ev_t, hold,
                     WS.act_since and string.format(", input with the character %.2f s", now - WS.act_since) or ""))
-                WS.ev_noact = nil
             end
             -- a scene or transition may change the map: the kept object lists go, at
             -- its start and at its end (nothing kept from inside it either) -- except the
