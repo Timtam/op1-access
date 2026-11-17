@@ -4774,15 +4774,23 @@ M.poll_battle = function()
     end
 end
 -- The result screen ("Sieg!"): the panel's own totals (GetTotalMoney / Exp / JobPoint
--- ints: 25, 6 = 5 + break bonus, 5 in the first test), said 1.5 s after it opens, with
--- the level-ups seen so far; one that shows later is said on its own. Drops:
--- BattleDropItemWidget_C texts.
--- LEVEL-UPS (BattleResultPlayerWidget_C.PlayLevelUp / PlayerLevel) are watched from the
--- first poll on (2026-11-17, user: "when two level up, only the last one is read"): the
--- flag was only looked at from 1.5 s on, and it seems to be up only while that
--- character's level-up plays, so an early one was over by then. A level that rose since
--- the screen opened counts too (per widget, by address), a second level in one battle is
--- said as well, and every change of a player's level or flag is logged ("BT result").
+-- ints: 25, 6 = 5 + break bonus, 5 in the first test), the level-ups and the drops
+-- (BattleDropItemWidget_C texts), said as ONE line once the travelers' EXP count-up is
+-- over; a level-up that shows after that is said on its own.
+-- WHY WAIT (2026-11-17, user: "when two level up, only the last one is read"). The old
+-- line came 1.5 s after the screen opened, before the count-up was done: "Sieg ... Tressa
+-- erreicht Stufe 5", and a second later "Ophilia erreicht Stufe 8" on its own. The user
+-- heard only the second and found the first in the history. The mod didn't cut it
+-- (queued, and Prism's NVDA backend only cancels when told to): NVDA cuts speech at a key
+-- press, and the key that skips the count-up (E, Enter, Backspace) is what makes the
+-- level-ups show. Waiting for the count-up's end -- natural or skipped -- puts the key
+-- press before the line. Seen in the game: BattleResultPlayerWidget_C.IsCountUp is true
+-- from ~0.2 s to the end of the count-up; PlayerLevel rises and PlayLevelUp comes on at
+-- its end, and the flag stays on. Fallbacks: no count-up seen in 2.5 s (no EXP), or 8 s.
+-- Level-ups are watched from the first poll on: by the flag, or by a level that rose
+-- since the screen opened (per widget address and name), a second level in one battle
+-- is said too, and every change of a traveler's level, flag or count-up is logged ("BT
+-- result"). Unused copies of the widget (level 0, a Japanese name) are left out.
 M.poll_battle_result = function(w)
     local bt, now = M.bt, os.clock()
     local open = false
@@ -4793,13 +4801,15 @@ M.poll_battle_result = function(w)
     bt.lv0 = bt.lv0 or {}           -- widget address + name -> the level when first read
     bt.lv_log = bt.lv_log or {}     -- widget address -> what the log said last
     bt.ups = bt.ups or {}           -- level-ups not said yet
+    local counting = false
     for _, pw in ipairs(M.bt_list("BattleResultPlayerWidget_C")) do
         local name = M.wtext(pw.CharaName)
-        if name and not M.placeholder(name) then
-            local lv, up, cu, a = nil, false, nil, 0
-            pcall(function() lv, up = pw.PlayerLevel, pw.PlayLevelUp end)
+        local lv, up, cu, a = nil, false, nil, 0
+        pcall(function() lv, up = pw.PlayerLevel, pw.PlayLevelUp end)
+        if name and not M.placeholder(name) and lv ~= 0 then
             pcall(function() cu = pw.IsCountUp end)
             pcall(function() a = pw:GetAddress() end)
+            if cu then counting = true end
             local sig = string.format("%s level %s, level-up %s, counting %s", name, tostring(lv), tostring(up), tostring(cu))
             local key = (a ~= 0) and a or name
             if bt.lv_log[key] ~= sig then
@@ -4819,7 +4829,16 @@ M.poll_battle_result = function(w)
             end
         end
     end
-    if now - bt.result_t < 1.5 then return end
+    -- the count-up: seen running, then over for 0.3 s (the level-ups come at its end)
+    if counting then bt.cu_seen, bt.cu_end = true, nil
+    elseif bt.cu_seen and not bt.cu_end then bt.cu_end = now end
+    local wait = now - bt.result_t
+    local ready = (bt.cu_end ~= nil and now - bt.cu_end >= 0.3) or (not bt.cu_seen and wait >= 2.5) or wait >= 8
+    if not bt.result_said and not ready then return end
+    if not bt.result_said then
+        log(string.format("BT result said at %.1f s (count-up %s)", wait,
+            bt.cu_end and string.format("over at %.1f s", bt.cu_end - bt.result_t) or (bt.cu_seen and "still on" or "not seen")))
+    end
     local ups = bt.ups
     bt.ups = {}
     if not bt.result_said then

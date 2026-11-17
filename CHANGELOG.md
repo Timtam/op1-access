@@ -92,8 +92,10 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
 - Commands, skills and items with costs, targets, the boost level, actions with their actor,
   damage and healing, breaks, status effects and the results. Keys 1 to 5 read an enemy (shield,
   weaknesses), 6 to 9 a party member, 0 the turn order.
-- The result screen names every level-up, also when two travelers level up in one battle
-  or one gains two levels.
+- The result screen waits until the EXP count-up is over (or skipped) and then says the
+  totals, every level-up and the items in one line, so the key that skips the count-up
+  no longer cuts it off; also when two travelers level up in one battle or one gains two
+  levels.
 - Blocked weaknesses: when a boss's helpers block its weaknesses, and when they are free
   again, it is said ("Mikk: weaknesses locked"); a boss blocked from the start has it in
   the battle's first line.

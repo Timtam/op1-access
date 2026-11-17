@@ -228,17 +228,21 @@ against one Eissentinel in the study dungeon. Weaknesses in the game's tile orde
 - **Item drops and knock-outs heard** (2026-11-15): "Victory. 24 Blätter, 4 EXP, 4 JP.
   Items: Anregende Pflaume 1". A party member going down is said with the damage line
   since 744e09a ("Olberic 4, Olberic down"); "back up" after a revival wasn't seen.
-- **Two level-ups in one battle: in a unit test only.** The user heard only the last one
-  (2026-11-17). No saved log ever had two level-ups in one battle. The result
-  screen's level-up flag (PlayLevelUp) was only looked at from 1.5 s on. A level-up
-  that played earlier was gone by then, if the flag is only up while that character's
-  level-up plays (the timing in the logs suggests so). Now level-ups are gathered from the
-  first poll on, and a level that rose since the screen opened counts too. A second level
-  in one battle is said as well. Checked against a mock result screen
-  (test_results.lua: the old code says only the last one there). Not yet heard in the
-  game. Every change of a traveler's level or flag on that screen is now logged (`BT
-  result 0.3 s: Tressa level 4, level-up true, counting true`), so the next fight with
-  two level-ups shows what the game really does.
+- **Two level-ups in one battle: the cause was speech being cut.** The user heard only the
+  last one (2026-11-17). Their session log shows both were said: "Sieg. 70 Blätter, 11
+  EXP, 14 JP. Tressa erreicht Stufe 5", and a second later "Ophilia erreicht Stufe 8" on
+  its own (queued, not interrupting). Right after that the user went back in the history
+  and found the first line there. Nothing in the mod cut it, and Prism's NVDA backend
+  only cancels when told to. NVDA itself cuts speech at a key press. The key that skips
+  the EXP count-up (E, Enter or Backspace, the game's ResultSkip) is also what makes the
+  level-ups show. Seen in the game: BattleResultPlayerWidget_C.IsCountUp is on from about
+  0.2 s to the end of the count-up, PlayerLevel rises and PlayLevelUp comes on at its end,
+  and the flag stays on. So since this change the result line waits for the count-up's
+  end (natural or skipped) plus 0.3 s, and says totals, every level-up and the items in
+  one line. Fallbacks: 2.5 s without a count-up, 8 s at most. Checked against a mock
+  result screen (test_results.lua) and in one battle before this change (`BT result`
+  lines, Tressa level 6 at 1.8 s). The unused copies of the widget (level 0, a Japanese
+  name) are skipped. Not yet heard: the new timing in the game.
 
 ## Walker (user report 2026-11-14)
 
