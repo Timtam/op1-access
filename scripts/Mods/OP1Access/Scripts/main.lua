@@ -2767,7 +2767,45 @@ M.wm_route_text = function(places)
     end
     return trf("%d areas: %s", #places, table.concat(parts, "; "))
 end
--- Ctrl+Backspace on the world map: the route to the place Page Up/Down picked
+-- FAST TRAVEL ON THE WAY (user request 2026-11-17: the town nearest to the target, to
+-- fast travel there and walk on). Fast travel goes only to towns you have visited: the
+-- map's icon is not IsUnreached, and the town's WorldMapTable row has CanFastTravel (all
+-- 24 eMAP_T_ rows; one path, eMAP_F_Mount_3_2, too -- left out, towns only). Of those, the
+-- one with the fewest areas on to the target. `places` = M.WM.all (the map's icons).
+-- -> { node, path, n = areas from there, e = its icon entry } or nil
+M.wm_fast_from = function(g, to, places)
+    local best
+    for _, e in ipairs(places or {}) do
+        local nd = e.row and g.byrow[e.row]
+        if nd and nd.what == "town" and (e.fast or 0) ~= 0 and not e.unreached and e.visible ~= false then
+            for _, l in ipairs(nd.levels) do
+                local path = M.wm_level_route(g, l, to)
+                if path then
+                    local n = (#path == 1) and 0 or #M.wm_route_places(g, path)
+                    if not best or n < best.n or (n == best.n and #path < #best.path) then
+                        best = { node = nd, path = path, n = n, e = e }
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
+-- The map's cursor to a place of the list (a town to fast travel to); the Page Up/Down
+-- selection goes there too
+M.wm_fast_cursor = function(e)
+    local wm = M.wm_find()
+    if not (wm and e) then return false end
+    for i, x in ipairs(M.WM.list or {}) do
+        if x.row == e.row then M.WM.idx = i; break end
+    end
+    M.wm_jump(wm, e)
+    speak(trf("Cursor on %s. Enter for fast travel.", tostring(e.name)))
+    return true
+end
+-- Ctrl+Backspace on the world map: the route to the place Page Up/Down picked -- from a
+-- town you can fast travel to when that is fewer areas than from here (M.wm_fast_from);
+-- pressed again within a minute it puts the map's cursor on that town.
 M.wm_route_say = function()
     local WM = M.WM
     local e = WM.list and WM.list[WM.idx]
@@ -2781,13 +2819,36 @@ M.wm_route_say = function()
         speak(tr("Can't tell where you are on the map"))
         return
     end
+    local fs = WM.fast_said
+    WM.fast_said = nil
+    if fs and fs.goal == to and os.clock() - fs.t < 60 and M.wm_fast_cursor(fs.e) then return end
     local path = M.wm_level_route(g, from, to)
+    if path and #path == 1 then speak(tr("You are there")); return end
+    local fast = M.wm_fast_from(g, to, WM.all)
+    local n_here = path and #M.wm_route_places(g, path) or nil
+    do   -- (the map's own gate for fast travel, logged: what it means is not known yet)
+        local fp, fr
+        pcall(function() local wm = M.wm_find(); fp, fr = wm.FastTravelPossible, wm.FastTravelRestriction end)
+        log(string.format("ROUTE fast travel: %s with %s areas, from here %s; map FastTravelPossible=%s Restriction=%s",
+            fast and fast.node.row or "none", fast and tostring(fast.n) or "-", tostring(n_here), tostring(fp), tostring(fr)))
+    end
+    if fast and (not n_here or fast.n < n_here) then
+        M.route_goal = to
+        WM.fast_said = { goal = to, e = fast.e, t = os.clock() }
+        log("ROUTE levels " .. table.concat(fast.path, " > ") .. " to " .. to.row .. " from " .. fast.node.row)
+        if fast.n == 0 then
+            speak(trf("%s: you can fast travel there. Control backspace again puts the cursor on it.", to.name), true)
+        else
+            speak(trf("Route to %s: fast travel to %s, then %s. Control backspace again puts the cursor on %s.", to.name,
+                fast.node.name, M.wm_route_text(M.wm_route_places(g, fast.path)), fast.node.name), true)
+        end
+        return
+    end
     if not path then
         log(string.format("ROUTE from level %d to %s (levels %s): none", from, to.row, table.concat(to.levels, ",")))
         speak(trf("No route known to %s", tostring(to.name)))
         return
     end
-    if #path == 1 then speak(tr("You are there")); return end
     M.route_goal = to
     log("ROUTE levels " .. table.concat(path, " > ") .. " to " .. to.row)
     speak(trf("Route to %s, %s. In each area the exit on the way says so.", to.name,

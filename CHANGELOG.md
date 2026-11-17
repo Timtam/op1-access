@@ -36,6 +36,9 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   travel. Home and End go through the eight regions; Page Up and Page Down then name every
   place of that region, also those not discovered yet. Ctrl+Backspace says the route to
   that place area by area; in the field the exit on that route says "on the way to …".
+  When a town you have visited is nearer to the place than you are, the route starts
+  there ("fast travel to Rippeltiden, then 2 areas"); Ctrl+Backspace again puts the
+  cursor on that town, and Enter travels.
 - The game over menu.
 - Shops and inns: the shop's name and your money, its commands, the goods with price and how
   many you have, the amount to buy or sell with the total, and for weapons and armor what

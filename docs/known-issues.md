@@ -130,6 +130,22 @@ to a place not discovered yet also worked (Der Pfeifende Wald, 3 areas). Open:
 - **Story destinations list all of a town's chapters**, also of travelers not in the
   party: Kammbruch said "Tressa, chapter 2; Cyrus, chapter 2" with Cyrus alone.
   `DestinationFlag` is set on every unvisited town, not only on the next goal.
+- **Fast travel on the way: in a unit test only.** Since this change Ctrl+Backspace
+  checks the user's wish of 2026-11-17: fast travel to the town nearest the target, then
+  walk. The candidates are visited towns: the map icon is not IsUnreached, and
+  the place is an eMAP_T_ row with CanFastTravel. The cooked WorldMapTable has the
+  flag on all 24 towns and on one path, eMAP_F_Mount_3_2, which is left out. Of
+  those, the one with the fewest areas to the target is used if that is fewer than
+  from where you stand: "Route nach X: Schnellreise nach T, dann 2 Gebiete: …".
+  A visited town as the target: "X: per Schnellreise erreichbar". Ctrl+Backspace
+  again within a minute puts the map's cursor on T ("Cursor auf T. Enter für die
+  Schnellreise"). Checked on the real map (test_fasttravel.lua: the cooked tables
+  and worldlinks.lua; the Maiya caves from Rippeltiden in 2 areas). Not tried in the
+  game. Open: the map's own gate (WorldMap_C.FastTravelPossible @ +0x8EB,
+  FastTravelRestriction @ +0x920; per the Blueprint, a follower or the scenario can
+  forbid fast travel) is only logged (`ROUTE fast travel: …`), not yet said. Where a
+  fast travel arrives in a town with several parts is not known: the count starts
+  from the town's nearest part.
 
 ## Installer and updates
 
