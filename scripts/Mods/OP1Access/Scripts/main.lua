@@ -2765,7 +2765,7 @@ M.wm_route_text = function(places)
         if nd.lmin then s = s .. ", " .. trf("danger level %d", nd.lmin) end
         parts[#parts + 1] = s
     end
-    return trf("%d areas: %s", #places, table.concat(parts, "; "))
+    return trn("%d area: %s", "%d areas: %s", #places, #places, table.concat(parts, "; "))
 end
 -- FAST TRAVEL ON THE WAY (user request 2026-11-17: the town nearest to the target, to
 -- fast travel there and walk on). Fast travel goes only to towns you have visited: the
@@ -2826,7 +2826,8 @@ M.wm_route_say = function()
     if path and #path == 1 then speak(tr("You are there")); return end
     local fast = M.wm_fast_from(g, to, WM.all)
     local n_here = path and #M.wm_route_places(g, path) or nil
-    do   -- (the map's own gate for fast travel, logged: what it means is not known yet)
+    do   -- (WorldMap_C.FastTravelPossible read false in the Maiya caves while Enter on a
+         -- visited town offered the fast travel, 2026-11-17: no gate, only logged)
         local fp, fr
         pcall(function() local wm = M.wm_find(); fp, fr = wm.FastTravelPossible, wm.FastTravelRestriction end)
         log(string.format("ROUTE fast travel: %s with %s areas, from here %s; map FastTravelPossible=%s Restriction=%s",

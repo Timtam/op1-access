@@ -130,7 +130,16 @@ to a place not discovered yet also worked (Der Pfeifende Wald, 3 areas). Open:
 - **Story destinations list all of a town's chapters**, also of travelers not in the
   party: Kammbruch said "Tressa, chapter 2; Cyrus, chapter 2" with Cyrus alone.
   `DestinationFlag` is set on every unvisited town, not only on the next goal.
-- **Fast travel on the way: in a unit test only.** Since this change Ctrl+Backspace
+- **Fast travel on the way: tried in the game (2026-11-17, from the Maiya caves).** The
+  route to "Pfad zur Höhle des Ursprungs" (Frostland) said: "Route nach Pfad zur Höhle
+  des Ursprungs: Schnellreise nach Flammhuld, dann 1 Gebiet: …" (9 areas from where
+  the party stood). Ctrl+Backspace again put the cursor on Flammhuld ("Cursor auf
+  Flammhuld. Enter für die Schnellreise."). WorldMap_C.FastTravelPossible read false
+  there, yet Enter on Rippeltiden offered the fast travel ("Nach Rippeltiden
+  (Küstenland) reisen?"), so that flag is not the gate; it stays only logged. (The
+  synthetic Ctrl+Backspace also reached the game as Backspace and closed the map, a test
+  artifact.) "1 Gebiete" is now "1 Gebiet".
+- **Fast travel on the way: how it works.** Since this change Ctrl+Backspace
   checks the user's wish of 2026-11-17: fast travel to the town nearest the target, then
   walk. The candidates are visited towns: the map icon is not IsUnreached, and
   the place is an eMAP_T_ row with CanFastTravel. The cooked WorldMapTable has the
