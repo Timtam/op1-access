@@ -6600,6 +6600,24 @@ local function fname_to_str(v)
     if s == nil then pcall(function() s = tostring(v) end) end
     return s or ""
 end
+-- A SAVE POINT's book is an NPC too: its talk is the save menu. Saving "learned" it as a
+-- talkable person, so it joined the people list and the radar rang for it like one (user
+-- 2026-11-17, the Maiya path). It is the marker list's save point instead. Every save
+-- point in the logs (towns, paths, dungeons) has NPCUniqID 830 and the text label
+-- CN_NP_SYS_000000_0000; its talk event is SC_SYS_SA0 (NV.keepers).
+M.is_save_point = function(o, uniq)
+    if uniq == 830 then return true end
+    local yes = false
+    pcall(function()
+        local pd = o.PlacementData
+        for _, L in ipairs({ "A", "B", "C", "D", "E" }) do
+            local el = ""
+            pcall(function() el = pd["EventLabel_" .. L]:ToString() end)
+            if el:find("^SC_SYS_SA") then yes = true; return end
+        end
+    end)
+    return yes
+end
 local function npc_interesting(o)
     local addr = nil
     pcall(function() addr = o:GetAddress() end)
@@ -6622,8 +6640,20 @@ local function npc_interesting(o)
     local istest = label:find("^TEST_") ~= nil
 
     local keep = learned or (not istest and id > 0)
-    local dbg = string.format("uniq=%s label=%s ptext=%s id=%d learned=%s",
-        tostring(uniq), label == "" and "-" or label, ptext == "" and "-" or ptext, id, tostring(learned))
+    -- (kept only by a talk, with no lines of its own: a save point? asked once per actor)
+    local savept = false
+    if keep and id == 0 then
+        if type(rec) == "table" and rec.savept ~= nil then
+            savept = rec.savept
+        else
+            savept = M.is_save_point(o, uniq)
+            if type(rec) == "table" then rec.savept = savept end
+        end
+        if savept then keep = false end
+    end
+    local dbg = string.format("uniq=%s label=%s ptext=%s id=%d learned=%s%s",
+        tostring(uniq), label == "" and "-" or label, ptext == "" and "-" or ptext, id, tostring(learned),
+        savept and " (save point)" or "")
     return keep, dbg, lname
 end
 

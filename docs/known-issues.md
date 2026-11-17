@@ -465,6 +465,16 @@ Open:
 
 ## Navigation
 
+- **A save point is no person: in a unit test only.** A save point's book is an NPC in
+  the game (its talk is the save menu). Before, saving there made the mod take it as a
+  talkable person: it joined the people list and the radar rang for it (user,
+  2026-11-17, the Maiya path). Now a person kept only by a talk, with no lines of its own,
+  is checked once. Every save point in the saved logs has NPCUniqID 830 (text label
+  CN_NP_SYS_000000_0000), or else its talk event is SC_SYS_SA0, and either way it stays
+  out of the people and the radar (log `NPC omit: ... (save point)`). It is still in the
+  marker list as the save point. Two other kinds of mute "system" people show in the
+  logs, unknown what they are: ID 831 (CN_NP_SYS_000000_0010, in towns) and 912
+  (…_0020, in dungeons). They still count as people once talked to.
 - **The Flammhuld inn: the way in goes round the side. Built, not walked by the walker
   yet.** (2026-11-16) The inn stands on a stone base, its door on a landing 96 over the
   street (you at z 286, on the landing 382; the trigger at (-1140,-1510,415)). In front
