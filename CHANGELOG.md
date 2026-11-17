@@ -85,7 +85,8 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   walks on along the same route. The route search is several times faster, most of all
   for a target you have just picked. Routes keep out of water and other places only
   invisible walls close off, and take invisible floors such as the bridge on the path to
-  the Maiya caves.
+  the Maiya caves. A chest beyond a fence or a railing is no longer walked at through
+  it: the route takes the way round.
 
 ### Battles
 

@@ -549,6 +549,26 @@ Open:
 
 ## Navigation
 
+- **A chest beyond a fence: in a unit test only.** In the Süd-Pflastersten-Kluft
+  (2026-11-17) a chest 183 below the path lay beyond a fence, the ground sloping away
+  behind it. The walker ran into the fence about 20 times, the same one-cell route each
+  time ("ROUTE cells from (-1360,3105): 0,1~44"). The bump probe saw the fence at 74 on
+  channel 0 and on the capsule's profile. Two causes:
+  - The goal test took the cell above the fence: within one cell, and the floors
+    linked, since the slope made the floor halfway about halfway down. The leg from
+    that cell to the chest was never traced, because a trace all the way hits the chest.
+  - No wall was learned, because nothing was learned within 250 of the target.
+
+  Now the leg to a chest (also a hidden item or a marker on one) is traced at knee height
+  from the goal cell to 80 short of it, on channel 0 and the capsule's profile. A hit that
+  is not a person means "not the goal, search on" (log `ROUTE last leg blocked …`). Level
+  when the chest is lower, rising when it is higher. People are left out on purpose: a
+  shopkeeper or barkeep is talked to across a counter. A wall is now learned near the
+  target too, unless the hit is within 120 of the target itself; step-in shops keep the
+  old 250. Checked in a mock with this very slope and fence (test_fence.lua): the old
+  test takes the cell above the fence, the new one goes round the fence's end. A free
+  slope, a person on the leg and rising ground are not refused. With the check on for
+  every target, the other router tests keep their results. Not walked in the game yet.
 - **A save point is no person: in a unit test only.** A save point's book is an NPC in
   the game (its talk is the save menu). Before, saving there made the mod take it as a
   talkable person: it joined the people list and the radar rang for it (user,

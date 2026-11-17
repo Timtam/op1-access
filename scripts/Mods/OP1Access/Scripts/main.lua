@@ -8074,7 +8074,7 @@ local function nav_route_finish(goalnode)
             local s0 = R.shifted or { x = R.px, y = R.py, z = R.pz }
             local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, s0.x, s0.y, s0.z)
             W.nopeople, W.blame = true, R.people
-            W.stepin, W.ofl_p, W.groundch = R.stepin, R.ofl_p, R.groundch
+            W.stepin, W.ofl_p, W.groundch, W.legchk = R.stepin, R.ofl_p, R.groundch, R.legchk
             W.saidlong = R.saidlong
             if not R.shifted then
                 -- the same grid: its traces hold (2026-11-16: a whole-area search again
@@ -8584,7 +8584,7 @@ NV.route_widen = function(R, whole)
     local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, R.px, R.py, R.pz, pad, wbox)
     W.gcache, W.ecache, W.eside, W.gcache2, W.slides = R.gcache, R.ecache, R.eside, R.gcache2, R.slides
     W.people, W.nopeople, W.blame, W.ppl_hit = R.people, R.nopeople, R.blame, R.ppl_hit
-    W.stepin, W.ofl_p, W.pl_all, W.groundch = R.stepin, R.ofl_p, R.pl_all, R.groundch
+    W.stepin, W.ofl_p, W.pl_all, W.groundch, W.legchk = R.stepin, R.ofl_p, R.pl_all, R.groundch, R.legchk
     W.traces, W.pops, W.started, W.saidlong = R.traces, R.pops, R.started, R.saidlong
     W.cpu, W.ticks, W.ran = R.cpu, R.ticks, R.ran
     W.nroom, W.npawn, W.ntight = R.nroom, R.npawn, R.ntight
@@ -8634,7 +8634,7 @@ NV.route_shift = function(R, why)
                 local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, ax, ay, az, R.pad, R.wbox)
                 W.shifted, W.shift_i, W.whole = base, i, R.whole
                 W.people, W.nopeople, W.blame, W.ppl_hit = R.people, R.nopeople, R.blame, R.ppl_hit
-                W.stepin, W.ofl_p, W.pl_all, W.groundch = R.stepin, R.ofl_p, R.pl_all, R.groundch
+                W.stepin, W.ofl_p, W.pl_all, W.groundch, W.legchk = R.stepin, R.ofl_p, R.pl_all, R.groundch, R.legchk
                 W.pops0 = R.shifted and R.pops0 or R.pops
                 W.traces, W.started, W.saidlong = R.traces, R.started, R.saidlong
                 W.cpu, W.ticks, W.ran = R.cpu, R.ticks, R.ran
@@ -8785,6 +8785,79 @@ end
 -- its floor's knee height. A hit at a person blocks only while the search keeps away from
 -- people (R.goal_ppl: the search without them then follows at once and names who stands
 -- there); any other hit: not the goal.
+-- Targets whose last leg is traced (NV.goal_leg_ok): chests (hidden items and markers on
+-- them too) -- you walk right up to them. Not people: a shopkeeper or a barkeep stands
+-- behind a counter and is talked to across it, which the leg would take for a wall (a
+-- fence before a person is learned on the first bump instead, NV.learn_wall). Not doors,
+-- buildings or exits (their own collision or the map's edge lies on the leg), a story
+-- event's spot (stepped in) or another side of a chest (a free spot).
+NV.leg_target = function(t, cat)
+    if cat == "spot" or cat == "door" or cat == "building" or cat == "exit" or cat == "through"
+        or cat == "event" then return false end
+    return (t and t.actor and class_name_of(t.actor) == "TreasureBoxBP_C") and true or false
+end
+-- The person (from the search's list, or a scan once per search) standing where a leg's
+-- trace hit (oh, on the line from (wx, wy, sz) to (ex, ey, ez); nf = the floor there), or nil
+NV.leg_person = function(R, wx, wy, sz, ex, ey, ez, oh, nf)
+    local pl = R.people or R.blame
+    if not pl then
+        if R.pl_all == nil then
+            local okp, ppl = pcall(NV.people_scan, R.px, R.py, R.pz)
+            R.pl_all = okp and ppl or false
+        end
+        pl = R.pl_all or nil
+    end
+    local len = math.sqrt((ex - wx) ^ 2 + (ey - wy) ^ 2 + (ez - sz) ^ 2)
+    local t = (len > 0 and oh and type(oh.Distance) == "number") and math.min(1, oh.Distance / len) or 0
+    local hx, hy = wx + (ex - wx) * t, wy + (ey - wy) * t
+    for _, c in ipairs(pl or {}) do
+        if math.abs(c.z - (nf + 82)) < 250 and (c.x - hx) ^ 2 + (c.y - hy) ^ 2 < 60 * 60 then return c end
+    end
+    return nil
+end
+-- THE LAST LEG TO ANY OTHER TARGET (2026-11-17, Süd-Pflastersten-Kluft, user: "a fence is
+-- in the way, the walker doesn't see it"). A chest 183 below, beyond a fence on the edge
+-- of the path, the ground falling away behind it. The goal test took the cell above the
+-- fence: within one cell, and the floors linked (the ground behind it slopes, so the
+-- floor halfway was about halfway down). The leg from that cell to the chest was never
+-- traced -- a trace all the way hits the chest itself -- so the walker ran into the fence
+-- 20 times ("Neue Route"), and learned no wall there (NV.learn_wall: not within 250 of
+-- the target). Now the leg is traced at knee height from the node to 80 short of the
+-- target: channel 0 (fences, walls) and the capsule's profile (invisible walls too). A
+-- hit, unless at a person, means: not the goal, search on. Level from the node when the
+-- target is lower (the ground falls away under the line), rising to the target's floor
+-- when it is higher. Under 100 to go: the walk's own last steps, nothing traced.
+NV.goal_leg_ok = function(R, ksl, p, best)
+    local wx = R.px + best.x * NV.STEP + (best.ox or 0)
+    local wy = R.py + best.y * NV.STEP + (best.oy or 0)
+    local nf = best.z
+    if best.k == R.startk then nf = R.shifted and R.pz or (R.pz - (M.pfoot or 82)) end
+    local dx, dy = R.ox - wx, R.oy - wy
+    local d = math.sqrt(dx * dx + dy * dy)
+    if d <= 100 then return true end
+    local ex, ey = R.ox - dx / d * 80, R.oy - dy / d * 80
+    local tf = (R.ofl and math.abs(R.ofl - R.oz) < 200) and R.ofl or R.oz
+    local sz, ez = nf + 55, math.max(nf, tf) + 55
+    R.traces = R.traces + 2
+    local ok0, hit0 = line_blocked(ksl, p, wx, wy, sz, ex, ey, ez)
+    local okp, hitp, oh = line_blocked(ksl, p, wx, wy, sz, ex, ey, ez, NV_TRACE)
+    local blocked = ok0 and hit0
+    if not blocked and okp and hitp then
+        local q = NV.leg_person(R, wx, wy, sz, ex, ey, ez, oh, nf)
+        if q and R.people then R.ppl_hit = (R.ppl_hit or 0) + 1; R.goal_ppl = true; return false end
+        blocked = not q
+    end
+    if blocked then
+        R.nleg = (R.nleg or 0) + 1
+        if not R.goallog then
+            R.goallog = true
+            log(string.format("ROUTE last leg blocked from cell %d,%d (floor %.0f) to the target (floor %.0f, %.0f away): %s, searching on",
+                best.x, best.y, nf, tf, d, hit0 and "a wall" or "an invisible wall"))
+        end
+        return false
+    end
+    return true
+end
 NV.stepin_leg = function(R, ksl, p, best)
     if R.ofl_p == nil then
         R.ofl_p = NV.floor_at(ksl, p, R.ox, R.oy, R.oz, NV_TRACE) or false
@@ -8814,20 +8887,7 @@ NV.stepin_leg = function(R, ksl, p, best)
     if not ok then return false end
     local q = nil
     if hit then
-        local pl = R.people or R.blame
-        if not pl then
-            if R.pl_all == nil then
-                local okp, ppl = pcall(NV.people_scan, R.px, R.py, R.pz)
-                R.pl_all = okp and ppl or false
-            end
-            pl = R.pl_all or nil
-        end
-        local len = math.sqrt((ex - wx) ^ 2 + (ey - wy) ^ 2 + (ez - sz) ^ 2)
-        local t = (len > 0 and type(oh.Distance) == "number") and math.min(1, oh.Distance / len) or 0
-        local hx, hy = wx + (ex - wx) * t, wy + (ey - wy) * t
-        for _, c in ipairs(pl or {}) do
-            if math.abs(c.z - (nf + 82)) < 250 and (c.x - hx) ^ 2 + (c.y - hy) ^ 2 < 60 * 60 then q = c; break end
-        end
+        q = NV.leg_person(R, wx, wy, sz, ex, ey, ez, oh, nf)
         if not q then
             if not R.leglog then
                 R.leglog = true
@@ -9170,7 +9230,8 @@ NV.route_slice = function(R, budget, itercap, deadline)
             -- (2026-11-16, NV.goal_floor_ok)
             if math.abs(best.x - R.gx) <= 1 and math.abs(best.y - R.gy) <= 1
                 and math.abs(best.z - R.oz) <= 300 and NV.goal_floor_ok(R, ksl, p, best)
-                and (not R.stepin or NV.stepin_leg(R, ksl, p, best)) then
+                and (not R.stepin or NV.stepin_leg(R, ksl, p, best))
+                and (not R.legchk or NV.goal_leg_ok(R, ksl, p, best)) then
                 return "found", best
             end
             -- 8 neighbours (2026-11-14, user: too many wall bumps and re-routes): the 4
@@ -9488,6 +9549,16 @@ local function nav_route_begin(mode, ox, oy, oz)
     NV.route = NV.route_job(mode, ox, oy, oz, px, py, pz)
     NV.route.people = people
     NV.route.stepin = stepin
+    do   -- the last leg to a chest is traced (NV.goal_leg_ok); a walk decided at its start
+        local chest
+        if mode == "walk" then
+            chest = NV.goal and NV.goal.chest and NV.goal.x == ox and NV.goal.y == oy
+        else
+            local t = nav_target()
+            chest = t and NV.leg_target(t, t.walkcat or t.cat)
+        end
+        NV.route.legchk = (not stepin and chest) and true or false
+    end
     if stepin then
         NV.route.groundch = NV_TRACE
     else
@@ -9624,6 +9695,7 @@ NV.bg_new = function(t, p, px, py, pz)
     end
     job.R = NV.route_job("bg", tx, ty, tz, px, py, pz)
     job.R.stepin = stepin
+    job.R.legchk = not stepin and NV.leg_target(t, t.walkcat or t.cat)
     job.R.maxt = 60          -- slower slices: same trace budget, more time
     -- checks from the same spot share their ground / wall caches with each other and with
     -- the walk (NV.share_traces; NV.bg_step keeps them fresh while one runs -- a
@@ -9783,13 +9855,16 @@ end
 -- Stuck on the way (nav_walk_watch): is there a wall straight ahead that the route didn't
 -- see? The pawn trace (the player's own collision) toward the waypoint hits within 90:
 -- then a wall 200 long across that direction, just behind the surface, goes to NV.walls
--- and the re-route keeps off it. Not near the target (its own collision stops you there)
--- and not at a person (people move).
+-- and the re-route keeps off it. Not at the target itself (its own collision stops you
+-- there: a hit within 120 of it) and not at a person (people move). (Until 2026-11-17
+-- nothing was learned within 250 of the target: a fence 150 before a chest was run into
+-- 20 times, the same route each time.)
 NV.learn_wall = function(p, px, py, pz)
     local wp = NV.path and NV.path[NV.wp]
     if not wp then return false end
     local g = NV.goal
-    if g and (px - g.x) ^ 2 + (py - g.y) ^ 2 < 250 * 250 then return false end
+    -- (a step-in shop has its own end: "entrance not reached")
+    if g and g.stepin and (px - g.x) ^ 2 + (py - g.y) ^ 2 < 250 * 250 then return false end
     local vx, vy = wp.x - px, wp.y - py
     local vl = math.sqrt(vx * vx + vy * vy)
     if vl < 1 then return false end
@@ -9801,6 +9876,7 @@ NV.learn_wall = function(p, px, py, pz)
     local d = 40
     pcall(function() if type(info.Distance) == "number" then d = info.Distance end end)
     local cx, cy = px + vx * d, py + vy * d
+    if g and (cx - g.x) ^ 2 + (cy - g.y) ^ 2 < 120 * 120 then return false end
     local okp, people = pcall(NV.people_scan, px, py, pz)
     if okp and people then
         for _, q in ipairs(people) do
@@ -10134,6 +10210,7 @@ local function nav_walk_start(quiet)
     NV.paused = nil
     if pr and NV.resume_paused(pr, key, t.walkcat or t.cat, ox, oy, px, py) then return end
     NV.goal = { x = ox, y = oy, z = oz, cat = t.walkcat or t.cat, key = key }
+    NV.goal.chest = NV.leg_target(t, NV.goal.cat)   -- (its last leg is traced: NV.goal_leg_ok)
     if NV.is_stepin(t) then   -- a shop without a keeper: reached at its prompt
         NV.goal.stepin = true
         NV.goal.pname = type(t.name) == "string" and t.name or nil
