@@ -46,6 +46,34 @@ extern "C" {
 
 namespace {
 
+// --- Arguments without Lua errors -----------------------------------------
+// This DLL carries its own copy of Lua (statically linked). UE4SS builds Lua with a global
+// lock (lua_lock = one critical section for every state, luauser.c) and leaves it while a C
+// function runs; our copy's lua_lock is a critical section of its own. A Lua error raised
+// in here (luaL_check* on a bad argument, luaL_error) takes OUR lock and longjmps into
+// UE4SS's VM, which then leaves ITS lock without holding it -- c0000264, RtlLeaveCritical-
+// Section on a lock it doesn't own, the crash UE4SS 3.0.1 kept showing -- and our lock
+// stays taken for good. So nothing in here raises a Lua error: a bad argument reads as
+// the default (0, "").
+lua_Integer arg_int(lua_State* L, int i, lua_Integer def = 0) {
+    int ok = 0;
+    lua_Integer v = lua_tointegerx(L, i, &ok);
+    if (ok) return v;
+    lua_Number n = lua_tonumberx(L, i, &ok);
+    return ok ? static_cast<lua_Integer>(n) : def;
+}
+lua_Number arg_num(lua_State* L, int i, lua_Number def = 0) {
+    int ok = 0;
+    lua_Number v = lua_tonumberx(L, i, &ok);
+    return ok ? v : def;
+}
+const char* arg_str(lua_State* L, int i, const char* def = "") {
+    const int t = lua_type(L, i);
+    if (t != LUA_TSTRING && t != LUA_TNUMBER) return def;
+    const char* s = lua_tolstring(L, i, nullptr);
+    return s ? s : def;
+}
+
 // --- Native hooking (MinHook) -------------------------------------------
 // In-process native hooking lets us read struct-returning UFunctions (e.g.
 // GetTalkText) that UE4SS's Lua RegisterHook crashes on -- in C++ we read the
@@ -560,7 +588,7 @@ void hk_gtt(void* ctx, void* frame, void* result) {
 
 
 int l_speak(lua_State* L) {
-    luaL_checktype(L, 1, LUA_TSTRING);
+    if (lua_type(L, 1) != LUA_TSTRING) { lua_pushboolean(L, 0); return 1; }
 
     // Don't trust the length lua_tolstring/luaL_checklstring report — they
     // were observed to return 0 for long Lua strings even when #text on
@@ -614,7 +642,7 @@ static bool install_func_hook(uintptr_t ufunc, void* cb, void** orig) {
     return func && MH_CreateHook(func, cb, orig) == MH_OK && MH_EnableHook(func) == MH_OK;
 }
 int l_install_talk_hook(lua_State* L) {
-    uintptr_t ufunc = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
+    uintptr_t ufunc = static_cast<uintptr_t>(arg_int(L, 1));
     // collect GetTalkText impl candidates BEFORE MinHook patches the exec: the
     // NPC probe calls the impl directly (silent -- our hook never fires for it)
     if (ufunc >= 0x10000 && g_gtt_cand_n == 0) {
@@ -648,7 +676,7 @@ int l_install_talk_hook(lua_State* L) {
 // GetTalkText, no ProcessEvent, no contact required. The resolver self-arms by
 // result on first use (the placement label is a valid probe). All SEH-guarded.
 int l_npc_name(lua_State* L) {
-    void* actor = reinterpret_cast<void*>(static_cast<uintptr_t>(luaL_checkinteger(L, 1)));
+    void* actor = reinterpret_cast<void*>(static_cast<uintptr_t>(arg_int(L, 1)));
     uint64_t lbl = 0; int nlen = 0;
     wchar_t namew[128]; namew[0] = L'\0';
     if (actor) {
@@ -672,10 +700,10 @@ int l_npc_name(lua_State* L) {
 }
 
 int l_npc_probe(lua_State* L) {
-    void* actor = reinterpret_cast<void*>(static_cast<uintptr_t>(luaL_checkinteger(L, 1)));
-    void* pfn   = reinterpret_cast<void*>(static_cast<uintptr_t>(luaL_checkinteger(L, 2)));
-    void* lfn   = reinterpret_cast<void*>(static_cast<uintptr_t>(luaL_optinteger(L, 3, 0)));
-    void* locfn = reinterpret_cast<void*>(static_cast<uintptr_t>(luaL_optinteger(L, 4, 0)));
+    void* actor = reinterpret_cast<void*>(static_cast<uintptr_t>(arg_int(L, 1)));
+    void* pfn   = reinterpret_cast<void*>(static_cast<uintptr_t>(arg_int(L, 2)));
+    void* lfn   = reinterpret_cast<void*>(static_cast<uintptr_t>(arg_int(L, 3, 0)));
+    void* locfn = reinterpret_cast<void*>(static_cast<uintptr_t>(arg_int(L, 4, 0)));
     if (!actor || !pfn) {
         lua_pushboolean(L, 0); lua_pushboolean(L, 0); lua_pushnil(L); lua_pushstring(L, "bad args");
         return 4;
@@ -747,7 +775,7 @@ int l_npc_probe(lua_State* L) {
 // UFunction address: read the exec (Func at +0xB0) and find its impl call.
 // Returns a short diagnostic string (impl RVA + candidate count) for logging.
 int l_install_gametext_resolver(lua_State* L) {
-    uintptr_t ufunc = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
+    uintptr_t ufunc = static_cast<uintptr_t>(arg_int(L, 1));
     void* exec = nullptr;
     if (ufunc >= 0x10000) {
         __try { exec = *reinterpret_cast<void**>(ufunc + 0xB0); }
@@ -796,23 +824,23 @@ int l_poll_talk(lua_State* L) {
 int l_audio_init(lua_State* L)     { lua_pushboolean(L, SA_Init()); return 1; }
 int l_audio_shutdown(lua_State* L) { SA_Shutdown(); return 0; }
 int l_audio_status(lua_State* L)   { lua_pushstring(L, SA_Status()); return 1; }
-int l_audio_test(lua_State* L)     { SA_TestTone((int)luaL_checkinteger(L, 1)); return 0; }
+int l_audio_test(lua_State* L)     { SA_TestTone((int)arg_int(L, 1)); return 0; }
 int l_audio_set_listener(lua_State* L) {
-    SA_SetListener((float)luaL_checknumber(L, 1), (float)luaL_checknumber(L, 2), (float)luaL_checknumber(L, 3));
+    SA_SetListener((float)arg_num(L, 1), (float)arg_num(L, 2), (float)arg_num(L, 3));
     return 0;
 }
 int l_audio_set_source(lua_State* L) {
-    SA_SetSource((int)luaL_checkinteger(L, 1), lua_toboolean(L, 2),
-                 (float)luaL_checknumber(L, 3), (float)luaL_checknumber(L, 4), (float)luaL_checknumber(L, 5),
-                 (int)luaL_optinteger(L, 6, 0));
+    SA_SetSource((int)arg_int(L, 1), lua_toboolean(L, 2),
+                 (float)arg_num(L, 3), (float)arg_num(L, 4), (float)arg_num(L, 5),
+                 (int)arg_int(L, 6, 0));
     return 0;
 }
 int l_audio_load_cue(lua_State* L) {
-    lua_pushboolean(L, SA_LoadCue((int)luaL_checkinteger(L, 1), luaL_checkstring(L, 2)));
+    lua_pushboolean(L, SA_LoadCue((int)arg_int(L, 1), arg_str(L, 2)));
     return 1;
 }
 int l_audio_play_cue(lua_State* L) {
-    SA_PlayCue((int)luaL_checkinteger(L, 1));
+    SA_PlayCue((int)arg_int(L, 1));
     return 0;
 }
 
@@ -940,7 +968,7 @@ int l_hold_keys(lua_State* L) {
 // the arrows -- the walker presses E itself to open a door on its route. Not an
 // extended key (letters); the Lua side releases what it pressed.
 int l_key_event(lua_State* L) {
-    WORD vk = (WORD)luaL_checkinteger(L, 1);
+    WORD vk = (WORD)arg_int(L, 1);
     bool down = lua_toboolean(L, 2) != 0;
     INPUT in{};
     in.type = INPUT_KEYBOARD;
@@ -955,8 +983,8 @@ int l_key_event(lua_State* L) {
 int l_guard_combo(lua_State* L) {
     keyguard::ensure_started();
     keyguard::Combo c;
-    c.id    = (int)luaL_checkinteger(L, 1);
-    c.vk    = (int)luaL_checkinteger(L, 2);
+    c.id    = (int)arg_int(L, 1);
+    c.vk    = (int)arg_int(L, 2);
     c.ctrl  = lua_toboolean(L, 3) ? 1 : 0;
     c.shift = lua_toboolean(L, 4) ? 1 : 0;
     c.alt   = lua_toboolean(L, 5) ? 1 : 0;
@@ -1004,7 +1032,7 @@ static BOOL CALLBACK ss_enum_proc(HWND h, LPARAM lp) {
     return TRUE;
 }
 int l_screenshot(lua_State* L) {
-    const char* path = luaL_checkstring(L, 1);
+    const char* path = arg_str(L, 1);
     HWND hwnd = nullptr;
     EnumWindows(ss_enum_proc, reinterpret_cast<LPARAM>(&hwnd));
     bool ok = false;
@@ -1067,8 +1095,8 @@ static uintptr_t shim_read(uintptr_t a) {
 // row with OptionKind == kind in the DataTable and resolves its ItemText1. The complete,
 // kind-keyed master store -> works for every option (incl. gauges not in the runtime maps).
 int l_option_label_for_kind(lua_State* L) {
-    uintptr_t dt   = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
-    int wantKind   = static_cast<int>(luaL_checkinteger(L, 2));
+    uintptr_t dt   = static_cast<uintptr_t>(arg_int(L, 1));
+    int wantKind   = static_cast<int>(arg_int(L, 2));
     wchar_t w[128]; w[0] = L'\0'; int found = 0;
     __try {
         uintptr_t rm = dt + 0x30;
@@ -1146,14 +1174,14 @@ static bool dt_slot(uintptr_t dt, int i, uint64_t* key, uintptr_t* row) {
 
 // DtCount(dtAddr) -> number of RowMap slots (iterate 0..n-1 with DtRowAt).
 int l_dt_count(lua_State* L) {
-    lua_pushinteger(L, dt_num(static_cast<uintptr_t>(luaL_checkinteger(L, 1))));
+    lua_pushinteger(L, dt_num(static_cast<uintptr_t>(arg_int(L, 1))));
     return 1;
 }
 
 // DtRowAt(dtAddr, i) -> keyCmp, keyNum, rowAddr | nil (a hole or a bad read).
 int l_dt_row_at(lua_State* L) {
-    uintptr_t dt = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
-    int i        = static_cast<int>(luaL_checkinteger(L, 2));
+    uintptr_t dt = static_cast<uintptr_t>(arg_int(L, 1));
+    int i        = static_cast<int>(arg_int(L, 2));
     uint64_t key = 0; uintptr_t row = 0;
     if (!dt_slot(dt, i, &key, &row)) { lua_pushnil(L); return 1; }
     lua_pushinteger(L, static_cast<lua_Integer>(key & 0xFFFFFFFFu));
@@ -1165,9 +1193,9 @@ int l_dt_row_at(lua_State* L) {
 // DtFind(dtAddr, keyCmp [, keyNum]) -> rowAddr | nil: the row whose name is that FName
 // (Lua builds it: FName("1234"):GetComparisonIndex()).
 int l_dt_find(lua_State* L) {
-    uintptr_t dt = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
-    uint64_t want = static_cast<uint64_t>(static_cast<uint32_t>(luaL_checkinteger(L, 2))) |
-                    (static_cast<uint64_t>(static_cast<uint32_t>(luaL_optinteger(L, 3, 0))) << 32);
+    uintptr_t dt = static_cast<uintptr_t>(arg_int(L, 1));
+    uint64_t want = static_cast<uint64_t>(static_cast<uint32_t>(arg_int(L, 2))) |
+                    (static_cast<uint64_t>(static_cast<uint32_t>(arg_int(L, 3, 0))) << 32);
     int n = dt_num(dt);
     for (int i = 0; i < n; i++) {
         uint64_t key = 0; uintptr_t row = 0;
@@ -1183,8 +1211,8 @@ int l_dt_find(lua_State* L) {
 // Peek(addr, kind) -> number | nil. SEH-guarded read; kind "i32" (default), "u8",
 // "u32", "ptr", "f32". For struct fields Lua can't reach (DataTable rows).
 int l_peek(lua_State* L) {
-    uintptr_t a      = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
-    const char* kind = luaL_optstring(L, 2, "i32");
+    uintptr_t a      = static_cast<uintptr_t>(arg_int(L, 1));
+    const char* kind = arg_str(L, 2, "i32");
     if (a < 0x10000) { lua_pushnil(L); return 1; }
     bool ok = true; lua_Integer iv = 0; double fv = 0; bool isf = false;
     __try {
@@ -1202,7 +1230,7 @@ int l_peek(lua_State* L) {
 
 // PeekFName(addr) -> cmp, num | nil: an FName field (ComparisonIndex, Number).
 int l_peek_fname(lua_State* L) {
-    uintptr_t a = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
+    uintptr_t a = static_cast<uintptr_t>(arg_int(L, 1));
     uint64_t v = 0; bool ok = (a >= 0x10000);
     if (ok) { __try { v = *reinterpret_cast<uint64_t*>(a); } __except (EXCEPTION_EXECUTE_HANDLER) { ok = false; } }
     if (!ok) { lua_pushnil(L); return 1; }
@@ -1215,8 +1243,8 @@ int l_peek_fname(lua_State* L) {
 // from game data (DataTable rows, label properties). Only pass real FNames: an index
 // past the name table hangs GetGameTextString, so absurd ones are refused here.
 int l_gametext_fname(lua_State* L) {
-    lua_Integer cmp = luaL_checkinteger(L, 1);
-    lua_Integer num = luaL_optinteger(L, 2, 0);
+    lua_Integer cmp = arg_int(L, 1);
+    lua_Integer num = arg_int(L, 2, 0);
     if (cmp <= 0 || cmp >= 0x400000 || num < 0 || num > 0x7FFFFFFF) { lua_pushnil(L); return 1; }
     uint64_t fn = static_cast<uint64_t>(static_cast<uint32_t>(cmp)) |
                   (static_cast<uint64_t>(static_cast<uint32_t>(num)) << 32);
@@ -1236,7 +1264,7 @@ int l_gametext_fname(lua_State* L) {
 // crashes the whole game (the recurring radar crash). Garbage coords from reused memory
 // (NaN / absurd range) are rejected too.
 int l_actor_loc(lua_State* L) {
-    uintptr_t actor = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
+    uintptr_t actor = static_cast<uintptr_t>(arg_int(L, 1));
     float x = 0, y = 0, z = 0; bool ok = false;
     __try {
         uintptr_t rc = *reinterpret_cast<uintptr_t*>(actor + 0x160);
@@ -1287,11 +1315,11 @@ static bool tr_call(void* fn) {
 // location through K2_GetActorLocation. Then the CDO's own slot 63 is used. Nothing
 // else is ever called.
 int l_trace_setup(lua_State* L) {
-    void* ksl   = reinterpret_cast<void*>(static_cast<uintptr_t>(luaL_checkinteger(L, 1)));
-    void* f1    = reinterpret_cast<void*>(static_cast<uintptr_t>(luaL_checkinteger(L, 2)));
-    void* f2    = reinterpret_cast<void*>(static_cast<uintptr_t>(luaL_checkinteger(L, 3)));
-    void* actor = reinterpret_cast<void*>(static_cast<uintptr_t>(luaL_checkinteger(L, 4)));
-    void* locfn = reinterpret_cast<void*>(static_cast<uintptr_t>(luaL_checkinteger(L, 5)));
+    void* ksl   = reinterpret_cast<void*>(static_cast<uintptr_t>(arg_int(L, 1)));
+    void* f1    = reinterpret_cast<void*>(static_cast<uintptr_t>(arg_int(L, 2)));
+    void* f2    = reinterpret_cast<void*>(static_cast<uintptr_t>(arg_int(L, 3)));
+    void* actor = reinterpret_cast<void*>(static_cast<uintptr_t>(arg_int(L, 4)));
+    void* locfn = reinterpret_cast<void*>(static_cast<uintptr_t>(arg_int(L, 5)));
     g_tr_pe = nullptr;
     bool ok = false;
     if (ksl && f1 && f2 && actor && locfn) {
@@ -1317,11 +1345,11 @@ int l_trace_setup(lua_State* L) {
 // the world and is ignored by the trace (bIgnoreSelf). ok = false if not set up or
 // the call faulted (SEH) -- then Lua falls back to its own call.
 int l_trace(lua_State* L) {
-    uintptr_t ctx = static_cast<uintptr_t>(luaL_checkinteger(L, 1));
+    uintptr_t ctx = static_cast<uintptr_t>(arg_int(L, 1));
     float v[6];
-    for (int i = 0; i < 6; i++) v[i] = static_cast<float>(luaL_checknumber(L, 2 + i));
-    int  chan   = static_cast<int>(luaL_checkinteger(L, 8));
-    int  prof   = static_cast<int>(luaL_optinteger(L, 9, 0));
+    for (int i = 0; i < 6; i++) v[i] = static_cast<float>(arg_num(L, 2 + i));
+    int  chan   = static_cast<int>(arg_int(L, 8));
+    int  prof   = static_cast<int>(arg_int(L, 9, 0));
     bool byProf = chan < 0;
     void* fn = g_tr_fn[byProf ? 1 : 0];
     if (!g_tr_pe || !fn || ctx < 0x10000 || (byProf && prof <= 0)) {
@@ -1483,8 +1511,8 @@ static void http_worker(std::wstring url, std::wstring agent) {
 }
 
 int l_http_get_start(lua_State* L) {
-    const char* url = luaL_checkstring(L, 1);
-    const char* agent = luaL_optstring(L, 2, "OP1Access");
+    const char* url = arg_str(L, 1);
+    const char* agent = arg_str(L, 2, "OP1Access");
     {
         std::lock_guard<std::mutex> lock(g_http_mu);
         if (g_http_state == 1) { lua_pushboolean(L, 0); return 1; }
@@ -1520,8 +1548,8 @@ int l_http_get_poll(lua_State* L) {
 }
 
 int l_start_process(lua_State* L) {
-    std::wstring exe = u8_to_wide(luaL_checkstring(L, 1));
-    std::wstring args = u8_to_wide(luaL_optstring(L, 2, ""));
+    std::wstring exe = u8_to_wide(arg_str(L, 1));
+    std::wstring args = u8_to_wide(arg_str(L, 2, ""));
     std::wstring cmd = L"\"" + exe + L"\"" + (args.empty() ? std::wstring() : L" " + args);
     STARTUPINFOW si{};
     si.cb = sizeof(si);
@@ -1561,7 +1589,7 @@ static bool close_game_window() {
 // CloseGame([delayMs]): with a delay, a thread of its own closes the game later (no Lua loop
 // needed, so a stalled LoopAsync can't keep the game open while the installer waits for it).
 int l_close_game(lua_State* L) {
-    lua_Integer delay = luaL_optinteger(L, 1, 0);
+    lua_Integer delay = arg_int(L, 1, 0);
     if (delay <= 0) {
         lua_pushboolean(L, close_game_window() ? 1 : 0);
         return 1;
@@ -1587,6 +1615,27 @@ int l_key_modifiers(lua_State* L) {
     lua_pushboolean(L, (GetAsyncKeyState(VK_SHIFT) & 0x8000) ? 1 : 0);
     lua_pushboolean(L, (GetAsyncKeyState(VK_MENU) & 0x8000) ? 1 : 0);
     return 3;
+}
+
+// KeyScan({vk, ...}) -> integer: bit i-1 set when the i-th key is down or was pressed
+// since the last look (GetAsyncKeyState non-zero: the very test UE4SS's own key binds
+// use). Up to 63 keys. Under UE4SS 4 the mod reads its keys with this on the game thread
+// (UE4SS runs RegisterKeyBind callbacks on its own thread, beside the game's Lua).
+int l_key_scan(lua_State* L) {
+    lua_Integer mask = 0;
+    if (lua_type(L, 1) == LUA_TTABLE) {
+        lua_Integer n = static_cast<lua_Integer>(lua_rawlen(L, 1));
+        if (n > 63) n = 63;
+        for (lua_Integer i = 1; i <= n; ++i) {
+            lua_rawgeti(L, 1, i);
+            const lua_Integer vk = arg_int(L, -1);
+            lua_pop(L, 1);
+            if (vk > 0 && vk < 256 && GetAsyncKeyState(static_cast<int>(vk)) != 0)
+                mask |= (static_cast<lua_Integer>(1) << (i - 1));
+        }
+    }
+    lua_pushinteger(L, mask);
+    return 1;
 }
 
 int l_game_exe_path(lua_State* L) {
@@ -1641,6 +1690,7 @@ const luaL_Reg op1access_funcs[] = {
     {"CloseGame",            l_close_game},
     {"GameExePath",          l_game_exe_path},
     {"KeyModifiers",         l_key_modifiers},
+    {"KeyScan",              l_key_scan},
     {nullptr, nullptr},
 };
 
