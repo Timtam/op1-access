@@ -6,7 +6,66 @@
 --   exposes Speak / Silence / IsSpeakingSupported, backed by Prism (NVDA,
 --   JAWS, ... or OneCore/SAPI when no screen reader runs).
 
+-- UE4SS 4: THE WHOLE MOD RUNS ON THE GAME THREAD (2026-11-17). UE4SS runs LoopAsync and
+-- ExecuteWithDelay callbacks on its async thread and RegisterKeyBind callbacks on its own
+-- thread, hooks and ExecuteInGameThread work on the game thread -- all in this one Lua
+-- state. Lua itself is guarded by UE4SS's lock, but the shim's C functions run outside
+-- it (the shim has its own copy of Lua), so two threads in this state broke it: in the
+-- first 4.0.0 test "Ref was not function" every minute or two, then a crash after 12
+-- minutes in a Lua table lookup. UE4SS 4 has game-thread timers. So this file runs once
+-- on UE4SS's thread only to queue itself, and then for real on the game thread; its
+-- loops are game-thread timers (LoopInGameThreadWithDelay), its delays too, and its keys
+-- are read on the game thread (M.key_poll). Without the game-thread timers (UE4SS 3)
+-- everything runs as before.
+if LoopInGameThreadWithDelay and ExecuteInGameThreadWithDelay and OP1_BOOT == nil then
+    OP1_BOOT = "queued"
+    local src = debug and debug.getinfo and debug.getinfo(1, "S")
+    local path = src and type(src.source) == "string" and src.source:match("^@(.+)$")
+    local chunk, err = nil, "no path"
+    if path then chunk, err = loadfile(path) end
+    if chunk then
+        ExecuteInGameThreadWithDelay(250, function()
+            OP1_BOOT = "game thread"
+            local ok, e = pcall(chunk)
+            if not ok then print(string.format("[OP1Access] start failed: %s\n", tostring(e))) end
+        end)
+        print("[OP1Access] start queued for the game thread\n")
+        return
+    end
+    print(string.format("[OP1Access] no start on the game thread (%s): starting here\n", tostring(err)))
+    OP1_BOOT = "here"
+end
+
 local M = {}
+
+-- UE4SS 4 (game-thread timers; see above). Its LoopAsync / ExecuteWithDelay become
+-- game-thread timers here, so every later caller gets those.
+M.V4 = (LoopInGameThreadWithDelay ~= nil and ExecuteInGameThreadWithDelay ~= nil)
+if M.V4 then
+    LoopAsync = function(ms, fn)
+        local h
+        h = LoopInGameThreadWithDelay(ms, function()
+            if fn() == true and h then CancelDelayedAction(h) end
+        end)
+        return h
+    end
+    ExecuteWithDelay = function(ms, fn) return ExecuteInGameThreadWithDelay(ms, fn) end
+    ExecuteAsync = function(fn) return ExecuteInGameThread(fn) end
+end
+
+-- The mod's own folder: Mods\OP1Access\ (UE4SS 3, everything in Win64) or
+-- ue4ss\Mods\OP1Access\ (UE4SS 4), from this file's own path -- relative to Win64 (the
+-- game's working folder) or absolute.
+M.MOD_DIR = (function()
+    local s = debug and debug.getinfo and debug.getinfo(1, "S")
+    local p = s and type(s.source) == "string" and s.source:match("^@(.-)[Ss]cripts[/\\][^/\\]+%.lua$")
+    if p and p ~= "" then return (p:gsub("/", "\\")) end
+    for _, c in ipairs({ "ue4ss\\Mods\\OP1Access\\", "Mods\\OP1Access\\" }) do
+        local f = io.open(c .. "Scripts\\main.lua", "rb")
+        if f then f:close(); return c end
+    end
+    return "Mods\\OP1Access\\"
+end)()
 
 -- The eight travelers' display names (identical in the English and German text). A
 -- dialogue line spoken by one of them is the PLAYER's party talking, never an NPC.
@@ -17,7 +76,7 @@ M.TRAVELER = { Ophilia = true, Cyrus = true, Tressa = true, Olberic = true, Prim
 -- Shim load
 -- ---------------------------------------------------------------------------
 do
-    local dlls_dir = "Mods\\OP1Access\\Scripts\\"
+    local dlls_dir = M.MOD_DIR .. "Scripts\\"
     local extra = dlls_dir .. "?.dll"
     if not package.cpath:find(extra, 1, true) then
         package.cpath = extra .. ";" .. package.cpath
@@ -33,6 +92,18 @@ end
 
 local function log(msg)
     print(string.format("[OP1Access] %s\n", tostring(msg)))
+end
+
+-- The game's Win64 folder (absolute, UTF-8) and the mod's folder as an absolute path
+-- (M.MOD_DIR can be relative to Win64), for the shim's file paths and the installer.
+M.bin_dir = function()
+    local exe = shim and shim.GameExePath and shim.GameExePath()
+    return exe and exe:match("^(.*)\\[^\\]+$")
+end
+M.mod_dir_abs = function()
+    if M.MOD_DIR:match("^%a:[\\/]") or M.MOD_DIR:match("^\\\\") then return M.MOD_DIR end
+    local bin = M.bin_dir()
+    return bin and (bin .. "\\" .. M.MOD_DIR) or M.MOD_DIR
 end
 
 local function speak(text, interrupt)
@@ -175,7 +246,7 @@ end
 -- is kept in lang/last.txt, so the first lines after a start ("OP1 Access loaded") are
 -- in it too. N_("text") only marks a text for the .pot (tables of labels: translated
 -- where they are said). A translation whose %-codes don't fit falls back to English.
-M.LANG_DIR = "Mods\\OP1Access\\Scripts\\lang\\"
+M.LANG_DIR = M.MOD_DIR .. "Scripts\\lang\\"
 M.i18n = { cats = {}, missing = {} }
 M.po_unescape = function(s)
     return (s:gsub("\\(.)", function(c)
@@ -468,9 +539,69 @@ log("game-thread exec driver: " .. (ExecuteInGameThread and "ExecuteInGameThread
 -- through this wrapper; work a handler queues itself (M.in_gt) runs right after it.
 -- (M.key_t: when the last key bind fired, on UE4SS's thread -- how long a key's work then
 -- waited for the game thread, for the log)
+-- UE4SS 4: KEYS READ ON THE GAME THREAD (2026-11-17). Its key-bind thread would run our
+-- Lua beside the game thread's (see the top of this file). So here RegisterKeyBind only
+-- records the bind, and M.key_poll -- every frame, on the game thread -- looks at the
+-- bound keys (shim.KeyScan: GetAsyncKeyState, as UE4SS does) with UE4SS's rules: a bind
+-- fires when its key goes down while exactly its modifiers (Ctrl, Shift, Alt) are held,
+-- and only while the game window is in front. Its callback runs right there.
+M.keys = { list = {}, vks = {}, known = {}, down = {} }
+M.KEY_MODBIT = { [0x11] = 1, [0x10] = 2, [0x12] = 4 }   -- ModifierKey CONTROL, SHIFT, ALT
+M.key_register = function(key, a, b)
+    local mods, fn = a, b
+    if type(a) == "function" then mods, fn = nil, a end
+    if type(key) ~= "number" or type(fn) ~= "function" then error("RegisterKeyBind: bad arguments") end
+    local mask = 0
+    for _, m in ipairs(mods or {}) do mask = mask | (M.KEY_MODBIT[m] or 0) end
+    local K = M.keys
+    K.list[#K.list + 1] = { vk = key, mask = mask, fn = fn }
+    if not K.known[key] then
+        K.known[key] = true
+        K.vks[#K.vks + 1] = key
+    end
+    return true
+end
+M.key_poll = function()
+    local K = M.keys
+    if #K.vks == 0 then return end
+    if not M.fg_ok() then return end
+    local ok, mask = pcall(shim.KeyScan, K.vks)
+    if not ok or type(mask) ~= "number" then return end
+    local fired
+    for i, vk in ipairs(K.vks) do
+        local isdown = ((mask >> (i - 1)) & 1) == 1
+        if isdown and not K.down[vk] then
+            fired = fired or {}
+            fired[#fired + 1] = vk
+        end
+        K.down[vk] = isdown
+    end
+    if not fired then return end
+    local c, s, a = shim.KeyModifiers()
+    local mm = (c and 1 or 0) | (s and 2 or 0) | (a and 4 or 0)
+    for _, vk in ipairs(fired) do
+        for _, b in ipairs(K.list) do
+            if b.vk == vk and b.mask == mm then
+                M.key_t = os.clock()
+                local okf, err = pcall(b.fn)
+                if not okf then log(string.format("KEY %d failed: %s", vk, tostring(err))) end
+            end
+        end
+    end
+end
 do
     local raw = RegisterKeyBind
-    if raw and ExecuteInGameThread then
+    if M.V4 and shim and shim.KeyScan and shim.KeyModifiers then
+        RegisterKeyBind = M.key_register
+        local okp, h
+        if EngineTickAvailable and LoopInGameThreadAfterFrames then
+            okp, h = pcall(LoopInGameThreadAfterFrames, 1, M.key_poll)
+        else
+            okp, h = pcall(LoopInGameThreadWithDelay, 10, M.key_poll)
+        end
+        log("keys: read on the game thread (" .. ((EngineTickAvailable and "every frame") or "every 10 ms") ..
+            "): " .. tostring(okp and h))
+    elseif raw and ExecuteInGameThread then
         -- (each key also checks that UE4SS's async thread still runs: M.async_check)
         local function run(f)
             return function()
@@ -594,6 +725,11 @@ local UI_KIND_SUPPRESSED = {
     [0]  = true,  -- "Title screen": KSUIManager fires it spuriously during loads;
                   -- the real title is the bespoke UIMainTitle (poll loop -> "Title").
     [27] = true, [103] = true, [104] = true,
+    -- UE4SS 4 hooks KSUIManager:Open natively, so the game's own C++ calls reach us too:
+    -- the HUD opens "World map" (22) and "Party chat available" (28) again at the start
+    -- and end of every talk and when the main menu opens (2026-11-17). UE4SS 3 never
+    -- passed them on (no log has them); the world map has its own reader.
+    [22] = true, [28] = true,
 }
 
 -- Auto-radar menu gate. In-game menu / battle / shop / conversation widget CLASSES
@@ -5057,7 +5193,7 @@ end
 -- --game <game folder> and closes the game; the installer updates and starts the game again.
 -- Development copies (no buildinfo.lua) don't check.
 do
-    local extra = "Mods\\OP1Access\\Scripts\\?.lua"
+    local extra = M.MOD_DIR .. "Scripts\\?.lua"
     if not package.path:find(extra, 1, true) then package.path = extra .. ";" .. package.path end
 end
 M.build = {}
@@ -5150,12 +5286,11 @@ end
 M.update_install = function()
     -- ...\OCTOPATH TRAVELER\Octopath_Traveler\Binaries\Win64\Octopath_Traveler-Win64-Shipping.exe
     -- (paths stay UTF-8 strings for the shim; Lua's io.open can't open non-ASCII paths)
-    local exe = shim and shim.GameExePath and shim.GameExePath()
-    local bin = exe and exe:match("^(.*)\\[^\\]+$")
+    local bin = M.bin_dir()
     local game = bin and bin:match("^(.*)\\[^\\]+\\[^\\]+\\[^\\]+$")
     local ok, err = false, "no game folder"
     if game and shim.StartProcess then
-        ok, err = shim.StartProcess(bin .. "\\Mods\\OP1Access\\OP1AccessInstaller.exe",
+        ok, err = shim.StartProcess(M.mod_dir_abs() .. "OP1AccessInstaller.exe",
             '--update --restart --game "' .. game .. '"')
     end
     if not ok then
@@ -5224,7 +5359,8 @@ M.ok_tick = function()
     local now = os.clock()
     if not (M.fast_q and now - M.fast_q < 2.0) then
         M.fast_q = now
-        M.in_gt(M.fast_polls)
+        if M.V4 then pcall(M.fast_polls)   -- (UE4SS 4: on the game thread already)
+        else M.in_gt(M.fast_polls) end
     end
     -- work some other thread took anyway (UE4SS runs queued work in any thread's
     -- ProcessEvent) waits in M.gt_pending; an empty run kicks it back to the game thread
@@ -6629,7 +6765,7 @@ end
 -- Writes a BMP next to the log; a helper converts it to PNG for inspection.
 -- Inline in the closure (no chunk local: main chunk is at Lua's 200-local cap).
 do
-    local SHOT_PATH = "C:/Program Files (x86)/Steam/steamapps/common/OCTOPATH TRAVELER/Octopath_Traveler/Binaries/Win64/op1access_shot.bmp"
+    local SHOT_PATH = (M.bin_dir() or ".") .. "\\op1access_shot.bmp"   -- (Win64, next to the game)
     -- ON THE GAME THREAD: PrintWindow sends WM_PRINT to the window's thread (the game
     -- thread). Called from the keybind thread it waited for the game thread while
     -- holding the Lua lock the game thread needed -> the game froze (2026-11-11).
@@ -6722,7 +6858,7 @@ local CAT_CUE = { chest = 0, exit = 1, npc = 2, building = 3, shop = 4 }  -- cat
 -- Custom cue assets: drop chest/exit/npc/building/shop/wall .flac|.mp3|.wav into the
 -- mod's Assets/ folder and they replace the generated tones (played at the same
 -- distance-driven ping rate). Missing files fall back to tones. Loaded once, lazily.
-local ASSET_DIR = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\OCTOPATH TRAVELER\\Octopath_Traveler\\Binaries\\Win64\\Mods\\OP1Access\\Assets\\"
+local ASSET_DIR = M.mod_dir_abs() .. "Assets\\"   -- (Mods\OP1Access\ or ue4ss\Mods\OP1Access\)
 local CUE_FILE  = { [0] = "chest", [1] = "exit", [2] = "npc", [3] = "building", [4] = "shop", [5] = "wall", [6] = "bump", [7] = "door",
                     [8] = "pathaction", [9] = "talk" }
 local CUE_EXTS  = { "flac", "mp3", "wav" }   -- preference order; FLAC/MP3 keep files small
@@ -11051,7 +11187,7 @@ M.arm_fallback = function(why)
 end
 -- (now: os.clock) Both async loops quiet for 5 s: UE4SS's async thread is gone.
 M.async_check = function(now)
-    if M.fallback_armed then return end
+    if M.fallback_armed or M.V4 then return end   -- (UE4SS 4: no loop of ours on its async thread)
     local pl, ol = pump_loop_t, M.ok_loop_t
     if (pl or 0) <= 0 or not ol then return end   -- (not running yet)
     if now - pl > 5.0 and now - ol > 5.0 then
@@ -11062,6 +11198,11 @@ local function start_pump_loop()
     return pcall(LoopAsync, 100, function()
         pump_loop_t = os.clock()
         if not M.fg_ok() then return false end   -- unfocused: skip nav_drive + pump (game calls fault)
+        if M.V4 then   -- (UE4SS 4: this loop is a game-thread timer already)
+            pcall(nav_drive)
+            pcall(radar_pump, "loop")
+            return false
+        end
         -- run on the game thread (this LoopAsync is a background thread; reading actors
         -- here races the game's actor frees -> uncatchable crash)
         M.in_gt(function()
@@ -13064,7 +13205,8 @@ radar_pump = function(src)
     if src ~= "loop" then pcall(M.async_check, now) end
     -- self-heal: LoopAsyncs can die on level load; if ours has gone quiet, start a
     -- fresh one (multi-driving is throttled-safe, dead loops just stay dead)
-    if src ~= "loop" and pump_loop_t > 0 and now - pump_loop_t > 5.0 and pump_heals < 30 then
+    -- (UE4SS 4: a game-thread timer doesn't die; a long load only holds it up)
+    if not M.V4 and src ~= "loop" and pump_loop_t > 0 and now - pump_loop_t > 5.0 and pump_heals < 30 then
         pump_heals = pump_heals + 1
         pump_loop_t = now
         local ok = start_pump_loop()
