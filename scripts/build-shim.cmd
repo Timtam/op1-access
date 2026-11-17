@@ -28,10 +28,12 @@ set MINHOOK=%OP1_TOOLS%\minhook
 set STEAMAUDIO=%OP1_TOOLS%\steamaudio
 set MINIAUDIO=%OP1_TOOLS%\miniaudio
 set SHIM_OUT=%BUILD%\OP1AccessShim.dll
-set GAME_MODS=C:\Program Files (x86)\Steam\steamapps\common\OCTOPATH TRAVELER\Octopath_Traveler\Binaries\Win64\Mods\OP1Access
 :: Win64 (game exe dir) -- phonon.dll must live here so the shim's implicit
 :: dependency on it resolves at load time (Scripts\ is NOT on the DLL search path).
-for %%I in ("%GAME_MODS%\..\..") do set "GAME_BIN=%%~fI"
+if not defined GAME_BIN set "GAME_BIN=C:\Program Files (x86)\Steam\steamapps\common\OCTOPATH TRAVELER\Octopath_Traveler\Binaries\Win64"
+:: UE4SS 4 keeps its mods in Win64\ue4ss\Mods, UE4SS 3 in Win64\Mods.
+set "GAME_MODS=%GAME_BIN%\Mods\OP1Access"
+if exist "%GAME_BIN%\ue4ss\UE4SS.dll" set "GAME_MODS=%GAME_BIN%\ue4ss\Mods\OP1Access"
 
 if not exist "%LUASRC%\lapi.c" (
     echo [build] LuaRaw sources not found at "%LUASRC%". Run the UE4SS source clone first.

@@ -27,10 +27,12 @@ Manual installation
 Extract OP1Access-{VERSION}.zip into the Octopath Traveler folder, the one with
 Octopath_Traveler.exe. In Steam, open the context menu of Octopath Traveler and choose Manage,
 Browse local files to find it. Everything lands in Octopath_Traveler\Binaries\Win64: UE4SS
-{UE4SS_VERSION} (dwmapi.dll, UE4SS.dll, UE4SS-settings.ini and the folder Mods), phonon.dll and the
-mod in Mods\OP1Access. If UE4SS is installed already, Mods\OP1Access and phonon.dll are enough; add
-the line "OP1Access : 1" to Mods\mods.txt and set "GuiConsoleEnabled = 0" in UE4SS-settings.ini
-(UE4SS's console window would take the focus away from the game).
+{UE4SS_VERSION} (dwmapi.dll there, and the folder ue4ss with UE4SS.dll, UE4SS-settings.ini and
+Mods), phonon.dll, and the mod in ue4ss\Mods\OP1Access. If UE4SS 4 is installed already,
+ue4ss\Mods\OP1Access and phonon.dll are enough; add the line "OP1Access : 1" to
+ue4ss\Mods\mods.txt and set "GuiConsoleEnabled = 0" in ue4ss\UE4SS-settings.ini (UE4SS's console
+window would take the focus away from the game). An older UE4SS 3 has UE4SS.dll right in Win64:
+remove it first (UE4SS.dll, UE4SS-settings.ini and the folder Mods there), or use the installer.
 Start the game with your screen reader running. You hear "OP1 Access loaded" ("OP1 Access
 geladen" when the game's text language is German).
 
@@ -40,8 +42,8 @@ installer updates the mod and starts the game again.
 
 Uninstalling
 Use "OP1 Access" in Installed apps, or start OP1AccessInstaller.exe and choose Uninstall. By hand:
-delete the folder Mods\OP1Access and phonon.dll in Octopath_Traveler\Binaries\Win64. To remove
-UE4SS as well, delete dwmapi.dll, UE4SS.dll, UE4SS-settings.ini and the folder Mods there.
+delete the folder ue4ss\Mods\OP1Access and phonon.dll in Octopath_Traveler\Binaries\Win64. To
+remove UE4SS as well, delete dwmapi.dll and the folder ue4ss there.
 
 License
 Copyright (c) 2026 OP1Access contributors. OP1 Access is free software under the MIT License,

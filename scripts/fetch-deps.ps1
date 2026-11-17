@@ -2,7 +2,7 @@
 <#
 .SYNOPSIS
   Fetches the pinned build dependencies into tools\ (gitignored): Lua from the UE4SS sources
-  (LuaRaw), Prism, MinHook, miniaudio, the Steam Audio SDK, the UE4SS 3.0.1 release and the
+  (LuaRaw), Prism, MinHook, miniaudio, the Steam Audio SDK, the UE4SS 4.0.0 release and the
   license texts the package ships. Whatever is there already is kept.
 
 .DESCRIPTION
@@ -25,8 +25,9 @@ if (-not $Tools) { $Tools = Join-Path $root 'tools' }
 $Tools = [System.IO.Path]::GetFullPath($Tools, (Get-Location).Path)
 New-Item -ItemType Directory -Force -Path $Tools | Out-Null
 
-# Lua must be UE4SS's own (LuaRaw, with its lua_lock): the shim runs on UE4SS's Lua state.
-$UE4SSSourceCommit = '265115c05bfcc75f96d8a1f4beda105a7d2753b1'
+# Lua must be UE4SS's own (LuaRaw, 5.4.7 with its lua_lock): the shim runs on UE4SS's Lua state.
+# The v4.0.0 release's sources (the shim's functions raise no Lua errors: see Shim.cpp).
+$UE4SSSourceCommit = '30afe5fff94a94c2313e220b2002059a080da9a0'
 # Also PRISM_REF in build-shim.cmd.
 $PrismCommit = 'a5fec84e3409cc466a98dfef77b1ea1eeb18aaa8'
 $MinHookCommit = '05c06c5bbca226b72ffb40fc0caaef33bcaf6f74'
@@ -34,8 +35,8 @@ $MiniaudioTag = '0.11.25'
 $MiniaudioSha256 = 'ac7af4de748b7e26b777f37e01cee313a308a7296a3eb080e2906b320cc55c89'
 $SteamAudioVersion = '4.8.1'
 $SteamAudioSha256 = '4a0aa5ec1176f38f0b0993a37c2259d9e86f27e22d5e24f83ec4c3cb9a1d5449'
-$UE4SSVersion = '3.0.1'
-$UE4SSSha256 = '4b47d4bceddd2f561a4e395bfa00924ccfc945af576a2d0c613e6537846c57ec'
+$UE4SSVersion = '4.0.0'
+$UE4SSSha256 = '251ad0d1381a241750e036f5918cbf2b5d7ec58ebc608cb2dd09d459d0c81e45'
 
 function Get-GitCommit([string]$Url, [string]$Commit, [string]$Dir, [string[]]$Sparse = @()) {
     Write-Host "Fetching $Url at $Commit"

@@ -37,8 +37,10 @@ internal sealed class InstallRequest
 /// <summary>
 /// Installs and removes UE4SS and OP1 Access in an Octopath Traveler folder. The game folder is the
 /// one with Octopath_Traveler.exe (Steam's "OCTOPATH TRAVELER"); everything goes to
-/// Octopath_Traveler\Binaries\Win64, next to the real game EXE: UE4SS (dwmapi.dll, UE4SS.dll,
-/// settings, Mods\), phonon.dll (Steam Audio) and the mod in Mods\OP1Access.
+/// Octopath_Traveler\Binaries\Win64, next to the real game EXE: UE4SS 4's proxy dwmapi.dll and
+/// phonon.dll (Steam Audio) there, the rest of UE4SS in Win64\ue4ss (UE4SS.dll, its settings, its
+/// log, Mods\) and the mod in ue4ss\Mods\OP1Access. UE4SS 3 kept all of it in Win64 itself (the mod
+/// in Win64\Mods\OP1Access); such an installation is moved over.
 /// </summary>
 internal static class GameInstall
 {
@@ -50,15 +52,24 @@ internal static class GameInstall
     /// <summary>The launcher starts the shipping EXE; either one running means the game runs.</summary>
     private static readonly string[] GameProcessNames = { "Octopath_Traveler-Win64-Shipping", "Octopath_Traveler" };
 
-    private static readonly string[] UE4SSCoreFiles = { "dwmapi.dll", "UE4SS.dll" };
+    private const string UE4SSProxy = "dwmapi.dll";
+    private const string UE4SSCore = "UE4SS.dll";
     private const string UE4SSSettings = "UE4SS-settings.ini";
+    private const string UE4SSFolderName = "ue4ss";
 
-    /// <summary>The mods UE4SS 3.0.1 ships; removing UE4SS removes these (and leaves other mods alone).</summary>
+    /// <summary>UE4SS 3.0.1's UE4SS.dll (SHA-256): the UE4SS earlier OP1 Access packages brought, replaced without asking.</summary>
+    private const string UE4SS301CoreSha256 = "8ac18fbffc1ef96b0662d4a2d537b3f224c26d65caaba7989a9404c566102b26";
+
+    /// <summary>The mods UE4SS 3.0.1 and 4.0 ship; removing UE4SS removes these (and leaves other mods alone).</summary>
     private static readonly string[] UE4SSStockMods =
     {
         "ActorDumperMod", "BPML_GenericFunctions", "BPModLoaderMod", "CheatManagerEnablerMod", "ConsoleCommandsMod",
         "ConsoleEnablerMod", "jsbLuaProfilerMod", "Keybinds", "LineTraceMod", "SplitScreenMod", "shared",
     };
+
+    /// <summary>What else UE4SS 4 keeps in Win64\ue4ss.</summary>
+    private static readonly string[] UE4SSExtraFiles = { "LICENSE", "UE4SS.log", "UE4SS.pdb" };
+    private static readonly string[] UE4SSExtraDirs = { "UE4SS_SDK_Backends" };
 
     private static readonly (string Section, string Key, string Value)[] RequiredSettings =
     {
@@ -72,31 +83,40 @@ internal static class GameInstall
 
     public static string BinDir(string gameDir) => Path.Combine(gameDir, "Octopath_Traveler", "Binaries", "Win64");
 
-    public static string ModsDir(string gameDir) => Path.Combine(BinDir(gameDir), "Mods");
+    /// <summary>UE4SS 4's folder: Win64\ue4ss.</summary>
+    public static string UE4SSDir(string gameDir) => Path.Combine(BinDir(gameDir), UE4SSFolderName);
+
+    public static string ModsDir(string gameDir) => Path.Combine(UE4SSDir(gameDir), "Mods");
 
     public static string ModDir(string gameDir) => Path.Combine(ModsDir(gameDir), ModFolderName);
+
+    /// <summary>Where UE4SS 3 had its mods, this one included: Win64\Mods.</summary>
+    public static string LegacyModsDir(string gameDir) => Path.Combine(BinDir(gameDir), "Mods");
+
+    public static string LegacyModDir(string gameDir) => Path.Combine(LegacyModsDir(gameDir), ModFolderName);
 
     public static bool IsGameFolder(string dir) =>
         !string.IsNullOrEmpty(dir) && Path.IsPathRooted(dir) && File.Exists(Path.Combine(dir, LauncherExe))
         && Directory.Exists(BinDir(dir));
 
-    /// <summary>True for an ...\Octopath_Traveler\Binaries\Win64\Mods\OP1Access folder.</summary>
-    public static bool IsModFolder(string dir)
+    /// <summary>True for an ...\Octopath_Traveler\Binaries\Win64\ue4ss\Mods\OP1Access folder (or Win64\Mods\OP1Access).</summary>
+    public static bool IsModFolder(string dir) => GameDirOfModFolder(dir) != null;
+
+    /// <summary>The game folder of a mod folder (UE4SS 4's or 3's), or null for another folder.</summary>
+    public static string GameDirOfModFolder(string modDir)
     {
-        DirectoryInfo mod = new(dir);
+        static bool Named(DirectoryInfo d, string name) => d != null && string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase);
+        DirectoryInfo mod = new(modDir);
         DirectoryInfo mods = mod.Parent;
         DirectoryInfo bin = mods?.Parent;
+        if (Named(bin, UE4SSFolderName))
+            bin = bin.Parent;
         DirectoryInfo binaries = bin?.Parent;
         DirectoryInfo project = binaries?.Parent;
-        return string.Equals(mod.Name, ModFolderName, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(mods?.Name, "Mods", StringComparison.OrdinalIgnoreCase)
-            && string.Equals(bin?.Name, "Win64", StringComparison.OrdinalIgnoreCase)
-            && string.Equals(binaries?.Name, "Binaries", StringComparison.OrdinalIgnoreCase)
-            && string.Equals(project?.Name, "Octopath_Traveler", StringComparison.OrdinalIgnoreCase)
-            && project.Parent != null;
+        bool ok = Named(mod, ModFolderName) && Named(mods, "Mods") && Named(bin, "Win64") && Named(binaries, "Binaries")
+            && Named(project, "Octopath_Traveler") && project.Parent != null;
+        return ok ? project.Parent.FullName : null;
     }
-
-    public static string GameDirOfModFolder(string modDir) => new DirectoryInfo(modDir).Parent.Parent.Parent.Parent.Parent.FullName;
 
     /// <summary>A full path without a trailing backslash (except for a drive root).</summary>
     public static string NormalizeDir(string dir)
@@ -141,15 +161,23 @@ internal static class GameInstall
     /// <summary>The version of the installed mod; "dev" for a build without version (copied by hand); null if not installed.</summary>
     public static string InstalledModVersion(string gameDir)
     {
-        string scripts = Path.Combine(ModDir(gameDir), "Scripts");
-        string version = ReadBuildInfo(Path.Combine(scripts, "buildinfo.lua"), "version");
-        if (version != null)
-            return version;
-        return File.Exists(Path.Combine(scripts, "main.lua")) ? "dev" : null;
+        foreach (string modDir in new[] { ModDir(gameDir), LegacyModDir(gameDir) })
+        {
+            string scripts = Path.Combine(modDir, "Scripts");
+            string version = ReadBuildInfo(Path.Combine(scripts, "buildinfo.lua"), "version");
+            if (version != null)
+                return version;
+            if (File.Exists(Path.Combine(scripts, "main.lua")))
+                return "dev";
+        }
+
+        return null;
     }
 
-    /// <summary>True if UE4SS's proxy DLL and core are in the game's Win64 folder.</summary>
-    public static bool IsUE4SSInstalled(string gameDir) => UE4SSCoreFiles.All(file => File.Exists(Path.Combine(BinDir(gameDir), file)));
+    /// <summary>True if UE4SS's proxy DLL is in the game's Win64 folder and its core in Win64\ue4ss (UE4SS 4) or Win64 (UE4SS 3).</summary>
+    public static bool IsUE4SSInstalled(string gameDir) =>
+        File.Exists(Path.Combine(BinDir(gameDir), UE4SSProxy))
+        && (File.Exists(Path.Combine(UE4SSDir(gameDir), UE4SSCore)) || File.Exists(Path.Combine(BinDir(gameDir), UE4SSCore)));
 
     /// <summary>A value from a buildinfo.lua the package script writes (version = "1.2.3"); null if missing.</summary>
     public static string ReadBuildInfo(string file, string key)
@@ -183,18 +211,21 @@ internal static class GameInstall
             string ue4ssVersion = ReadBuildInfo(Path.Combine(packagedMod, "Scripts", "buildinfo.lua"), "ue4ss") ?? "?";
 
             string bin = BinDir(game);
-            InstallUE4SS(packageBin, bin, ue4ssVersion, request.ReplaceOtherUE4SS);
+            // ue4ss\Mods, or Win64\Mods when the user keeps another UE4SS 3 build
+            string modsDir = InstallUE4SS(package, game, ue4ssVersion, request.ReplaceOtherUE4SS);
+            string modDir = Path.Combine(modsDir, ModFolderName);
 
             Log.Info(Strings.Get("installing_mod", version));
-            InstallModFolder(packagedMod, ModDir(game));
+            MoveOldModFolder(game, modDir);
+            InstallModFolder(packagedMod, modDir);
             string phonon = Path.Combine(packageBin, "phonon.dll");
             if (File.Exists(phonon))
                 CopyFile(phonon, Path.Combine(bin, "phonon.dll"));
 
-            Configure(packageBin, bin);
-            CopySelf(ModDir(game));
+            Configure(modsDir);
+            CopySelf(modDir);
             if (request.WriteRegistry)
-                UninstallEntry.Write(game, version);
+                UninstallEntry.Write(game, version, modDir);
             return version;
         }
         finally
@@ -209,8 +240,7 @@ internal static class GameInstall
         if (string.IsNullOrEmpty(game) || !Path.IsPathRooted(game))
             throw new InstallerException(Strings.Get("not_game_folder", game), 2);
 
-        string modDir = ModDir(game);
-        if (!IsGameFolder(game) && !Directory.Exists(modDir))
+        if (!IsGameFolder(game) && !Directory.Exists(ModDir(game)) && !Directory.Exists(LegacyModDir(game)))
         {
             // The game was moved or removed; only the entry under Installed apps is left.
             Log.Info(Strings.Get("nothing_installed", game));
@@ -224,23 +254,29 @@ internal static class GameInstall
 
         string bin = BinDir(game);
         Log.Info(Strings.Get("removing", "OP1 Access"));
-        DeleteDirectory(modDir);
+        // UE4SS 4's place and UE4SS 3's
+        foreach (string mods in new[] { ModsDir(game), LegacyModsDir(game) })
+        {
+            DeleteDirectory(Path.Combine(mods, ModFolderName));
+            string modsTxt = Path.Combine(mods, "mods.txt");
+            if (File.Exists(modsTxt))
+                WriteKeepingBom(modsTxt, SetModsTxtEntry(ReadKeepingBom(modsTxt, out bool bom), null), bom);
+        }
         DeleteFile(Path.Combine(bin, "phonon.dll"));
-        string modsTxt = Path.Combine(ModsDir(game), "mods.txt");
-        if (File.Exists(modsTxt))
-            WriteKeepingBom(modsTxt, SetModsTxtEntry(ReadKeepingBom(modsTxt, out bool bom), null), bom);
 
         if (removeUE4SS)
         {
             Log.Info(Strings.Get("removing", "UE4SS"));
-            foreach (string file in UE4SSCoreFiles.Concat(new[] { UE4SSSettings, "UE4SS.log" }))
-                DeleteFile(Path.Combine(bin, file));
-            string mods = ModsDir(game);
-            foreach (string stock in UE4SSStockMods)
-                DeleteDirectory(Path.Combine(mods, stock));
-            DeleteFile(modsTxt);
-            if (Directory.Exists(mods) && !Directory.EnumerateFileSystemEntries(mods).Any())
-                DeleteDirectory(mods);
+            DeleteFile(Path.Combine(bin, UE4SSProxy));
+            string ue4ss = UE4SSDir(game);
+            foreach (string file in new[] { UE4SSCore, UE4SSSettings }.Concat(UE4SSExtraFiles))
+                DeleteFile(Path.Combine(ue4ss, file));
+            foreach (string dir in UE4SSExtraDirs)
+                DeleteDirectory(Path.Combine(ue4ss, dir));
+            RemoveStockMods(ModsDir(game));
+            if (Directory.Exists(ue4ss) && !Directory.EnumerateFileSystemEntries(ue4ss).Any())
+                DeleteDirectory(ue4ss);
+            RemoveLegacyUE4SS(game);
         }
 
         if (writeRegistry)
@@ -357,48 +393,66 @@ internal static class GameInstall
         }
     }
 
-    private static void InstallUE4SS(string packageBin, string bin, string packagedVersion, Func<string, bool> replaceOther)
+    /// <summary>
+    /// Puts the package's UE4SS 4 in place (dwmapi.dll in Win64, the rest in Win64\ue4ss) and returns
+    /// the Mods folder the mod belongs in. UE4SS 3.0.1 -- what earlier packages brought, all of it in
+    /// Win64 -- is replaced and cleared away. Another UE4SS build stays if the user says so; then the
+    /// mod goes to that build's Mods folder.
+    /// </summary>
+    private static string InstallUE4SS(string package, string game, string packagedVersion, Func<string, bool> replaceOther)
     {
-        if (!File.Exists(Path.Combine(packageBin, "UE4SS.dll")))
+        string bin = BinDir(game);
+        string ue4ss = UE4SSDir(game);
+        string packageBin = BinDir(package);
+        string packageUE4SS = UE4SSDir(package);
+        bool current = File.Exists(Path.Combine(bin, UE4SSProxy)) && File.Exists(Path.Combine(ue4ss, UE4SSCore));
+        bool legacy = File.Exists(Path.Combine(bin, UE4SSCore));
+        if (!File.Exists(Path.Combine(packageUE4SS, UE4SSCore)) || !File.Exists(Path.Combine(packageBin, UE4SSProxy)))
         {
             Log.Detail("The package has no UE4SS");
-            return;
+            return legacy && !current ? LegacyModsDir(game) : ModsDir(game);
         }
 
-        bool installed = UE4SSCoreFiles.All(file => File.Exists(Path.Combine(bin, file)));
-        bool same = installed && UE4SSCoreFiles.All(file => SameContent(Path.Combine(packageBin, file), Path.Combine(bin, file)));
-        if (installed && !same)
+        bool same = current && SameContent(Path.Combine(packageBin, UE4SSProxy), Path.Combine(bin, UE4SSProxy))
+            && SameContent(Path.Combine(packageUE4SS, UE4SSCore), Path.Combine(ue4ss, UE4SSCore));
+        bool ours301 = !current && legacy && Sha256(Path.Combine(bin, UE4SSCore)) == UE4SS301CoreSha256;
+        if ((current && !same) || (!current && legacy && !ours301))
         {
             // Another build (an experimental one deadlocked the game on NPC dialogue).
             if (replaceOther == null || !replaceOther(packagedVersion))
             {
                 Log.Info(Strings.Get("keeping_ue4ss"));
-                return;
+                return current ? ModsDir(game) : LegacyModsDir(game);
             }
-
-            Log.Info(Strings.Get("installing_ue4ss", packagedVersion));
-            foreach (string file in UE4SSCoreFiles)
-                CopyFile(Path.Combine(packageBin, file), Path.Combine(bin, file));
-            return;
         }
 
         if (same)
-            Log.Info(Strings.Get("ue4ss_present", packagedVersion));
-        else
-            Log.Info(Strings.Get("installing_ue4ss", packagedVersion));
-
-        foreach (string file in UE4SSCoreFiles)
         {
-            if (!same)
-                CopyFile(Path.Combine(packageBin, file), Path.Combine(bin, file));
+            Log.Info(Strings.Get("ue4ss_present", packagedVersion));
+        }
+        else
+        {
+            Log.Info(Strings.Get("installing_ue4ss", packagedVersion));
+            Directory.CreateDirectory(ue4ss);
+            CopyFile(Path.Combine(packageUE4SS, UE4SSCore), Path.Combine(ue4ss, UE4SSCore));
+            CopyFile(Path.Combine(packageBin, UE4SSProxy), Path.Combine(bin, UE4SSProxy));
         }
 
-        // Settings, mods.txt and UE4SS's own mods only where missing: the user's stay as they are.
-        string settings = Path.Combine(bin, UE4SSSettings);
-        if (!File.Exists(settings) && File.Exists(Path.Combine(packageBin, UE4SSSettings)))
-            CopyFile(Path.Combine(packageBin, UE4SSSettings), settings);
-        string packagedMods = Path.Combine(packageBin, "Mods");
-        string mods = Path.Combine(bin, "Mods");
+        // The rest of UE4SS only where missing: the user's settings, mods.txt and mods stay as they are.
+        foreach (string file in Directory.GetFiles(packageUE4SS))
+        {
+            string target = Path.Combine(ue4ss, Path.GetFileName(file));
+            if (!File.Exists(target))
+                CopyFile(file, target);
+        }
+        foreach (string dir in Directory.GetDirectories(packageUE4SS))
+        {
+            string name = Path.GetFileName(dir);
+            if (!string.Equals(name, "Mods", StringComparison.OrdinalIgnoreCase) && !Directory.Exists(Path.Combine(ue4ss, name)))
+                CopyDirectory(dir, Path.Combine(ue4ss, name));
+        }
+        string packagedMods = Path.Combine(packageUE4SS, "Mods");
+        string mods = ModsDir(game);
         Directory.CreateDirectory(mods);
         foreach (string dir in Directory.GetDirectories(packagedMods))
         {
@@ -408,6 +462,73 @@ internal static class GameInstall
         }
         if (!File.Exists(Path.Combine(mods, "mods.txt")) && File.Exists(Path.Combine(packagedMods, "mods.txt")))
             CopyFile(Path.Combine(packagedMods, "mods.txt"), Path.Combine(mods, "mods.txt"));
+
+        if (legacy)
+            RemoveLegacyUE4SS(game);
+        return mods;
+    }
+
+    /// <summary>
+    /// UE4SS 3's files in Win64: its core, settings and log, its own mods and mods.txt. Mods of others
+    /// in Win64\Mods stay (UE4SS 4 no longer loads them from there).
+    /// </summary>
+    private static void RemoveLegacyUE4SS(string game)
+    {
+        string bin = BinDir(game);
+        string legacyMods = LegacyModsDir(game);
+        bool any = new[] { UE4SSCore, UE4SSSettings, "UE4SS.log" }.Any(file => File.Exists(Path.Combine(bin, file)))
+            || UE4SSStockMods.Any(stock => Directory.Exists(Path.Combine(legacyMods, stock)));
+        if (!any)
+            return;
+        Log.Info(Strings.Get("removing_old_ue4ss"));
+        foreach (string file in new[] { UE4SSCore, UE4SSSettings, "UE4SS.log" })
+            DeleteFile(Path.Combine(bin, file));
+        RemoveStockMods(LegacyModsDir(game));
+    }
+
+    /// <summary>UE4SS's own mods and mods.txt in a Mods folder, and the folder once it is empty.</summary>
+    private static void RemoveStockMods(string mods)
+    {
+        if (!Directory.Exists(mods))
+            return;
+        foreach (string stock in UE4SSStockMods)
+            DeleteDirectory(Path.Combine(mods, stock));
+        string modsTxt = Path.Combine(mods, "mods.txt");
+        bool othersLeft = Directory.GetDirectories(mods).Any(dir =>
+            !string.Equals(Path.GetFileName(dir), ModFolderName, StringComparison.OrdinalIgnoreCase));
+        if (!othersLeft)
+            DeleteFile(modsTxt);
+        if (!Directory.EnumerateFileSystemEntries(mods).Any())
+            DeleteDirectory(mods);
+    }
+
+    /// <summary>
+    /// An installation for UE4SS 3 (Win64\Mods\OP1Access) moves to the mod's new folder, the user's
+    /// sounds with it (InstallModFolder keeps them), and leaves its line in the old mods.txt.
+    /// </summary>
+    private static void MoveOldModFolder(string game, string modDir)
+    {
+        string old = LegacyModDir(game);
+        if (!Directory.Exists(old) || string.Equals(Path.GetFullPath(old).TrimEnd('\\'), Path.GetFullPath(modDir).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+            return;
+        if (Directory.Exists(modDir))
+        {
+            DeleteDirectory(old);
+        }
+        else
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(modDir));
+            Retry(() => Directory.Move(old, modDir));
+            Log.Detail($"Moved {old} to {modDir}");
+        }
+
+        string legacyMods = LegacyModsDir(game);
+        string legacyTxt = Path.Combine(legacyMods, "mods.txt");
+        if (File.Exists(legacyTxt))
+            WriteKeepingBom(legacyTxt, SetModsTxtEntry(ReadKeepingBom(legacyTxt, out bool bom), null), bom);
+        if (Directory.Exists(legacyMods) && !Directory.GetDirectories(legacyMods).Any()
+            && Directory.GetFiles(legacyMods).All(f => string.Equals(Path.GetFileName(f), "mods.txt", StringComparison.OrdinalIgnoreCase)))
+            DeleteDirectory(legacyMods);
     }
 
     /// <summary>
@@ -494,10 +615,11 @@ internal static class GameInstall
         return result;
     }
 
-    private static void Configure(string packageBin, string bin)
+    /// <summary>UE4SS's settings (next to its Mods folder: Win64\ue4ss, or Win64 for UE4SS 3) and our line in mods.txt.</summary>
+    private static void Configure(string modsDir)
     {
         Log.Info(Strings.Get("config"));
-        string settings = Path.Combine(bin, UE4SSSettings);
+        string settings = Path.Combine(Directory.GetParent(modsDir).FullName, UE4SSSettings);
         if (File.Exists(settings))
         {
             string text = ReadKeepingBom(settings, out bool bom);
@@ -509,7 +631,7 @@ internal static class GameInstall
             }
         }
 
-        string modsTxt = Path.Combine(bin, "Mods", "mods.txt");
+        string modsTxt = Path.Combine(modsDir, "mods.txt");
         bool modsBom = false;
         string modsText = File.Exists(modsTxt) ? ReadKeepingBom(modsTxt, out modsBom) : string.Empty;
         string modsPatched = SetModsTxtEntry(modsText, ModsTxtEntry);

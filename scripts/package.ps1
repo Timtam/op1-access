@@ -6,10 +6,12 @@
 .DESCRIPTION
   The ZIP mirrors the game folder (the one with Octopath_Traveler.exe): extracted there, it is a
   complete installation. Everything goes to Octopath_Traveler\Binaries\Win64:
-  - UE4SS 3.0.1 as released (dwmapi.dll, UE4SS.dll, its mods), with GuiConsoleEnabled = 0 in
-    UE4SS-settings.ini and "OP1Access : 1" in Mods\mods.txt,
+  - UE4SS 4.0.0 as released: its proxy dwmapi.dll there, the rest in ue4ss\ (UE4SS.dll, its
+    settings, its mods), with GuiConsoleEnabled = 0 in ue4ss\UE4SS-settings.ini, and in
+    ue4ss\Mods\mods.txt UE4SS's own mods off (consoles, cheat manager, BP mod loader, key
+    binds: nothing the mod needs, and less running in the game) and "OP1Access : 1",
   - phonon.dll (Steam Audio) next to the game EXE, where the shim's dependency resolves,
-  - Mods\OP1Access: the Lua mod, the shim, buildinfo.lua (version, update source, UE4SS
+  - ue4ss\Mods\OP1Access: the Lua mod, the shim, buildinfo.lua (version, update source, UE4SS
     version), the sounds, the installer, a README and the licenses.
   The installer installs from the same ZIP. Run scripts\build-release.ps1 first (or build the shim
   with build-shim.cmd --no-deploy and the installer yourself).
@@ -37,7 +39,7 @@ $propsText = [System.IO.File]::ReadAllText((Join-Path $root 'Directory.Build.pro
 $versionMatch = [regex]::Match($propsText, '<ModVersion>\s*([^<\s]+)\s*</ModVersion>')
 if (-not $versionMatch.Success) { throw 'No <ModVersion> in Directory.Build.props' }
 $version = $versionMatch.Groups[1].Value
-$ue4ssVersion = '3.0.1'
+$ue4ssVersion = '4.0.0'
 
 $shim = Join-Path $root 'build\shim\OP1AccessShim.dll'
 $installer = Join-Path $root "installer\OP1AccessInstaller\bin\$Configuration\net48\OP1AccessInstaller.exe"
@@ -68,7 +70,7 @@ Get-ChildItem $Output -Filter 'OP1Access-*.zip' -ErrorAction SilentlyContinue | 
 $bin = Join-Path $stage 'Octopath_Traveler\Binaries\Win64'
 New-Item -ItemType Directory -Force -Path $bin | Out-Null
 
-# UE4SS as released, without its README and changelog.
+# UE4SS as released (dwmapi.dll and the ue4ss folder), without a README or changelog.
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $ue4ssDir = Join-Path $Output 'ue4ss'
 if (Test-Path $ue4ssDir) { Remove-Item -Recurse -Force $ue4ssDir }
@@ -80,17 +82,20 @@ foreach ($item in Get-ChildItem $ue4ssDir) {
 Remove-Item -Recurse -Force $ue4ssDir
 
 # The GUI console crashed the game at start on some systems (and takes the focus).
-$settings = Join-Path $bin 'UE4SS-settings.ini'
+$settings = Join-Path $bin 'ue4ss\UE4SS-settings.ini'
 $text = [System.IO.File]::ReadAllText($settings)
 $patched = [regex]::Replace($text, '(?m)^(\s*GuiConsoleEnabled\s*=\s*)\d+', '${1}0')
 if ($patched -eq $text -and $text -notmatch '(?m)^\s*GuiConsoleEnabled\s*=\s*0') { throw 'GuiConsoleEnabled not found in UE4SS-settings.ini' }
 [System.IO.File]::WriteAllText($settings, $patched, $utf8)
 
-# mods.txt keeps its byte order mark; the mod's line goes last, after the built-in Keybinds.
-$modsTxt = Join-Path $bin 'Mods\mods.txt'
+# mods.txt keeps its byte order mark; UE4SS's own mods are off; the mod's line goes last, after
+# the built-in Keybinds.
+$modsTxt = Join-Path $bin 'ue4ss\Mods\mods.txt'
 $bytes = [System.IO.File]::ReadAllBytes($modsTxt)
 $bom = $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
 $modsText = $utf8.GetString($bytes, $(if ($bom) { 3 } else { 0 }), $bytes.Length - $(if ($bom) { 3 } else { 0 }))
+$stockMods = 'CheatManagerEnablerMod|ConsoleCommandsMod|ConsoleEnablerMod|SplitScreenMod|LineTraceMod|BPML_GenericFunctions|BPModLoaderMod|Keybinds|ActorDumperMod|jsbLuaProfilerMod'
+$modsText = [regex]::Replace($modsText, "(?m)^(\s*(?:$stockMods)\s*:\s*)1", '${1}0')
 if ($modsText -notmatch '(?m)^\s*OP1Access\s*:') {
     $modsText = $modsText.TrimEnd() + "`r`nOP1Access : 1`r`n"
 }
@@ -99,7 +104,7 @@ if ($modsText -notmatch '(?m)^\s*OP1Access\s*:') {
 Copy-Item -LiteralPath $phonon -Destination $bin
 
 # The mod.
-$mod = Join-Path $bin 'Mods\OP1Access'
+$mod = Join-Path $bin 'ue4ss\Mods\OP1Access'
 $source = Join-Path $root 'scripts\Mods\OP1Access'
 New-Item -ItemType Directory -Force -Path (Join-Path $mod 'Scripts') | Out-Null
 Copy-Item -LiteralPath (Join-Path $source 'enabled.txt') -Destination $mod

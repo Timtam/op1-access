@@ -11,9 +11,9 @@ internal static class UninstallEntry
     private const string KeyPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\OP1Access";
     private const string GameFolderValue = "GameFolder";
 
-    public static void Write(string gameDir, string version)
+    public static void Write(string gameDir, string version, string modDir = null)
     {
-        string modDir = GameInstall.ModDir(gameDir);
+        modDir ??= GameInstall.ModDir(gameDir);
         string exe = Path.Combine(modDir, Program.ExeName);
         using RegistryKey key = Registry.CurrentUser.CreateSubKey(KeyPath);
         key.SetValue("DisplayName", "OP1 Access (Octopath Traveler screen reader mod)");

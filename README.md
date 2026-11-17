@@ -32,8 +32,11 @@ use headphones: its sounds come from the direction of what they stand for.
    choose *Choose folder* and select `Octopath_Traveler.exe` in the game folder. The
    window shows the installed and the latest version.
 4. Choose *Install*. The installer downloads the latest release and installs
-   UE4SS 3.0.1 (unless it is there already) and the mod. It also turns off
-   UE4SS's console window, which would take the focus away from the game.
+   UE4SS 4.0.0 (unless it is there already) and the mod. It also turns off
+   UE4SS's console window, which would take the focus away from the game, and
+   UE4SS's own mods (consoles, cheat manager, Blueprint mod loader, key binds),
+   which OP1 Access doesn't need. An installation with UE4SS 3.0.1 from an
+   earlier version is moved over; sounds you put into `Assets` stay.
 5. Start the game with your screen reader running. You hear
    **“OP1 Access loaded”**. From then on the mod speaks the game's text language
    (“OP1 Access geladen” when the game is set to German).
@@ -50,12 +53,15 @@ into the mod folder, which the mod uses for updates.
    `Octopath_Traveler.exe`.
 2. Download `OP1Access-<version>.zip` from the
    [latest release](../../releases/latest) and extract it into the game folder.
-   Everything lands in `Octopath_Traveler\Binaries\Win64`: UE4SS 3.0.1
-   (`dwmapi.dll`, `UE4SS.dll`, `UE4SS-settings.ini` and the `Mods` folder),
-   `phonon.dll` and the mod in `Mods\OP1Access`.
-   If UE4SS 3.0.1 is installed already, `Mods\OP1Access` and `phonon.dll` are
-   enough; then add the line `OP1Access : 1` to `Mods\mods.txt` and set
-   `GuiConsoleEnabled = 0` in `UE4SS-settings.ini`.
+   Everything lands in `Octopath_Traveler\Binaries\Win64`: UE4SS 4.0.0
+   (`dwmapi.dll` there, and the `ue4ss` folder with `UE4SS.dll`,
+   `UE4SS-settings.ini` and `Mods`), `phonon.dll`, and the mod in
+   `ue4ss\Mods\OP1Access`.
+   If UE4SS 4 is installed already, `ue4ss\Mods\OP1Access` and `phonon.dll` are
+   enough; then add the line `OP1Access : 1` to `ue4ss\Mods\mods.txt` and set
+   `GuiConsoleEnabled = 0` in `ue4ss\UE4SS-settings.ini`. An older UE4SS 3 has
+   `UE4SS.dll` right in `Win64`: remove it first (`UE4SS.dll`,
+   `UE4SS-settings.ini` and the `Mods` folder there), or let the installer do it.
 3. Start the game with your screen reader running.
 
 See `docs/install-state.md` for the exact deployed layout.
@@ -66,7 +72,7 @@ When the game starts, the mod asks GitHub whether a newer version is out and
 tells you if there is one. **F5** checks again at any time. To install an
 update, press **F5 twice**: the mod closes the game (without saving), and the
 installer downloads and installs the new version and starts the game again.
-This needs `OP1AccessInstaller.exe` in `Mods\OP1Access`, where the installer and
+This needs `OP1AccessInstaller.exe` in `ue4ss\Mods\OP1Access`, where the installer and
 the ZIP put it; without it, F5 opens the download page instead. You can also run
 the installer again at any time; it updates the mod and itself. The check sends
 one request to the GitHub API and nothing else.
@@ -78,8 +84,8 @@ start the installer and choose *Uninstall*. You are asked whether to remove
 UE4SS as well; keep it if you use other UE4SS mods for Octopath Traveler.
 
 By hand: in `Octopath_Traveler\Binaries\Win64`, delete the folder
-`Mods\OP1Access` and `phonon.dll`. To remove UE4SS as well, delete
-`dwmapi.dll`, `UE4SS.dll`, `UE4SS-settings.ini` and the folder `Mods`.
+`ue4ss\Mods\OP1Access` and `phonon.dll`. To remove UE4SS as well, delete
+`dwmapi.dll` and the folder `ue4ss`.
 
 ## Keys
 
@@ -298,9 +304,9 @@ CMake and Ninja; Prism needs a C++23 compiler), Git, PowerShell 7, the
    ```
    pwsh scripts\fetch-deps.ps1
    ```
-2. Install UE4SS 3.0.1 into the game (the installer does it, or extract
-   `tools\UE4SS_v3.0.1.zip` into `Octopath_Traveler\Binaries\Win64`) and add
-   `OP1Access : 1` to `Win64\Mods\mods.txt`.
+2. Install UE4SS 4.0.0 into the game (the installer does it, or extract
+   `tools\UE4SS_v4.0.0.zip` into `Octopath_Traveler\Binaries\Win64`) and add
+   `OP1Access : 1` to `Win64\ue4ss\Mods\mods.txt`.
 3. Build the shim and copy it into the game. The game must be closed:
    ```
    scripts\build-shim.cmd
@@ -311,7 +317,7 @@ CMake and Ninja; Prism needs a C++23 compiler), Git, PowerShell 7, the
 4. Copy the mod's folder into place; the build script does **not** deploy the Lua
    scripts, the translations or the sounds:
    ```
-   xcopy /E /I /Y scripts\Mods\OP1Access "…\Win64\Mods\OP1Access"
+   xcopy /E /I /Y scripts\Mods\OP1Access "…\Win64\ue4ss\Mods\OP1Access"
    ```
 
 A copy built like this has no `buildinfo.lua`, so it doesn't check for updates.
@@ -352,7 +358,7 @@ needs permission to push to it.
 
 ## Development notes
 
-- `UE4SS.log` in `Win64` has everything the mod says (`speak: …`) and what it saw:
+- `UE4SS.log` in `Win64\ue4ss` has everything the mod says (`speak: …`) and what it saw:
   `ACTIVE screen`, `RADAR`, `AREA`, `ROUTE`, `NAVWALK`, `BATTLE`, `DLG`, `FINDALL`
   and more. Setting `M.trace = true` in `main.lua` also logs every step of the polls,
   so after a crash the last line names the step that was running.

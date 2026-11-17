@@ -2,17 +2,19 @@
 
 `scripts/fetch-deps.ps1` fetches all of them into `tools\` at pinned versions and
 checks the downloads against their SHA-256. `scripts/package.ps1` puts their license
-texts into the release ZIP (`Mods/OP1Access/licenses/`) and lists them in
+texts into the release ZIP (`ue4ss/Mods/OP1Access/licenses/`) and lists them in
 `THIRD-PARTY-NOTICES.txt` (from `packaging/THIRD-PARTY-NOTICES.txt`).
 
 ## UE4SS
 
-- Source: https://github.com/UE4SS-RE/RE-UE4SS (release 3.0.1)
+- Source: https://github.com/UE4SS-RE/RE-UE4SS (release 4.0.0)
 - License: MIT
-- Use: the release ZIP and the installer ship the official UE4SS 3.0.1 files
-  (`dwmapi.dll`, `UE4SS.dll`, `UE4SS-settings.ini`, the `Mods` folder) unchanged,
-  except `GuiConsoleEnabled = 0` in the settings. The installer leaves an existing
-  UE4SS 3.0.1 in place. The mod's Lua scripts and `OP1AccessShim.dll` run inside it.
+- Use: the release ZIP and the installer ship the official UE4SS 4.0.0 files
+  (`dwmapi.dll`, the `ue4ss` folder with `UE4SS.dll`, `UE4SS-settings.ini` and
+  `Mods`) unchanged, except `GuiConsoleEnabled = 0` in the settings and UE4SS's own
+  mods switched off in `mods.txt`. The installer leaves an existing UE4SS 4.0.0 in
+  place and replaces UE4SS 3.0.1. The mod's Lua scripts and `OP1AccessShim.dll` run
+  inside it; the shim also compiles UE4SS's Lua 5.4.7 sources (`deps/first/LuaRaw`).
 
 ## Prism
 
