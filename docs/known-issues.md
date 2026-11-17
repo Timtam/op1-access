@@ -457,11 +457,27 @@ Open:
   thread (`PUMP … fallback=N`). It is not armed before that, because more Lua on the game
   thread while the async thread uses the same Lua state is the very lock that broke.
   Checked against a mock (test_fallback.lua). Not yet seen in the game; whether the axis
-  event fires every frame there (also in menus) shows in the log. UE4SS v4.0.0
-  (2026-11-12) fixes callbacks run on the wrong thread (#1170), a shared-lock fault
+  event fires every frame there (also in menus) shows in the log.
+- **UE4SS v4.0.0 tried (2026-11-17): it crashes with this mod as it is; back on 3.0.1.**
+  v4 (2026-11-12) fixes callbacks run on the wrong thread (#1170), a shared-lock fault
   (#1445) and random use-after-free crashes (#1271), and adds game-thread loops
-  (`LoopInGameThreadWithDelay`). Not tried with this mod yet; the last upgrade attempt
-  (experimental, December 2024) froze on NPC dialogue with the shim's talk hook.
+  (`LoopInGameThreadWithDelay`). It loaded the mod unchanged, talking no longer froze the
+  game (the December 2024 experimental did, with the shim's talk hook), and the radar was
+  back 0.45 s after a talk. But from the first minutes UE4SS logged
+  `[Lua::Registry::get_function_ref] Ref was not function` every one or two minutes, and
+  after 12 minutes, idle in the main menu, the game crashed
+  (crash-20261117-182723.dmp: an access violation in a Lua table lookup inside a hook
+  callback, with text bytes where a pointer belongs). The cause is in v4's source
+  (LuaMod.cpp, `process_delayed_actions`): `LoopAsync` and `ExecuteWithDelay` callbacks
+  run on UE4SS's async thread with no lock at all, on a Lua thread of the same state that
+  the game thread uses for hooks and `ExecuteInGameThread` work. So our two loops and the
+  game thread change the same Lua registry at once; the async thread doesn't even take
+  the lock the key binds take. v4 also hooks `KSUIManager:Open` natively and passes the
+  game's own C++ calls on: the HUD's kinds 22 (world map) and 28 (party chat available)
+  were said at the start and end of every talk. Moving to v4 would mean running the
+  pump loop, the polling loop and every `ExecuteWithDelay` through v4's game-thread
+  loops (`LoopInGameThreadWithDelay`, `ExecuteInGameThreadWithDelay`), falling back to
+  the old calls on 3.0.1, and leaving those two HUD kinds unsaid (or saying them once).
 - **Only the talk-hook install still runs off the game thread** (at start, every 2 s
   until armed): it looks up two UFunctions (StaticFindObject) and hands their addresses
   to the shim, no game function is called. Since 74be657 the character select's delayed
