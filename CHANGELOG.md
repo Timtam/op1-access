@@ -64,7 +64,9 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   objective, exit toward the objective, save point, traveler to recruit) and whether a
   hidden item was picked up already. A new marker is said when it comes up, for example
   when Scrutinize reveals a hidden item: "New marker: hidden item, right, 3872"; the radar
-  rings for it right away.
+  rings for it right away. A marker the game takes away leaves the list too, and a goal
+  is said when it goes ("Marker gone: objective", for example after the objective's
+  scene). Your selected target stays selected when another marker goes.
 - A walker: Backspace walks to the target over a computed route, also up and down narrow
   stairs and around people, opens doors on the way and frees itself when stuck. When
   someone blocks the only way, it says who ("Armer is in the way"). At a chest or a hidden

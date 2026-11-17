@@ -517,6 +517,18 @@ Open:
   adds them the same way), and a marker that comes up in another part of a level. Not
   said on purpose: what an area shows when you arrive, anything within 6 s of a teleport
   or level change, several icons changing at once.
+- **Gone markers: in a unit test only.** On the Maiya path (2026-11-17) the objective was
+  a story event's spot. A walk to the exit beside it crossed the spot, the scene played
+  (Tressa brings the pirates wine), and the game took the objective's icon off the
+  minimap. The marker list still had it, so the walker led to the empty spot and nothing
+  happened. Since this fix an icon that is gone in two checks in a row, or at once after
+  a scene, menu or battle, makes the marker list stale. The next navigator key rebuilds
+  it ("Targets changed" when the selected target was the one that went). An objective,
+  side story or traveler marker that goes is said ("Marker gone: objective"). Another
+  target selected stays selected, and a paused walk to it goes on. Checked against a
+  mock minimap (test_markergone.lua: the scene, a one-check flicker, two checks,
+  teleport, level change). Not yet heard in the game. Log lines `MARKER gone:` and `NAV
+  list refreshed (markers)`.
 - **A picked-up hidden item stays on the minimap.** Its "!" was still there a minute
   later, so the marker list keeps it, as "hidden item, collected" (the chest's open
   flag).

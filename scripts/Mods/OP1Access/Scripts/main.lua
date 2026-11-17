@@ -7642,30 +7642,41 @@ end
 -- and "save point, 16459", and the walk found no route (user report 2026-11-14). The
 -- minimap's icons follow a few seconds after the jump (2026-11-13: the headmaster's
 -- marker was there 4 s after it), so a list built within 4 s of a jump is stale too.
+-- Returns why the list is stale ("jump" or "markers"), or false.
 NV.list_stale = function()
     local j = M.jump_t
-    if j ~= nil and (NV.list_t or -1) < j + 4.0 then return true end
-    -- a new radar marker came up after the marker list was built (M.marker_watch)
+    if j ~= nil and (NV.list_t or -1) < j + 4.0 then return "jump" end
+    -- a radar marker came up or went away after the marker list was built (M.marker_watch)
     local c = NAV_CLASSES[NV.cat]
-    return (c and c.markers and M.marker_new_t ~= nil and (NV.list_t or -1) < M.marker_new_t) and true or false
+    if c and c.markers and M.marker_change_t ~= nil and (NV.list_t or -1) < M.marker_change_t then
+        return "markers"
+    end
+    return false
 end
 -- Rebuild a stale list. Returns true if its targets changed (then the first one is
--- selected), false if they're the same (the selection stays).
+-- selected), false if they're the same (the selection stays) -- or if the markers
+-- changed but the selected one is still there: it stays selected, and a walk to it goes
+-- ahead (a marker gone elsewhere in the list changes nothing for it). Not after a jump:
+-- the old part's icons follow a few seconds late, so one of them may still be listed.
 NV.list_refresh = function()
+    local why = NV.list_stale()
     local old = {}
     for _, t in ipairs(NV.list) do old[#old + 1] = tostring(NV.tkey(t)) end
     local sel = NV.list[NV.idx] and NV.tkey(NV.list[NV.idx])
     nav_build_list()
     local new = {}
     for _, t in ipairs(NV.list) do new[#new + 1] = tostring(NV.tkey(t)) end
-    table.sort(old); table.sort(new)
-    if table.concat(old, "|") == table.concat(new, "|") then
-        NV.idx = 0
+    NV.idx = 0
+    if sel ~= nil then
         for i, t in ipairs(NV.list) do if NV.tkey(t) == sel then NV.idx = i end end
-        return false
     end
+    table.sort(old); table.sort(new)
+    if table.concat(old, "|") == table.concat(new, "|") then return false end
+    local keep = why == "markers" and NV.idx > 0
+    log(string.format("NAV list refreshed (%s): %d -> %d targets%s", tostring(why), #old, #NV.list,
+        keep and ", the selected one stays" or ""))
+    if keep then return false end
     NV.idx = (#NV.list > 0) and 1 or 0
-    log(string.format("NAV list refreshed after a jump: %d -> %d targets", #old, #NV.list))
     return true
 end
 
@@ -11721,6 +11732,16 @@ M.MARKER_SKIP = { [0] = true, [2] = true, [3] = true, [4] = true, [8] = true, [9
 -- more icons went away at once (another part's icons coming in: 6 s of quiet) or three
 -- or more came at once; an icon seen before in this level.
 -- The navigator's marker list is rebuilt on its next use, so the new one is in it.
+-- GONE ICONS (2026-11-17, user: "the objective takes me here with the walker, but
+-- nothing happens"): on the Maiya path the objective was a story event's spot, the walk
+-- to the exit beside it crossed the spot, the scene played (Tressa and the pirates'
+-- wine), and the game took the objective's icon off the minimap. The navigator's list
+-- still had it, and the walker took you to the empty spot. Now an icon gone in two
+-- checks in a row, or at once after a pause (a scene, a menu, a battle: the watch
+-- doesn't run then, so it can't be a flicker between two checks), makes the marker list
+-- stale too, and a goal (objective, side story, traveler to recruit) is said: "Marker
+-- gone: objective". Not said while settling (as above: a teleport, another area, two or
+-- more icons gone at once).
 -- The minimap widget, kept as a checked handle (it is touched every 2 s by the watch).
 -- Found again only when it is gone; with `throttle`, at most every that many seconds
 -- (FindFirstOf walks the objects too).
@@ -11740,12 +11761,14 @@ M.get_radarmap = function(throttle)
     M.radarmap_h = rm and M.handle(rm) or nil
     return M.radarmap_h and rm or nil
 end
-M.MW = { seen = nil, area = nil, t = 0, pend = {} }
+M.MW = { seen = nil, area = nil, t = 0, pend = {}, gpend = {}, gonekeys = {} }
 M.MW_KINDS = { [5] = true, [6] = true, [7] = true, [14] = true, [17] = true }
+M.MW_GONE_SAY = { [6] = true, [7] = true, [17] = true }   -- (goals: "Marker gone: objective")
 M.marker_watch = function(px, py)
     local W = M.MW
     local now = os.clock()
     if now - W.t < 2.0 then return end
+    local gap = now - W.t   -- (well over 2 s: the watch didn't run -- a scene, a menu, a battle)
     W.t = now
     local rm = M.get_radarmap(30)
     if not rm then return end
@@ -11767,8 +11790,9 @@ M.marker_watch = function(px, py)
             if not vis or not x then return end
             local key = t .. "|" .. ((reg ~= "" and reg ~= "None") and reg
                 or string.format("%d,%d", math.floor(x / 100), math.floor(y / 100)))
-            cur[key] = true
-            list[#list + 1] = { key = key, type = t, x = x, y = y }
+            local ic = { key = key, type = t, x = x, y = y }
+            cur[key] = ic
+            list[#list + 1] = ic
         end)
     end)
     -- one log line whenever the minimap's icons change (type x count, "h" = not shown):
@@ -11784,6 +11808,7 @@ M.marker_watch = function(px, py)
     local lvl = M.level_id and M.level_id() or nil
     if lvl and W.lvl and lvl ~= W.lvl then   -- another level: start over, 6 s of quiet
         W.seen, W.settle_until = nil, now + 6.0
+        W.prev, W.gpend, W.gonekeys = nil, {}, {}   -- (the last level's icons aren't "gone")
     end
     local settle = W.seen == nil or W.area ~= M.area_said or (M.jump_t and now - M.jump_t < 6.0)
         or now < (W.settle_until or 0)
@@ -11795,6 +11820,35 @@ M.marker_watch = function(px, py)
             settle = true
             log("MARKER " .. gone .. " icons gone at once: another part's icons, not said")
         end
+    end
+    -- icons that went away: still gone a check later, or gone over a pause
+    local gone, gpend = {}, {}
+    for k, ic in pairs(W.gpend) do
+        if not cur[k] then gone[#gone + 1] = ic end   -- (back again: a flicker)
+    end
+    for k, ic in pairs(W.prev or {}) do
+        if not cur[k] then
+            if gap > 3.5 then gone[#gone + 1] = ic else gpend[k] = ic end
+        end
+    end
+    W.gpend = gpend
+    -- one that went and came back (seen before: not said as new) is missing from a list
+    -- rebuilt in between -- stale again
+    for k in pairs(W.gonekeys) do
+        if cur[k] then
+            W.gonekeys[k] = nil
+            M.marker_change_t = now
+            log("MARKER back: " .. k)
+        end
+    end
+    if #gone > 0 then
+        M.marker_change_t = now   -- the navigator's marker list is stale now (NV.list_stale)
+        local keys = {}
+        for _, ic in ipairs(gone) do keys[#keys + 1] = ic.key; W.gonekeys[ic.key] = true end
+        table.sort(keys)
+        local say = not settle and #gone == 1 and M.MW_GONE_SAY[gone[1].type]
+        log("MARKER gone: " .. table.concat(keys, " ") .. (say and "" or " (not said)"))
+        if say then speak(trf("Marker gone: %s", tr(M.MARKER_KIND[gone[1].type] or "marker")), false) end
     end
     if settle then
         W.seen = W.seen or {}
@@ -11837,7 +11891,7 @@ M.marker_watch = function(px, py)
                     M.nav_dir and M.nav_dir(dx, dy) or "", math.floor(math.sqrt(dx * dx + dy * dy) + 0.5))
                 log("MARKER new " .. ic.key)
                 speak(s, false)
-                M.marker_new_t = now   -- the navigator's marker list is stale now (NV.list_stale)
+                M.marker_change_t = now   -- the navigator's marker list is stale now (NV.list_stale)
             end
         end
     end
