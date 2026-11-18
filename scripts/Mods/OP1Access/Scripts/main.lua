@@ -1446,9 +1446,30 @@ end
 -- dressing (NPCInfoData, event arrays and trigger collision all read identical),
 -- so talkability is LEARNED: when dialogue text arrives via the native talk
 -- hook, the nearest NPC gets marked. The radar pings only learned NPCs.
-local npc_learned = {}        -- actor address -> record {learned?, name, namedone} (this session)
-local npc_talking = nil       -- {addr,cat,t}: the EXACT actor whose Talk just fired
+local npc_learned = {}        -- actor address -> record {lbl, learned?, name, sname, sdone} (this session)
+local npc_talking = nil       -- {addr,t,named}: the EXACT actor whose Talk just fired
 local learn_talk_npc          -- assigned later (needs the overworld helpers)
+-- The record of one NPC actor. npc_learned is keyed by ADDRESS and lives all session:
+-- an actor of the next map at a reused address inherited the old one's name and
+-- talkability. So the record keeps the NPC's placement label (NPCLabel, unique per map
+-- spot: NPC_TMntS_N014C) and starts over when the actor at that address has another.
+M.npc_rec = function(o, addr)
+    local lbl
+    pcall(function() lbl = o.NPCLabel:ToString() end)
+    if lbl == "" or lbl == "None" then lbl = nil end
+    local rec = npc_learned[addr]
+    if rec == true then rec = { learned = true, keep = true } end   -- (the old form)
+    if type(rec) ~= "table" or (lbl and rec.lbl and rec.lbl ~= lbl) then
+        rec = { lbl = lbl }
+        npc_learned[addr] = rec
+    elseif npc_learned[addr] ~= rec then
+        rec.lbl = rec.lbl or lbl
+        npc_learned[addr] = rec
+    elseif lbl and not rec.lbl then
+        rec.lbl = lbl
+    end
+    return rec
+end
 
 -- Precise talkable detection: hook the NPC Talk function. It takes no params, so
 -- a Lua RegisterHook is safe (no struct marshalling). The context object IS the
@@ -1467,8 +1488,7 @@ local function on_talk_hook(ctx)
         local full = "?"
         pcall(function() full = o:GetFullName() end)
         npc_talking = { addr = addr, t = os.clock() }
-        local rec = npc_learned[addr]
-        if type(rec) ~= "table" then rec = {} ; npc_learned[addr] = rec end
+        local rec = M.npc_rec(o, addr)
         rec.learned = true; rec.keep = true
         log(string.format("TALKHOOK class=%s addr=%X full=%s", cls, addr, full))
     end)
@@ -7005,9 +7025,9 @@ end
 local function npc_interesting(o)
     local addr = nil
     pcall(function() addr = o:GetAddress() end)
-    local rec = addr and npc_learned[addr]
+    local rec = addr and M.npc_rec(o, addr)   -- (a reused address starts over)
     local learned = (rec == true) or (type(rec) == "table" and rec.learned) or false
-    local lname = (type(rec) == "table" and rec.name) or nil
+    local lname = (type(rec) == "table" and (rec.sname or rec.name)) or nil
 
     local uniq, label, ptext = nil, "", ""
     pcall(function() uniq = o.NPCUniqID end)
@@ -7054,16 +7074,24 @@ learn_talk_npc = function(ox, oy)
         return
     end
     local now = os.clock()
-    -- precise path: the Talk hook already pinned the EXACT actor -- just attach
-    -- the resolved speaker name to it, no proximity guessing
+    -- precise path: the Talk hook already pinned the EXACT actor, no proximity
+    -- guessing. Its NAME comes from the talk's FIRST line only, right after the hook
+    -- (0.07 s in the logs). For 30 s every line used to rename it: a guard's "Urgh ..."
+    -- 18 s after a villager's Talk -- through the path-action menu, no Talk of its own --
+    -- listed the villager as "Wachmann", and the walker went to him (user 2026-11-18).
+    -- The later lines still count as this talk (no nearest-NPC guess for them).
     if npc_talking and (now - npc_talking.t) < 30 then
-        local nm = nil
-        pcall(function() if shim and shim.LastSpeakerName then nm = shim.LastSpeakerName() end end)
-        if nm and M.TRAVELER[nm] then nm = nil end   -- our own traveler spoke, not the NPC
         local rec = npc_learned[npc_talking.addr]
         if type(rec) ~= "table" then rec = {}; npc_learned[npc_talking.addr] = rec end
-        rec.learned = true; rec.keep = true; rec.name = nm or rec.name
-        log("LEARNED (talk hook) name=" .. tostring(rec.name))
+        rec.learned = true; rec.keep = true
+        if not npc_talking.named and now - npc_talking.t < 3.0 then
+            npc_talking.named = true
+            local nm = nil
+            pcall(function() if shim and shim.LastSpeakerName then nm = shim.LastSpeakerName() end end)
+            if nm and M.TRAVELER[nm] then nm = nil end   -- our own traveler spoke, not the NPC
+            rec.name = nm or rec.name
+            log("LEARNED (talk hook) name=" .. tostring(rec.name))
+        end
         return
     end
     if not ox then
@@ -7099,11 +7127,12 @@ learn_talk_npc = function(ox, oy)
         -- a line spoken by one of OUR travelers (Cyrus' path-action bubbles) must not
         -- name the nearest NPC "Cyrus" -- learn the NPC, leave its name to the static data
         if nm and M.TRAVELER[nm] then nm = nil end
-        local cur = npc_learned[addr]
-        if addr and not (type(cur) == "table" and cur.learned and cur.name) then
+        local cur = addr and M.npc_rec(best, addr)
+        if cur and not (cur.learned and cur.name) then
             -- real dialogue OVERRIDES any cached probe verdict, and carries the
-            -- speaker's resolved display name (from the talk hook)
-            npc_learned[addr] = { learned = true, keep = true, name = nm, dbg = "learned" }
+            -- speaker's resolved display name (from the talk hook; the static name,
+            -- where there is one, still comes first: NV.resolve_name)
+            cur.learned, cur.keep, cur.name, cur.dbg = true, true, nm, "learned"
             log(string.format("LEARNED talkable npc, d=%.0f name=%s", bd, tostring(nm)))
         end
     end
@@ -7465,22 +7494,25 @@ local NV = {
 -- runs it through GetGameTextString. Cheap (same as a speaker-name resolve), but
 -- still cached per actor in npc_learned and called per-focus (not a list sweep) so
 -- a stall can never accumulate. pcall-wrapped; a field on NV (main chunk is at the
--- 200-local cap). namedone marks "tried, none" so we don't re-probe blanks.
+-- 200-local cap). sdone marks "tried" so we don't re-probe blanks.
+-- The STATIC name comes first: it is the game's own speaker name for that person. The
+-- name learned in a talk only stands in where there is none (or only "???"); a learned
+-- name went to the wrong person once (learn_talk_npc, 2026-11-18) and, kept first, it
+-- stuck.
 NV.resolve_name = function(o)
-    if not (o and shim and shim.NpcName) then return nil end
+    if not o then return nil end
     local addr = nil
     pcall(function() addr = o:GetAddress() end)
     if not addr then return nil end
-    local rec = npc_learned[addr]
-    if type(rec) == "table" and rec.name then return rec.name end
-    if type(rec) == "table" and rec.namedone then return nil end
-    local nm = nil
-    pcall(function() nm = shim.NpcName(addr) end)
-    local r = (type(rec) == "table") and rec or {}
-    r.name = nm or r.name
-    r.namedone = true
-    npc_learned[addr] = r
-    return r.name
+    local rec = M.npc_rec(o, addr)
+    if not rec.sdone and shim and shim.NpcName then
+        local nm = nil
+        pcall(function() nm = shim.NpcName(addr) end)
+        if nm == "" then nm = nil end
+        rec.sname, rec.sdone = nm, true
+    end
+    if rec.sname and rec.sname ~= "???" then return rec.sname end
+    return rec.name or rec.sname
 end
 
 -- SHOPKEEPERS (2026-11-15, user report: the walk to the Wirtshaus in Atlasdam ended in
@@ -7974,15 +8006,11 @@ local function nav_announce(prefix)
     if not noted and rr and rr.ok and rr.viadoor and NV.bg_valid(key, px, py) then
         lvl = lvl .. ", " .. tr("behind a door")
     end
-    -- Name the focused NPC: first from the learned cache (talked-to NPCs), then
-    -- from STATIC data (NV.resolve_name -> placement label via GetGameTextString)
-    -- so names show up WITHOUT having to talk first. Per-focus only, cached.
+    -- Name the focused NPC from STATIC data (NV.resolve_name -> placement label via
+    -- GetGameTextString), so names show up WITHOUT having to talk first; the name
+    -- learned in a talk only where there is none. Per-focus only, cached.
     if t.cat == "npc" and not t.name and t.actor then
-        local a = nil
-        pcall(function() a = t.actor:GetAddress() end)
-        local r = a and npc_learned[a]
-        if type(r) == "table" and r.name then t.name = r.name
-        elseif NV.resolve_name then t.name = NV.resolve_name(t.actor) end
+        if NV.resolve_name then t.name = NV.resolve_name(t.actor) end
         -- no name: the save point's book is an NPC too (it was "npc 1 of 7: up left,
         -- 156" by the save point, 2026-11-14) -- its minimap marker names it
         if not t.name then

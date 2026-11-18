@@ -663,6 +663,19 @@ Open:
 
 ## Navigation
 
+- **People's names: in a unit test only.** The walker went to "the wrong people" (user,
+  2026-11-18): it went to the right one, under a wrong name. A villager (uniq 316,
+  CN_NP_MOS_000030) was listed as "Wachmann": its Talk hook fired at 10:16:34, and 18 s
+  later a defeated guard's "Urgh ..." came through the path-action menu with no Talk of
+  its own; learn_talk_npc pinned every speaker name on the last hooked NPC for 30 s, and
+  the learned name came before the static one (shim.NpcName, the game's own speaker name
+  from the placement TextLabel; the action prompt and the path-action hint had it right:
+  "Wege-Aktion, Dörfler"). Since then a talk names its NPC only from its first line
+  within 3 s of the hook, the static name comes first everywhere (the learned one only
+  without one, or for "???"), and a record keeps the NPC's NPCLabel and starts over when
+  another NPC reuses the address (npc_learned is keyed by address and lives all session:
+  a person of the next area could inherit a name and "talkable"). Not checked in the
+  game yet.
 - **A chest beyond a fence: in a unit test only.** In the Süd-Pflastersten-Kluft
   (2026-11-17) a chest 183 below the path lay beyond a fence, the ground sloping away
   behind it. The walker ran into the fence about 20 times, the same one-cell route each
