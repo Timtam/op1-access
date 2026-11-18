@@ -13,8 +13,10 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   (OneCore, SAPI) when none runs. Restarting the screen reader while the game runs is fine.
 - Money is said as a word in the game's language ("50 Blätter", "50 leaves"). The game only
   shows its own ⑳ sign, which screen readers can't read.
-- Keys the tutorials name as circled letters ("Drückt die Ⓞ-Taste", "Ⓙ drücken") are said
-  as plain letters ("O-Taste", "J").
+- Keys the game draws as key caps, in the tutorials and in the menus' footers, are said by
+  name: "Drückt die Ⓞ-Taste" as "O-Taste", "┣: Zurück" as "Rücktaste: Zurück", and so on
+  for the arrows, Shift, Ctrl, the number pad, F1 to F12, the mouse and gamepad buttons,
+  also with a German, Italian, Spanish or French keyboard.
 - The mod's own words follow the game's text language, also when you change it in the
   options: German and English for now ("Truhe 1 von 5", "chest 1 of 5"). More languages are
   a text file each (gettext .po, see docs/translations.md).
@@ -25,7 +27,8 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
 
 - Title screen, character select, save and load (also at save points), options and confirm
   dialogs.
-- Main menu: categories, the current objective (also with Q, at any time), inventory (tabs, items with count
+- Main menu: categories, the current objective (also with Q, in the field and in the menu's
+  list; in the menu's other screens Q stays the game's own key), inventory (tabs, items with count
   and description, whom an item is for), abilities (learning skills with costs, support skills),
   equipment (slots, items and what they would change), the tutorials and the
   Miscellaneous submenu (settings, tutorial, back to the title, quit). Back from a list, the
@@ -40,11 +43,14 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   there ("fast travel to Rippeltiden, then 2 areas"); Ctrl+Backspace again puts the
   cursor on that town, and Enter travels.
 - The game over menu.
-- The status screen: each traveler's name, level, jobs, job points, stats, EXP to the next
-  level, path action and talent; Up and Down switch travelers.
+- The status screen: each traveler's name, level, jobs, the weapons they carry, job
+  points, stats, EXP to the next level, path action and talent; Up and Down switch
+  travelers.
 - The journal: the travelers' stories and the regions' side stories with their progress,
-  the entries of each (chapter, new or finished) and their text: who asked, the story so
-  far, the result.
+  and the keys to switch between them (Q and O, from the screen's footer); each list
+  with its title and its entries (chapter and entry, new or finished) and their text:
+  who asked, the story so far, the result. Moving past travelers whose story isn't open
+  yet says only the one you stop at.
 - Shops and inns: the shop's name and your money, its commands, the goods with price and how
   many you have, the amount to buy or sell with the total, and for weapons and armor what
   they would change for each traveler. After buying a weapon or armor and choosing to

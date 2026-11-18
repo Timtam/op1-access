@@ -1856,7 +1856,16 @@ M.read_objective = function(queue)
     elseif not queue then speak(tr("No objective")) end
 end
 -- (not in battle: there Q is the game's "lower the boost" key -- it said "No objective")
-pcall(RegisterKeyBind, Key.Q, function() if M.battle_now then return end M.read_objective(false) end)
+-- Nor in a menu screen of its own: Q is the game's LB there too (the journal's switch to
+-- the main story said "Kein Ziel" over it, 2026-11-18). In the field the active stack is
+-- empty (nil), in the menu's category list it is MainMenuWidget_C, in a talk the balloons.
+M.Q_OBJECTIVE_SCREENS = { MainMenuWidget_C = true, BalloonManagerBP_C = true }
+M.q_objective_ok = function()
+    if M.battle_now then return false end
+    local _, acls = M.get_active_screen()
+    return acls == nil or M.Q_OBJECTIVE_SCREENS[acls] == true
+end
+pcall(RegisterKeyBind, Key.Q, function() if M.q_objective_ok() then M.read_objective(false) end end)
 
 -- Main (pause) menu category-list reader. The Escape menu's left list (Weltkarte /
 -- Journal / Inventar / Ausruestung / ... / Status / Verschiedenes) lives in
@@ -2013,10 +2022,32 @@ M.status_lines = function(w)
     end
     add(pair(t("Job_10"), t("Job_10_Name")))
     add(pair(t("Job_20"), t("Job_20_Name")))
+    -- the weapons worn: a picture each, no text (in game 2026-11-18 "Waffe" was left
+    -- out). Bytecode (Equipment): for each weapon slot in use (sword, lance, dagger, axe,
+    -- bow, rod) the next of Job_Icon3..8 shows eqp_part_icon_<kind>, the texture
+    -- UiTX_Common_ListIcon_<Sword|Spear|Dagger|Ax|Arrow|Cane>; "weapon" is the label.
+    local wl, raw = {}, {}
+    for k = 3, 8 do
+        local ic
+        pcall(function() ic = w["Job_Icon" .. k] end)
+        local v = ic and M.wvis(ic)
+        if v == 0 or v == 3 or v == 4 then
+            local tn
+            pcall(function() tn = ic.Brush.ResourceObject:GetFName():ToString() end)
+            raw[#raw + 1] = tostring(tn)
+            local key = tn and tn:match("ListIcon_(%a+)$")
+            key = key and key:lower()
+            if key and M.WEAK_DE and M.WEAK_DE[key] then wl[#wl + 1] = tr(M.WEAK_DE[key]) end
+        end
+    end
+    M.status_icons = table.concat(raw, ",")
+    if #wl > 0 then add((t("weapon") or tr("Weapon")) .. ": " .. table.concat(wl, ", ")) end
     local jp = t("KSTextBlock_3")
     if jp then
+        -- "LBP erhalten: 398 LBP"
         local a, b = t("KSTextBlock_2"), t("KSTextBlock_4")
-        add(((a and a ~= b) and (a .. " ") or "") .. jp .. (b and (" " .. b) or ""))
+        local lab = (a and a ~= b) and (a:match(":%s*$") and (a .. " ") or (a .. ": ")) or ""
+        add(lab .. jp .. (b and (" " .. b) or ""))
     end
     local stats, pl = {}, nil
     pcall(function() pl = w.ListItemParamWidget_63 end)
@@ -2060,7 +2091,7 @@ do
         local okl, head, rest = pcall(M.status_lines, w)
         if not (okl and head) then return end
         S.sig = sig
-        log(string.format("STATUS %s: %s | %s", tostring(idx), head, tostring(rest)))
+        log(string.format("STATUS %s: %s | %s (icons %s)", tostring(idx), head, tostring(rest), tostring(M.status_icons)))
         speak(head, true)
         if rest then speak(rest, false) end
     end
@@ -2096,19 +2127,56 @@ M.journal_gauge = function(w)
     if un then s = trf("%s, not available yet", s)
     elseif type(pct) == "number" then s = s .. ", " .. trf("%d percent", math.floor(pct * 100 + 0.5)) end
     if #gs > 1 then s = s .. ", " .. trf("%d of %d", pos + 1, #gs) end
-    return s
+    return s, un
 end
 -- A row of the journal's list: col1 the title, col2 a story's chapter ("" for a side
 -- story), and a marker glyph in the last column (bytecode: GetAreaListItemData,
 -- CreateMainMissionListItem): "1" a side story finished (MissionState >= 2), "0" a new
 -- entry. Said "Titel, Kapitel 2, neu" -- not "Titel, 1".
-M.journal_row = function(c1, c2, c3)
+-- The journal's rows are ListItemWidget_Col1_2_C, whose SetItemData puts those two
+-- values elsewhere (in game 2026-11-18: no Col2/Col3, only the title was said): the
+-- chapter into ProgressText ("I-17", chapter I, entry 17; ProgressRoot shown), the
+-- marker as a picture: NewIcon (the blue "!", "0") or Compicon (the tick, "1").
+-- prog/new/done: what M.journal_marks read from such a row.
+M.ROMAN = { I = 1, II = 2, III = 3, IV = 4, V = 5, VI = 6 }
+M.journal_prog = function(p)
+    if not p or M.placeholder(p) then return nil end
+    local r, n = p:match("^%s*([IVX]+)%s*[^%w%s]+%s*(%d+)%s*$")
+    if r and M.ROMAN[r] then return trf("chapter %d, entry %s", M.ROMAN[r], n) end
+    return p
+end
+M.journal_row = function(c1, c2, c3, prog, new, done)
     local mark = (c3 == "1" or c3 == "0") and c3 or ((c2 == "1" or c2 == "0") and c2) or nil
+    if done then mark = "1" elseif new and not mark then mark = "0" end
     local say = c1
     if c2 and c2 ~= mark and not M.placeholder(c2) then say = say .. ", " .. c2 end
+    local pr = M.journal_prog(prog)
+    if pr then say = say .. ", " .. pr end
     if mark == "1" then say = trf("%s, finished", say)
     elseif mark == "0" then say = trf("%s, new", say) end
     return say
+end
+-- -> the row's ProgressText (when shown), whether its NewIcon and its Compicon show
+M.journal_marks = function(row)
+    local function shown(x)
+        if not x then return false end
+        local v = M.wvis(x)
+        return v == 0 or v == 3 or v == 4
+    end
+    local pr, pt, ni, ci
+    pcall(function() pr = row.ProgressRoot end)
+    pcall(function() pt = row.ProgressText end)
+    pcall(function() ni = row.NewIcon end)
+    pcall(function() ci = row.Compicon end)
+    local prog = (pt and (not pr or shown(pr)) and shown(pt)) and M.wtext(pt) or nil
+    return prog, shown(ni), shown(ci)
+end
+-- The list's title: "Tagebuch von Ophilia", "Aufzeichnungen in Küstenland:\nRippeltiden"
+M.journal_list_title = function(w)
+    local t
+    pcall(function() t = M.wtext(w.TitleText) end)
+    if not t or M.placeholder(t) then return nil end
+    return (t:gsub("%s*\n%s*", " "))
 end
 -- The keys a menu's footer offers, as the game shows them (a MenuFooter_C's
 -- MenuGuideItem00..07: ButtonGuideText_00 the key caps, GuideText_00 the action; speak()
@@ -2170,10 +2238,12 @@ do
                 if J.sig then J.away = true end
             else
                 J.sig, J.mode, J.t0, J.away = nil, nil, nil, nil
+                M.journal_title_said = nil
             end
             return
         end
         if J.away then J.away, J.sig = nil, nil end
+        M.journal_title_said = nil   -- (a list opened again says its title again)
         local st, mainm
         pcall(function() st, mainm = w.Status, w.IsOpenMainMission end)
         if st ~= 2 and st ~= 4 and st ~= 6 then return end
@@ -2182,8 +2252,11 @@ do
             J.t0 = J.t0 or now
             if now - J.t0 < 0.3 then return end
         end
-        local okg, line = pcall(M.journal_gauge, w)
+        local okg, line, un = pcall(M.journal_gauge, w)
         if not (okg and line) then return end
+        -- the cursor on its way (6) over travelers or regions not open yet: only where it
+        -- stops is said (in game: "Unbekannt, noch nicht verfügbar" for each one passed)
+        if st == 6 and un then return end
         local mode = mainm and "main" or "sub"
         local sig = mode .. "|" .. line
         if sig == J.sig then return end
@@ -4531,7 +4604,10 @@ M.poll_menu_list = function()
             say = say .. ", " .. c2
         end
         if scr == "items" and stv == 1 then say = trf("%s, not usable here", say) end
-        if scr == "journal" then say = M.journal_row(c1, c2, M.wtext(row.RefText_Col3)) end
+        if scr == "journal" then
+            local prog, new, done = M.journal_marks(row)
+            say = M.journal_row(c1, c2, M.wtext(row.RefText_Col3), prog, new, done)
+        end
         if scr == "abilities" then
             -- learned = the row's check mark (RefImg_Strikethrough shown). ItemStatus 1 only
             -- means greyed: with too few LBP every skill is greyed, and "Analyse, erlernt"
@@ -4546,7 +4622,16 @@ M.poll_menu_list = function()
         if scr == "equip" and stv == 1 then
             say = (which == "right") and trf("%s, equipped", say) or trf("%s, can't equip", say)
         end
-        sig = string.format("R%X:%s:%s", addr or 0, tostring(idx), say)
+        -- (a journal row by its title: its "new" mark may go once the cursor is on it)
+        sig = string.format("R%X:%s:%s", addr or 0, tostring(idx), (scr == "journal") and c1 or say)
+        -- the journal's list: its title first ("Tagebuch von Ophilia") when it opens
+        if scr == "journal" and sig ~= st.said then
+            local okt, title = pcall(M.journal_list_title, w)
+            if okt and title and title ~= M.journal_title_said then
+                M.journal_title_said = title
+                say = title .. ". " .. say
+            end
+        end
         -- support abilities: a greyed row is one already equipped; the slot the list fills
         -- is said when it changes (after a choice the game moves on to the next free one)
         if scr == "support" then
