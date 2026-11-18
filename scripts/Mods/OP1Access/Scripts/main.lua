@@ -4447,13 +4447,34 @@ M.bt_list = function(cls)
 end
 -- the enemies on the field, in the order of their panels. Only ADDRESSES of battle
 -- characters, never their names (GetFName on a stale one froze the game, 2026-11-14).
+-- Each with alive: a defeated enemy keeps its panel, Enemy pointer and all (user,
+-- 2026-11-18: two dead robbers still answered keys 2 and 3 five minutes later, "broken").
+-- The enemy (BattleEnemyBP_C, read raw) has Dead (bool +0x3A9, from
+-- BattleCharacterBaseBP_C: ForceDead sets it with HP 0) and StatusUI (+0x658, its panel:
+-- EndStatusUI takes the panel off the screen and sets None, ResumeStatusUI shows it only
+-- while IsAlive). Alive = not Dead and still pointing at this very panel; unreadable =
+-- gone. The damage line's names still take every enemy (a lethal hit's target is dead).
 M.bt_enemies = function()
     local out = {}
     for _, w in ipairs(M.bt_list("BattleEnemyStatus_C")) do
         local ea, name = M.peekp(w, 0x2C8), M.wtext(w.characterName)   -- Enemy
         if ea and ea ~= 0 and not M.placeholder(name) then
-            out[#out + 1] = { w = w, addr = ea, name = name }
+            local wa, dead, ui
+            pcall(function()
+                wa = w:GetAddress()
+                dead = shim.Peek(ea + 0x3A9, "u8")
+                ui = shim.Peek(ea + 0x658, "ptr")
+            end)
+            local alive = dead == 0 and ui ~= nil and ui == wa
+            out[#out + 1] = { w = w, addr = ea, name = name, alive = alive, dead = dead ~= nil and dead ~= 0 }
         end
+    end
+    return out
+end
+M.bt_living = function()   -- the enemies still in the fight (keys 1-5)
+    local out = {}
+    for _, en in ipairs(M.bt_enemies()) do
+        if en.alive then out[#out + 1] = en end
     end
     return out
 end
@@ -4825,6 +4846,13 @@ M.poll_battle = function()
             bt.down[pm.name] = dead
         end
     end
+    -- an enemy defeated: its Dead flag went on (M.bt_enemies), said once with the damage
+    -- line -- only a change seen here, never an enemy first met dead
+    bt.edead = bt.edead or {}
+    for _, en in ipairs(M.bt_enemies()) do
+        if en.dead and bt.edead[en.addr] == false then M.dmg_push(trf("%s defeated", en.name)) end
+        bt.edead[en.addr] = en.dead
+    end
     pcall(M.bt_lock_watch, bt, now)
     -- damage numbers gathered by the hooks: one line 0.25 s after the last of a burst
     if bt.dmgbuf and #bt.dmgbuf > 0 and now - (bt.dmg_t or 0) > 0.25 then
@@ -5120,7 +5148,7 @@ M.bt_actor = function()
         -- (second value: it came from our own input)
         for _, pm in ipairs(M.bt_party()) do if pm.addr == bt.menu_who then return pm.name, true end end
     end
-    local en = M.bt_enemies()
+    local en = M.bt_living()   -- (a defeated one acts no more: the last one standing is it)
     if #en == 1 then return en[1].name end
     local names = {}
     for _, e in ipairs(en) do names[e.addr] = e.name end
@@ -5183,7 +5211,7 @@ M.bt_key = function(n)
 end
 M.bt_key_read = function(n)
     if n >= 1 and n <= 5 then
-        local en = M.bt_enemies()
+        local en = M.bt_living()
         if en[n] then speak(trf("Enemy %d of %d: %s", n, #en, M.bt_enemy_text(en[n])))
         elseif #en == 0 and not M.bt.started then speak(tr("The battle is starting"))   -- (no panels yet)
         else speak(#en == 0 and tr("No enemies") or trn("Only %d enemy", "Only %d enemies", #en)) end

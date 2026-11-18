@@ -209,6 +209,16 @@ against one Eissentinel in the study dungeon. Weaknesses in the game's tile orde
   AttributeNum was refused, so Right with two weapons said nothing: since then it is read
   modulo the length. Log: `BATTLE weapon ... index n`. Not heard yet: Right; whether skills
   that carry an element show it there too (then said only with a choice).
+- **Defeated enemies: in a unit test only.** Two robbers defeated around 08:44 still
+  answered keys 2 and 3 at 08:49 ("Räuber, gebrochen"; user, 2026-11-18): the game takes a
+  defeated enemy's panel (BattleEnemyStatus_C) off the screen (BattleEnemyBP_C:
+  SetStatusDead -> CloseEnemyStatus, EndStatusUI -> RemoveFromParent, StatusUI = None) but
+  the panel object stays, Enemy pointer and all, and the list only checked that pointer.
+  Since then an enemy counts for keys 1-5 (and "Enemy n of m") only while its Dead flag
+  (+0x3A9, BattleCharacterBaseBP_C; ForceDead sets it with HP 0) is off and its StatusUI
+  (+0x658) is still this panel; "Räuber defeated" goes with the damage line when the flag
+  comes on. The damage line's names still take every enemy. Not heard yet; not seen
+  either: an enemy that flees (its panel ends, no Dead: it just leaves the keys).
 - **More than five weaknesses.** The panel has five tiles; an enemy with more is logged
   ("WEAK"). Not seen.
 - **Locked weaknesses: in a unit test only.** A boss that calls helpers has its

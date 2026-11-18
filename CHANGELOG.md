@@ -96,6 +96,8 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   damage and healing, breaks, status effects and the results. Keys 1 to 5 read an enemy (shield,
   weaknesses), 6 to 9 a party member, 0 the turn order.
 - The weapon Attack uses ("Angriff, Speer"), and the new one when Left or Right switch it.
+- A defeated enemy is said ("Räuber defeated") and leaves keys 1 to 5, which count only
+  the enemies still fighting.
 - The result screen waits until the EXP count-up is over (or skipped) and then says the
   totals, every level-up and the items in one line, so the key that skips the count-up
   no longer cuts it off; also when two travelers level up in one battle or one gains two
