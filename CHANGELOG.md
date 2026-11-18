@@ -90,7 +90,9 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   for a target you have just picked. Routes keep out of water and other places only
   invisible walls close off, and take invisible floors such as the bridge on the path to
   the Maiya caves. A chest beyond a fence or a railing is no longer walked at through
-  it: the route takes the way round.
+  it: the route takes the way round. Exits are walked to the line where they really
+  take you on, not to a point that can stand behind an invisible wall (from the Östliche
+  to the Südliche Sonnschatt-Sandwüste the walk got stuck just short of it).
 
 ### Battles
 

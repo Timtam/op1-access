@@ -663,6 +663,18 @@ Open:
 
 ## Navigation
 
+- **Exits walked to their trigger box: in a unit test only.** From the Östliche to the
+  Südliche Sonnschatt-Sandwüste the walker wouldn't go on into the next area (user,
+  2026-11-18): it went for the exit actor's root (F_Desert_1_2, LevelTrigger_To_F_Desert_1_1
+  at (-983,-3291)), which stands inside an invisible wall (collision_68), while the
+  Trigger box that fires is a strip 2400 long and 64 thin 195 further south; the walk
+  ended in a pocket of walls 90 short of it and re-routed every 2 s. Over all 416 exits
+  in the area maps (level files): 33 roots outside their box (one 1100 away, T_Mount_L_A),
+  14 inside a blocking volume. Since then an exit's goal is a place on its box's middle
+  line with a floor for the capsule and nothing solid (NV.pawn_floor), nearest to the
+  exit's SpawnPoint (where the game puts you coming in), sampled every 60 once per exit
+  (log `EXIT goal`); none free: the root. Offline, without floors: 245 of 410 exits keep
+  the root's spot, 90% move less than 112, 6 have no free spot.
 - **People's names: in a unit test only.** The walker went to "the wrong people" (user,
   2026-11-18): it went to the right one, under a wrong name. A villager (uniq 316,
   CN_NP_MOS_000030) was listed as "Wachmann": its Talk hook fired at 10:16:34, and 18 s

@@ -7600,7 +7600,14 @@ NV.tpos = function(t)
     end
     if t.actor then
         local x, y, z = read_actor_pos(t.actor)
-        if x then return x, y, z end
+        if x then
+            -- an exit: a place in its trigger box (NV.exit_point), not the actor
+            if (t.cat == "exit" or t.walkcat == "exit") and NV.exit_point then
+                local oke, e = pcall(NV.exit_point, t.actor, x, y)
+                if oke and e then return e.x, e.y, e.z end
+            end
+            return x, y, z
+        end
     end
     if t.pos then return t.pos.x, t.pos.y, t.pos.z end
     return nil
@@ -8276,6 +8283,80 @@ NV.pawn_floor = function(R, ksl, p, x, y, za)
     local inside, u = NV.solid_at(R, ksl, p, x, y, z)
     if inside then return false, 1 + u end
     return z, 1 + u
+end
+
+-- AN EXIT'S GOAL (2026-11-18, user: the walker wouldn't go on into the next area). An
+-- exit (LevelTrigger_C) fires on its Trigger box, not at the actor. From the Östliche to
+-- the Südliche Sonnschatt-Sandwüste (F_Desert_1_2) the box is a strip 2400 long and 64
+-- thin along the map's south edge, 195 south of the actor, whose root stands inside an
+-- invisible wall (collision_68): the walker went for the root, into a pocket of walls 90
+-- short of the strip, and re-routed every 2 s. Of the 416 exits in the area maps, 33
+-- have the root outside the box and 14 inside a blocking volume (the level files).
+-- The goal is now a place ON the box's middle line where the capsule stands (a floor by
+-- its own profile and nothing solid there: NV.pawn_floor), the one nearest to the
+-- exit's SpawnPoint -- where the game puts you when you come in through it, so in the
+-- open way to it. Sampled every 60 once per exit (kept by address and root position);
+-- not while a fade is up. Nothing free, or unreadable: the actor, as before.
+NV.exit_cache = {}
+NV.exit_point = function(actor, rx, ry)
+    local addr
+    pcall(function() addr = actor:GetAddress() end)
+    if not addr then return nil end
+    local c = NV.exit_cache[addr]
+    if c and math.abs(c.rx - rx) < 1 and math.abs(c.ry - ry) < 1 then return c.x and c or nil end
+    if M.fade_now then return nil end
+    local p = get_player_obj()
+    if not p then return nil end
+    local cx, cy, cz, ex, ey, fx, fy
+    pcall(function()
+        local tb = actor.Trigger
+        local cl, e, fv = tb:K2_GetComponentLocation(), tb:GetScaledBoxExtent(), tb:GetForwardVector()
+        cx, cy, cz, ex, ey, fx, fy = cl.X, cl.Y, cl.Z, e.X, e.Y, fv.X, fv.Y
+    end)
+    if not (type(cx) == "number" and type(ex) == "number" and type(fx) == "number") then return nil end
+    c = { rx = rx, ry = ry }   -- (kept only once the box was read: a failed read tries again)
+    NV.exit_cache[addr] = c
+    local sx, sy = rx, ry
+    pcall(function() local s = actor.SpawnPoint:K2_GetComponentLocation(); sx, sy = s.X, s.Y end)
+    local x, y, z, tried = NV.exit_pick(cx, cy, cz, ex, ey, fx, fy, sx, sy, function(qx, qy, qz)
+        local ksl = NV.exit_ksl or StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+        NV.exit_ksl = ksl
+        if not ksl then return false end
+        return (NV.pawn_floor({ px = qx, py = qy, pz = qz, people = {} }, ksl, p, qx, qy, qz))
+    end)
+    c.x, c.y, c.z = x, y, z
+    local nm = "?"
+    pcall(function() nm = actor:GetFName():ToString() end)
+    log(string.format("EXIT goal %s: box (%.0f,%.0f) %.0fx%.0f, spawn (%.0f,%.0f) -> %s after %d tries", nm, cx,
+        cy, ex * 2, ey * 2, sx, sy, x and string.format("(%.0f,%.0f,%.0f)", x, y, z) or "none, the actor", tried))
+    return x and c or nil
+end
+-- The pick itself (no game calls): the box (center, half extents along its own X and Y,
+-- forward vector), the spawn point, and floor_at(x, y, z) -> floor z or false. Samples
+-- every 60 along the long middle line (40 in from the ends), nearest to the spawn's spot
+-- on the line first; the first with a floor wins. -> x, y, z (nil: none), samples tried
+NV.exit_pick = function(cx, cy, cz, ex, ey, fx, fy, sx, sy, floor_at)
+    local fl = math.sqrt(fx * fx + fy * fy)
+    if fl < 0.01 then return nil, nil, nil, 0 end
+    fx, fy = fx / fl, fy / fl
+    local ux, uy, hl = fx, fy, ex
+    if ey > ex then ux, uy, hl = -fy, fx, ey end   -- the box's Y axis (its right vector)
+    local s0 = (sx - cx) * ux + (sy - cy) * uy
+    local lim = math.max(0, hl - 40)
+    local ss = {}
+    for s = -lim, lim, 60 do ss[#ss + 1] = s end
+    if #ss == 0 or ss[#ss] < lim then ss[#ss + 1] = lim end
+    ss[#ss + 1] = math.max(-lim, math.min(lim, s0))   -- (the spawn's own spot on the line)
+    table.sort(ss, function(a, b) return math.abs(a - s0) < math.abs(b - s0) end)
+    local tried = 0
+    for _, s in ipairs(ss) do
+        if tried >= 80 then break end
+        tried = tried + 1
+        local x, y = cx + s * ux, cy + s * uy
+        local z = floor_at(x, y, cz)
+        if z then return x, y, z, tried end
+    end
+    return nil, nil, nil, tried
 end
 
 -- ground height at cell (bx,by) approached from height za (down-trace from
