@@ -399,12 +399,64 @@ end
 -- Richtungsknöpfen ⒶⒹ" (U+24B6-24CF, ⓐ-ⓩ U+24D0-24E9). Screen readers name the
 -- character or skip it, so the letter is said instead; keys side by side get a space
 -- ("A D"). Every spoken line goes through it (2026-11-15).
+-- The other key caps, from the game's own table (UI/Common_PC CommonKeyConfigDataTable,
+-- 2026-11-18: the journal's footer said "┣: Zurück"): letters are Ⓐ-Ⓩ, digits ⑴-⑼ and
+-- ⑽, the number pad ⑾-⒆ and ⒇, F1-F12 ⒈-⒓. The small circled letters are NO letters:
+-- arrows (ⓑ right, ⓒ left, ⓓ up, ⓔ down), modifiers and gamepad buttons; German,
+-- Italian, Spanish and French keyboards draw their Backspace, Space, Shift ... as
+-- box-drawing characters (┣ ┟ ┠ ...). Where the table gives one glyph to two keys, the
+-- one a default binding uses is named (ⓛ is also the number pad's +, ⓒ the French
+-- Backspace). Punctuation keys and what the table leaves unsure are kept as they are.
+M.KEY_CAPS = {
+    [0x24F3] = N_("Tab"), [0x24F4] = N_("Enter"), [0x24F0] = N_("Escape"), [0x24EE] = N_("Space"),
+    [0x24F1] = N_("Page Up"), [0x24F2] = N_("Page Down"), [0x24EC] = N_("Home"), [0x24ED] = N_("End"),
+    [0x24D1] = N_("Right arrow"), [0x24D2] = N_("Left arrow"), [0x24D3] = N_("Up arrow"), [0x24D4] = N_("Down arrow"),
+    [0x24B2] = N_("Insert"), [0x24EB] = N_("Delete"), [0x24EF] = N_("Backspace"),
+    [0x24DA] = N_("Shift"), [0x24D9] = N_("Right Shift"), [0x24D8] = N_("Ctrl"), [0x24D7] = N_("Right Ctrl"),
+    [0x24D6] = N_("Alt"), [0x24D5] = N_("Right Alt"), [0x2514] = N_("AltGr"), [0x2547] = N_("Right Ctrl"),
+    [0x24AF] = N_("Caps Lock"), [0x24B3] = N_("Pause"), [0x24B4] = N_("Num Lock"), [0x24B1] = N_("Scroll Lock"),
+    [0x2546] = N_("Menu key"),
+    [0x2496] = N_("Numpad multiply"), [0x2499] = N_("Numpad minus"), [0x249A] = N_("Numpad decimal"),
+    [0x2495] = N_("Numpad divide"),
+    -- German
+    [0x2523] = N_("Backspace"), [0x251F] = N_("Space"), [0x2520] = N_("Shift"), [0x2521] = N_("Right Shift"),
+    [0x2525] = N_("Alt"), [0x2548] = N_("Ctrl"), [0x2515] = N_("Home"), [0x2516] = N_("Page Up"),
+    [0x2517] = N_("Page Down"), [0x2519] = N_("Delete"), [0x251A] = N_("Insert"), [0x2522] = N_("Caps Lock"),
+    [0x251D] = N_("Numpad divide"), [0x251E] = N_("Numpad multiply"), [0x249B] = N_("Numpad decimal"),
+    -- Italian
+    [0x2526] = N_("Insert"), [0x2527] = N_("Home"), [0x252B] = N_("Page Up"), [0x2528] = N_("Delete"),
+    [0x2529] = N_("End"), [0x252C] = N_("Page Down"), [0x252D] = N_("Backspace"), [0x252F] = N_("Caps Lock"),
+    [0x2530] = N_("Shift"), [0x2531] = N_("Right Shift"), [0x252A] = N_("Space"),
+    -- Spanish
+    [0x253E] = N_("Home"), [0x253F] = N_("Page Up"), [0x2541] = N_("Delete"), [0x2540] = N_("Page Down"),
+    [0x2543] = N_("Backspace"), [0x2544] = N_("Caps Lock"),
+    -- French
+    [0x2538] = N_("Home"), [0x253A] = N_("Page Up"), [0x2537] = N_("Delete"), [0x2535] = N_("End"),
+    [0x253B] = N_("Page Down"), [0x2534] = N_("Caps Lock"), [0x2532] = N_("Shift"), [0x2533] = N_("Right Shift"),
+    [0x2536] = N_("Space"),
+    -- mouse
+    [0x250D] = N_("left mouse button"), [0x250E] = N_("right mouse button"), [0x250F] = N_("middle mouse button"),
+    [0x2512] = N_("mouse button 4"), [0x2511] = N_("mouse button 5"),
+    -- gamepad (by the Xbox names)
+    [0x24DB] = N_("A button"), [0x24DC] = N_("B button"), [0x24DD] = N_("X button"), [0x24DE] = N_("Y button"),
+    [0x24E3] = N_("LB"), [0x24E5] = N_("RB"), [0x24E1] = N_("LT"), [0x24E2] = N_("RT"),
+    [0x24E6] = N_("left stick"), [0x24E7] = N_("right stick"), [0x2513] = N_("View button"),
+    [0x2509] = N_("Menu button"), [0x24E0] = N_("Back button"), [0x24DF] = N_("Start button"),
+}
 M.key_glyphs = function(s)
-    if not s:find("\226[\146\147]") then return s end
-    local function key(n) return "\1" .. string.char(65 + n) .. "\2" end
-    s = s:gsub("\226\146([\182-\191])", function(c) return key(c:byte() - 182) end)
-    s = s:gsub("\226\147([\128-\143])", function(c) return key(c:byte() - 128 + 10) end)
-    s = s:gsub("\226\147([\144-\169])", function(c) return key(c:byte() - 144) end)
+    if not s:find("\226[\145-\149]") then return s end
+    local function key(n) return "\1" .. n .. "\2" end
+    s = s:gsub("\226[\145-\149][\128-\191]", function(c)
+        local cp = utf8.codepoint(c)
+        if cp >= 0x24B6 and cp <= 0x24CF then return key(string.char(65 + cp - 0x24B6)) end
+        if cp >= 0x2474 and cp <= 0x247C then return key(tostring(cp - 0x2473)) end
+        if cp == 0x247D then return key("0") end
+        if cp >= 0x247E and cp <= 0x2487 then return key(trf("Numpad %s", tostring((cp - 0x247D) % 10))) end
+        if cp >= 0x2488 and cp <= 0x2493 then return key("F" .. (cp - 0x2487)) end
+        local n = M.KEY_CAPS[cp]
+        if n then return key(tr(n)) end
+        return c
+    end)
     return (s:gsub("\2\1", " "):gsub("[\1\2]", ""))
 end
 
