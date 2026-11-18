@@ -4720,7 +4720,7 @@ end
 -- (SetCommandAttribute: Conv_ByteToInt, Array_Get), whose order the Blueprint's defaults
 -- give: sword, spear, dagger, axe, bow, staff, unknown, fire, ice, lightning, wind, light,
 -- dark (M.ATTR_KEYS: the M.WEAK_DE keys). Read raw, as all battle widgets' pointers.
--- Returns the word and how many there are to switch between, or nil.
+-- Returns the word, how many there are to switch between and the index, or nil.
 M.ATTR_KEYS = { [0] = "sword", [1] = "spear", [2] = "dagger", [3] = "ax", [4] = "arrow", [5] = "cane",
     [7] = "Fire", [8] = "Ice", [9] = "Thunder", [10] = "Wind", [11] = "Light", [12] = "Dark" }
 M.bt_attr = function(it)
@@ -4734,12 +4734,15 @@ M.bt_attr = function(it)
     local en = pk(0x258, "u8")
     if not en or en == 0 then return nil end
     local data, num, idx = pk(0x240, "ptr"), pk(0x248, "i32"), pk(0x270, "i32")
-    if not (data and data ~= 0 and num and idx) or num < 1 or num > 13 or idx < 0 or idx >= num then return nil end
+    if not (data and data ~= 0 and num and idx) or num < 1 or num > 13 or idx < 0 or idx > num then return nil end
+    -- the icons are a carousel with the first one again at the end: Right
+    -- (NextCommandAttribute) counts 1 .. num and then goes back to 1, Left 0 .. num-1 -- so
+    -- index num shows the first weapon (Right said nothing on it, user 2026-11-18)
     local v
-    pcall(function() v = shim.Peek(data + idx, "u8") end)
+    pcall(function() v = shim.Peek(data + (idx % num), "u8") end)
     local key = v and M.ATTR_KEYS[v]
     if not (key and M.WEAK_DE[key]) then return nil end
-    return tr(M.WEAK_DE[key]), num
+    return tr(M.WEAK_DE[key]), num, idx
 end
 M.bt_menu = function()   -- the focused command of the topmost open menu
     local best, bf
@@ -4769,11 +4772,11 @@ M.bt_menu = function()   -- the focused command of the topmost open menu
     end
     -- the weapon (or element) on the item: on the top menu (Attack), and where there is a
     -- choice
-    local weapon, wnum = nil, 0
-    pcall(function() weapon, wnum = M.bt_attr(it) end)
+    local weapon, wnum, widx = nil, 0, nil
+    pcall(function() weapon, wnum, widx = M.bt_attr(it) end)
     if weapon and bf ~= 1 and (wnum or 0) < 2 then weapon = nil end
     return { floor = bf, cur = ci, text = text, add = M.wtext(it.TextAddInfo), usable = usable, who = who,
-        boost = boost, weapon = weapon, wnum = wnum }
+        boost = boost, weapon = weapon, wnum = wnum, widx = widx }
 end
 M.bt_help = function()
     for _, h in ipairs(M.bt_list("BattleCommandHelpWindow_C")) do
@@ -4915,7 +4918,8 @@ M.poll_battle = function()
             end
         elseif m.weapon and m.weapon ~= bt.weapon then
             -- Left/Right on the same command: the weapon alone
-            log(string.format("BATTLE weapon %s (%d to choose from)", m.weapon, m.wnum or 0))
+            log(string.format("BATTLE weapon %s (%d to choose from, index %s)", m.weapon, m.wnum or 0,
+                tostring(m.widx)))
             bt.weapon = m.weapon
             speak(m.weapon)
         end
