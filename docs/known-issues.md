@@ -686,7 +686,7 @@ Open:
 
 ## Navigation
 
-- **Every placed person on the radar and in the list: in a unit test only.** In a
+- **Every placed person on the radar and in the list: heard in one town.** In a
   Pflastersten doorway the walker said "Jemand steht im Weg" four times, and the game
   picked that person to talk to (path-action hint without a name), but the radar and the
   people list had nobody there (user, 2026-11-18). It was one of the game's GENERIC people
@@ -697,8 +697,9 @@ Open:
   (CN_SS_FO3_0101B1_0003: not all digits) -- all only after a talk. Since then every placed
   character (NPC_* / NNPC_*) counts, save points' books, editor dummies and actors
   without a label stay out. Generic people have no name ("Person 3 of 18: up, 300"); a
-  story person whose name is still "???" is said "Unknown". Not heard yet: whether the
-  radar gets too busy in big towns.
+  story person whose name is still "???" is said "Unknown". Heard in Pflastersten
+  (2026-11-18): 20 people, the nameless ones, the village chief and the barkeep among them,
+  the save point's book not. Not heard yet: whether the radar gets too busy in big towns.
 - **Exits walked to their trigger box: in a unit test only.** From the Östliche to the
   Südliche Sonnschatt-Sandwüste the walker wouldn't go on into the next area (user,
   2026-11-18): it went for the exit actor's root (F_Desert_1_2, LevelTrigger_To_F_Desert_1_1
@@ -711,7 +712,7 @@ Open:
   exit's SpawnPoint (where the game puts you coming in), sampled every 60 once per exit
   (log `EXIT goal`); none free: the root. Offline, without floors: 245 of 410 exits keep
   the root's spot, 90% move less than 112, 6 have no free spot.
-- **People's names: in a unit test only.** The walker went to "the wrong people" (user,
+- **People's names: checked once in the game.** The walker went to "the wrong people" (user,
   2026-11-18): it went to the right one, under a wrong name. A villager (uniq 316,
   CN_NP_MOS_000030) was listed as "Wachmann": its Talk hook fired at 10:16:34, and 18 s
   later a defeated guard's "Urgh ..." came through the path-action menu with no Talk of
@@ -722,8 +723,11 @@ Open:
   within 3 s of the hook, the static name comes first everywhere (the learned one only
   without one, or for "???"), and a record keeps the NPC's NPCLabel and starts over when
   another NPC reuses the address (npc_learned is keyed by address and lives all session:
-  a person of the next area could inherit a name and "talkable"). Not checked in the
-  game yet.
+  a person of the next area could inherit a name and "talkable"). In Pflastersten
+  (2026-11-18) the walk to "Melancholischer Jugendlicher" ended at him (the path-action
+  hint named him), the talk hook took the same person, and the list kept every name after
+  two talks. Not tried: a path action's lines from someone else after a talk, as in the
+  report.
 - **A chest beyond a fence: in a unit test only.** In the Süd-Pflastersten-Kluft
   (2026-11-17) a chest 183 below the path lay beyond a fence, the ground sloping away
   behind it. The walker ran into the fence about 20 times, the same one-cell route each
