@@ -105,5 +105,15 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
 
 ### Installation
 
-- An installer that finds the game, installs UE4SS 3.0.1 with the mod, and removes both again.
+- An installer that finds the game, installs UE4SS 4.0.0 with the mod, and removes both again.
+  UE4SS's own mods (consoles, cheat manager, Blueprint mod loader, key binds) are switched
+  off; OP1 Access doesn't need them. An installation with UE4SS 3.0.1 is moved over, and
+  sounds you put into `Assets` stay.
 - Update notices in the game; F5 twice installs an update.
+
+### Stability
+
+- Two faults are fixed that could crash or freeze the game now and then (also when
+  closing it) or let the radar and menus go silent: the mod's speech and sound part
+  upset UE4SS's Lua lock, and UE4SS ran parts of the mod on two threads at once. With
+  UE4SS 4.0.0 the mod does all its work on the game's main thread.

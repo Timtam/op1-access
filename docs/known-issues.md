@@ -442,8 +442,42 @@ Open:
 
 ## Threads
 
-- **UE4SS's async thread can die: a fallback driver since this change, in a unit test
-  only.** At the Pflastersten inn (2026-11-17, "Über Nacht bleiben? Ja") UE4SS wrote
+- **UE4SS 4.0.0 since 2026-11-18: the whole mod runs on the game thread.** Two things
+  broke the mod's Lua state now and then, under UE4SS 3.0.1 as well:
+  - The shim carries its own copy of Lua. UE4SS builds Lua with one lock for all its
+    states (`lua_lock` = a critical section, `luauser.c`) and leaves it while a C function
+    runs; the shim's copy has a lock of its own. A Lua error raised inside a shim function
+    (`luaL_checkinteger` on a nil address, say) took the shim's lock and longjmp'd into
+    UE4SS's VM, which then left its lock once without holding it. That is exactly the
+    c0000264 signature (`RtlLeaveCriticalSection` on a lock the thread doesn't own) and the
+    hang with RecursionCount -2 below. Since 3773d1a no shim function raises a Lua error:
+    a bad argument reads as 0, "" or the default.
+  - UE4SS runs `LoopAsync` and `ExecuteWithDelay` callbacks on its async thread (in 3.0.1
+    and 4.0.0 alike) and key binds on its own thread, beside the game thread's hooks and
+    `ExecuteInGameThread` work, all in this one Lua state; while a shim function runs,
+    UE4SS's lock is free for the other thread. The first 4.0.0 test (without the changes
+    below) logged `[Lua::Registry::get_function_ref] Ref was not function` every one or two
+    minutes and crashed after 12 minutes in a Lua table lookup (with UE4SS's PDB from the
+    DEV release: `getgeneric` under `process_simple_actions`, our queued work).
+  Since 22a7911, with UE4SS 4's game-thread timers: `main.lua` runs once on UE4SS's thread
+  only to queue itself (`ExecuteInGameThreadWithDelay`) and then for real on the game
+  thread; `LoopAsync` and `ExecuteWithDelay` become `LoopInGameThreadWithDelay` and
+  `ExecuteInGameThreadWithDelay`; `RegisterKeyBind` only records the bind, and
+  `M.key_poll` reads the keys every frame on the game thread (`shim.KeyScan`, the same
+  GetAsyncKeyState test and exact-modifier rule as UE4SS). UE4SS 4 hooks `KSUIManager:Open`
+  natively, so the game's own C++ opens of the HUD's kinds 22 (world map) and 28 (party
+  chat available) reached the mod at every talk; they are left unsaid (no UE4SS 3 log has
+  them). Under UE4SS 3 (no game-thread timers) everything runs as before.
+  Tried 2026-11-17/18 on UE4SS 4.0.0: start, load, navigator, walker (routes of 10,000
+  units), talk, main menu, equipment, world map, battles with number keys and results,
+  game over and "Weiter ab letztem Speicherpunkt", a shop, the path-action menu, an inn
+  stay; a 35-minute play soak (29 walks, 6 battles, 425 Enter presses, the menu now and
+  then) and the game running 7.5 hours: no `Ref was not function`, no error, no crash.
+  Quitting took 2 s, without a crash dump. Not tried yet: several start/quit cycles in a
+  row, a long stay in the main menu (where the first 4.0.0 test crashed), and UE4SS 3 with
+  the new shim.
+- **Under UE4SS 3: the async thread can die: a fallback driver since d8d8d8b, in a unit
+  test only.** At the Pflastersten inn (2026-11-17, "Über Nacht bleiben? Ja") UE4SS wrote
   crash_2026_11_17_16_46_04.dmp: c0000264 (RtlLeaveCriticalSection on a lock it doesn't
   own) inside its Lua machinery, on its own async thread. The game ran on, but that
   thread was gone, and with it both LoopAsyncs: the radar pump's and the polling loop's.
@@ -457,28 +491,9 @@ Open:
   thread (`PUMP … fallback=N`). It is not armed before that, because more Lua on the game
   thread while the async thread uses the same Lua state is the very lock that broke.
   Checked against a mock (test_fallback.lua). Not yet seen in the game; whether the axis
-  event fires every frame there (also in menus) shows in the log.
-- **UE4SS v4.0.0 tried (2026-11-17): it crashes with this mod as it is; back on 3.0.1.**
-  v4 (2026-11-12) fixes callbacks run on the wrong thread (#1170), a shared-lock fault
-  (#1445) and random use-after-free crashes (#1271), and adds game-thread loops
-  (`LoopInGameThreadWithDelay`). It loaded the mod unchanged, talking no longer froze the
-  game (the December 2024 experimental did, with the shim's talk hook), and the radar was
-  back 0.45 s after a talk. But from the first minutes UE4SS logged
-  `[Lua::Registry::get_function_ref] Ref was not function` every one or two minutes, and
-  after 12 minutes, idle in the main menu, the game crashed
-  (crash-20261117-182723.dmp: an access violation in a Lua table lookup inside a hook
-  callback, with text bytes where a pointer belongs). The cause is in v4's source
-  (LuaMod.cpp, `process_delayed_actions`): `LoopAsync` and `ExecuteWithDelay` callbacks
-  run on UE4SS's async thread with no lock at all, on a Lua thread of the same state that
-  the game thread uses for hooks and `ExecuteInGameThread` work. So our two loops and the
-  game thread change the same Lua registry at once; the async thread doesn't even take
-  the lock the key binds take. v4 also hooks `KSUIManager:Open` natively and passes the
-  game's own C++ calls on: the HUD's kinds 22 (world map) and 28 (party chat available)
-  were said at the start and end of every talk. Moving to v4 would mean running the
-  pump loop, the polling loop and every `ExecuteWithDelay` through v4's game-thread
-  loops (`LoopInGameThreadWithDelay`, `ExecuteInGameThreadWithDelay`), falling back to
-  the old calls on 3.0.1, and leaving those two HUD kinds unsaid (or saying them once).
-- **Only the talk-hook install still runs off the game thread** (at start, every 2 s
+  event fires every frame there (also in menus) shows in the log. Under UE4SS 4 no loop of
+  the mod is on the async thread, and the fallback stays unarmed.
+- **Under UE4SS 3: only the talk-hook install still runs off the game thread** (at start, every 2 s
   until armed): it looks up two UFunctions (StaticFindObject) and hands their addresses
   to the shim, no game function is called. Since 74be657 the character select's delayed
   reads (its announce, the cursor, "blocked", the traveler learning) run on the game
@@ -504,6 +519,9 @@ Open:
   Same signature as the known exit crash: `RtlLeaveCriticalSection` on a lock the thread
   doesn't own, under `HookUStructLink` and nested Lua calls, no shim frames. Since
   05ce7cc the screen polls call GetActiveStack once per run instead of up to 15 times.
+  The likely cause, found 2026-11-17: a Lua error raised inside a shim function leaves
+  UE4SS's Lua lock once too often (see "UE4SS 4.0.0 since 2026-11-18" above); the damage
+  shows later, in UE4SS's code, hence no shim frames. Fixed in 3773d1a.
 - **On arrival the radar stalls the game ~390 ms, after a dialogue ~150 ms.** Each object
   search walks all objects (~78 ms): on arrival all five (chests, exits, doors, shops,
   people). Since 4d88542 a dialogue without a fade keeps the exits, doors and shops
@@ -516,7 +534,8 @@ Open:
   RecursionCount was -2 and its owner a thread that was asleep. That is the same UE4SS
   lock bookkeeping as the c0000264 crash (one Leave too many), here as a deadlock. No
   shim frames; nothing in the mod can repair the lock. Seen once; the game had to be
-  killed.
+  killed. Two Lua errors raised in shim functions would leave exactly that -2; since
+  3773d1a no shim function raises one.
 - **The objective with several travelers was not heard.** Since f4c904f Q and the menu
   take the objective from the story flags (NextPurposeData, KSSaveGame:GetBitFlag), for
   each main party member, leader first, with the traveler's name when several have one

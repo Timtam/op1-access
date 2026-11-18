@@ -1,67 +1,59 @@
-# Current install state
+# Install layout
 
-Snapshot of what's been placed where, as of 2026-05-05.
+What a complete installation puts into the game, as of 2026-11-18 (UE4SS 4.0.0). The
+installer and the release ZIP produce exactly this; `docs/build-and-release.md` describes how.
 
-## In this repo (`C:/scripts/op1-accessibility/`)
+## In the game install
 
-```
-docs/                          design docs, investigation reports, asset listings
-src/Shim.cpp                   C++ shim source (placeholder; not yet built)
-src/xmake.lua                  build skeleton
-scripts/Mods/OP1Access/        canonical copy of the Lua mod
-scripts/verify-attach.ps1      task #2 verification harness
-third_party/tolk/              Tolk vendor dir (DLLs not yet downloaded)
-tools/UE4SS/                   UE4SS v3.0.1 distribution (build artefacts; gitignored)
-tools/repak/                   repak v0.2.3 CLI (gitignored)
-tools/pak_listing.txt          full 107k-file pak listing (gitignored)
-```
-
-## In the game install (deployed; reversible)
-
-Path: `C:/Program Files (x86)/Steam/steamapps/common/OCTOPATH TRAVELER/Octopath_Traveler/Binaries/Win64/`
+Path: `<Steam library>/steamapps/common/OCTOPATH TRAVELER/Octopath_Traveler/Binaries/Win64/`
 
 ```
 Octopath_Traveler-Win64-Shipping.exe   ← unchanged, the game's own EXE
-UE4SS.dll                              ← UE4SS core
-dwmapi.dll                             ← UE4SS proxy DLL (this is how it injects)
-UE4SS-settings.ini                     ← stock settings
-Mods/                                  ← UE4SS mod directory
-  mods.txt                             ← mod load list (added: "OP1Access : 1")
-  ConsoleEnablerMod/   (default, on)
-  ConsoleCommandsMod/  (default, on)
-  CheatManagerEnablerMod/ (default, on)
-  BPModLoaderMod/      (default, on)
-  BPML_GenericFunctions/ (default, on)
-  Keybinds/            (default, on)
-  ActorDumperMod/      (default, off)
-  LineTraceMod/        (default, off)
-  SplitScreenMod/      (default, off)
-  jsbLuaProfilerMod/   (default, off)
-  shared/              (default UE4SS helpers)
-  OP1Access/           ← our mod (Scripts/main.lua, enabled.txt)
+dwmapi.dll                             ← UE4SS 4's proxy DLL (this is how it injects)
+phonon.dll                             ← Steam Audio, next to the EXE so the shim finds it
+ue4ss/
+  UE4SS.dll                            ← UE4SS core
+  UE4SS-settings.ini                   ← stock settings, GuiConsoleEnabled = 0
+  UE4SS.log                            ← UE4SS's log, with every [OP1Access] line
+  LICENSE, UE4SS_SDK_Backends/         ← as released
+  Mods/
+    mods.txt                           ← UE4SS's own mods 0, "OP1Access : 1"
+    BPML_GenericFunctions/ BPModLoaderMod/ CheatManagerEnablerMod/ ConsoleCommandsMod/
+    ConsoleEnablerMod/ Keybinds/ LineTraceMod/ SplitScreenMod/ shared/   (stock, off)
+    OP1Access/                         ← the mod
+      enabled.txt
+      Scripts/main.lua, worldlinks.lua, buildinfo.lua (releases only)
+      Scripts/OP1AccessShim.dll        ← speech (Prism), Steam Audio radar, native hooks
+      Scripts/lang/*.po, op1access.pot ← the mod's own texts in other languages
+      Assets/                          ← radar sounds (your own ones stay on updates)
+      OP1AccessInstaller.exe, README.txt, LICENSE.txt, THIRD-PARTY-NOTICES.txt, licenses/
 ```
 
-## What's NOT installed yet
+UE4SS 3.0.1 (earlier versions of the mod) had everything in `Win64` itself: `UE4SS.dll`,
+`UE4SS-settings.ini`, `UE4SS.log` and `Mods/` with the mod in `Mods/OP1Access`. The installer
+moves such an installation over. The mod finds its own folder either way (`M.MOD_DIR`, from
+`main.lua`'s path).
 
-- **Tolk DLLs** — `third_party/tolk/` is empty (`.gitignore`'d). Phase 0
-  task: download from upstream and copy to
-  `Mods/OP1Access/dlls/` in the game install.
-- **OP1AccessShim.dll** (the C++ shim) — Phase 0 task: build via xmake
-  inside an UE4SS source tree and drop next to Tolk.dll.
+## In this repo
 
-The Lua mod runs in "log-only" mode without the shim — it'll write
-`[OP1Access]` lines to `UE4SS.log` but won't speak yet. That's the
-intended state for task #2.
+```
+scripts/Mods/OP1Access/        the mod (Scripts/main.lua, worldlinks.lua, lang/, Assets/)
+src/                           the shim (Shim.cpp, Speech.cpp, SpatialAudio.cpp)
+installer/OP1AccessInstaller/  the installer (.NET Framework 4.8, WinForms)
+scripts/                       build, package and data scripts
+tools/                         pinned dependencies (gitignored; scripts/fetch-deps.ps1)
+```
 
 ## Reversing the install
 
-To remove everything we've added to the game folder:
+Use the installer's *Uninstall* (it asks whether to remove UE4SS too), or by hand:
 
 ```
-$g = 'C:\Program Files (x86)\Steam\steamapps\common\OCTOPATH TRAVELER\Octopath_Traveler\Binaries\Win64'
-Remove-Item "$g\dwmapi.dll", "$g\UE4SS.dll", "$g\UE4SS-settings.ini" -Force
-Remove-Item "$g\Mods" -Recurse -Force
+$g = '<...>\OCTOPATH TRAVELER\Octopath_Traveler\Binaries\Win64'
+Remove-Item "$g\ue4ss\Mods\OP1Access" -Recurse -Force; Remove-Item "$g\phonon.dll" -Force
+# and UE4SS itself:
+Remove-Item "$g\dwmapi.dll" -Force; Remove-Item "$g\ue4ss" -Recurse -Force
 ```
 
-The game's own `Octopath_Traveler-Win64-Shipping.exe` is untouched — the
-install is purely additive.
+The game's own `Octopath_Traveler-Win64-Shipping.exe` is untouched; the install is purely
+additive.
