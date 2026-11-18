@@ -8228,6 +8228,7 @@ local function nav_route_finish(goalnode)
             W.nopeople, W.blame = true, R.people
             W.stepin, W.ofl_p, W.groundch, W.legchk = R.stepin, R.ofl_p, R.groundch, R.legchk
             W.saidlong = R.saidlong
+            W.trailpre, W.trail_n = R.trailpre, R.trail_n
             if not R.shifted then
                 -- the same grid: its traces hold (2026-11-16: a whole-area search again
                 -- without them would trace the whole area once more). People only make a
@@ -8240,10 +8241,24 @@ local function nav_route_finish(goalnode)
             NV.route = W
             return
         end
+        -- from your own trail, 250 and then 700 back (NV.trail_retry): the walk goes back
+        -- there first
+        if R.mode == "walk" and not R.capped then
+            local W = NV.trail_retry(R)
+            if W then
+                if not R.trailpre then speak(tr("Searching again from a bit further back")) end
+                NV.route = W
+                return
+            end
+        end
         -- after a search on the shifted grid (NV.route_shift) the fallbacks below start
         -- from where you stand, and "boxed in" needs both searches to have died at once
         local boxed = (R.pops or 0) <= 3 and (R.pops0 or 0) <= 3
         if R.shifted then R.px, R.py, R.pz = R.shifted.x, R.shifted.y, R.shifted.z end
+        if R.trailpre then   -- (a search from your trail: you stand at its first point)
+            local c = R.trailpre[1]
+            R.px, R.py, R.pz = c.x, c.y, c.z
+        end
         if R.mode == "walk" then
             -- NO blind straight-line fallback (it marched endlessly into walls):
             -- walk direct only if a body-width corridor is genuinely clear
@@ -8362,6 +8377,14 @@ local function nav_route_finish(goalnode)
     local raw = { { x = R.px, y = R.py } }
     -- on the shifted grid the walk starts where you stand, then goes to its start cell
     if R.shifted then raw = { { x = R.shifted.x, y = R.shifted.y }, { x = R.px, y = R.py, z = R.pz } } end
+    -- a search from your trail (NV.trail_retry): first back along it to its start point
+    -- (raw[1] = that point, the trail's last)
+    if R.trailpre then
+        local pre = {}
+        for _, q in ipairs(R.trailpre) do pre[#pre + 1] = { x = q.x, y = q.y, z = q.z } end
+        for j = 2, #raw do pre[#pre + 1] = raw[j] end
+        raw = pre
+    end
     for i = #chain, 1, -1 do   -- (z = the cell's floor, for NV.nudge_wp; ox/oy: a slid step)
         local pre = chain[i].pre   -- the side step before entering a narrow passage
         if pre then raw[#raw + 1] = { x = pre.x, y = pre.y, z = pre.z } end
@@ -8432,6 +8455,7 @@ local function nav_route_finish(goalnode)
         R.ticks or 0, (R.cpu or 0) * 1000 / math.max(1, R.ticks or 0), (R.cpu or 0) * 1000 / math.max(1, R.traces)))
     if R.mode == "walk" then
         if door then speak(tr("A shut door on the way")) end
+        if R.trailpre then floorword = floorword .. ", " .. tr("back a bit first") end
         nav_walk_begin_path(pts, (door and tr("to the door") or tr("traced route")) .. floorword)
     else
         local desc, total = nav_describe_path(pts)
@@ -8703,6 +8727,75 @@ end
 -- its time: the walk (you wait, Backspace cancels) 90 s, a background check 300 s of its
 -- own work (NV.bg_step leaves out the time it waits)
 NV.whole_time = function(R) return R.mode == "bg" and 300 or 90 end
+-- YOUR OWN TRAIL (2026-11-18, user: "searching the whole area", yet no way, though it went
+-- once you were nearer). Twice right after opening a chest the walker had led to, every
+-- search from the corner by the chest (walls 30 to both sides) died in a pocket -- 24
+-- cells, and 785 cells with the targets 1300-1800 above -- through the whole area and
+-- the shifted grid, though you had just walked in; 300 further back the same targets had
+-- a route at once. The grid is anchored where you stand, and from a tight corner it
+-- doesn't get out. Where you walked is known to be walkable: the pump keeps a point every
+-- 100 of your way (NV.trail_add), cleared in a new area or after a jump. A search that
+-- failed starts again from a trail point 250 (then 700) back (NV.trail_retry), the whole
+-- area at once; the walk goes back along the trail first (R.trailpre, nav_route_finish).
+-- The background checks do the same when they failed in a pocket (NV.TRAIL_POCKET cells).
+NV.trail = { pts = {}, key = nil }
+NV.TRAIL_BACK = { 250, 700 }
+NV.TRAIL_POCKET = 3000
+NV.trail_add = function(x, y, z)
+    local T = NV.trail
+    local key = M.level_id() or M.area_said
+    if T.key ~= key then T.pts, T.key = {}, key end
+    local last = T.pts[#T.pts]
+    if last then
+        local d = math.sqrt((x - last.x) ^ 2 + (y - last.y) ^ 2)
+        local dz = math.abs(z - last.z)
+        -- a jump: no way between (after a scene, T.ev, already a step over 150: it may
+        -- have moved you)
+        if d > 800 or dz > 400 or (T.ev and (d > 150 or dz > 100)) then
+            T.pts = {}
+        elseif d < 100 and dz < 100 then
+            T.ev = nil
+            return
+        end
+    end
+    T.ev = nil
+    T.pts[#T.pts + 1] = { x = x, y = y, z = z }
+    if #T.pts > 80 then table.remove(T.pts, 1) end
+end
+-- The trail point to search from: the newest one at least `back` along the trail behind
+-- cur and `mindist` from it in a straight line; and the points from cur to it, in walking
+-- order (cur first). nil when the trail is too short.
+NV.trail_start = function(cur, back, mindist)
+    local T = NV.trail
+    if T.key ~= (M.level_id() or M.area_said) or #T.pts == 0 then return nil end
+    local pre = { { x = cur.x, y = cur.y, z = cur.z } }
+    local along, lx, ly = 0, cur.x, cur.y
+    for i = #T.pts, 1, -1 do
+        local q = T.pts[i]
+        along = along + math.sqrt((q.x - lx) ^ 2 + (q.y - ly) ^ 2)
+        lx, ly = q.x, q.y
+        pre[#pre + 1] = { x = q.x, y = q.y, z = q.z }
+        if along >= back and math.sqrt((q.x - cur.x) ^ 2 + (q.y - cur.y) ^ 2) >= mindist then return q, pre end
+    end
+    return nil
+end
+-- The next search after R failed: from the trail, the whole area (nil: no further try)
+NV.trail_retry = function(R)
+    local n = (R.trail_n or 0) + 1
+    local back = NV.TRAIL_BACK[n]
+    if not back then return nil end
+    local cur = (R.trailpre and R.trailpre[1]) or R.shifted or { x = R.px, y = R.py, z = R.pz }
+    local tp, pre = NV.trail_start(cur, back, 200)
+    if not tp then return nil end
+    local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, tp.x, tp.y, tp.z)
+    W.trailpre, W.trail_n = pre, n
+    W.people, W.stepin, W.ofl_p, W.groundch, W.legchk = R.people, R.stepin, R.ofl_p, R.groundch, R.legchk
+    W.saidlong = R.saidlong
+    if R.mode == "bg" then W.maxt = 60 end
+    W = NV.route_widen(W, true) or W
+    log(string.format("ROUTE again from your trail: %d back, at (%.0f,%.0f), %d points", back, tp.x, tp.y, #pre))
+    return W
+end
 -- The first shut door a found route goes through (in walking order), and the index in
 -- the raw waypoint list (start = 1) of the first cell behind it. nil: no door.
 NV.route_first_door = function(R, goalnode)
@@ -8741,6 +8834,7 @@ NV.route_widen = function(R, whole)
     W.cpu, W.ticks, W.ran = R.cpu, R.ticks, R.ran
     W.nroom, W.npawn, W.ntight = R.nroom, R.npawn, R.ntight
     W.shifted, W.pops0, W.shift_i = R.shifted, R.pops0, R.shift_i
+    W.trailpre, W.trail_n = R.trailpre, R.trail_n
     if pad == 40 then
         W.whole = true
         W.maxtr = R.traces + NV.whole_traces(W)
@@ -8791,6 +8885,7 @@ NV.route_shift = function(R, why)
                 W.traces, W.started, W.saidlong = R.traces, R.started, R.saidlong
                 W.cpu, W.ticks, W.ran = R.cpu, R.ticks, R.ran
                 W.nroom, W.npawn, W.ntight = R.nroom, R.npawn, R.ntight
+                W.trailpre, W.trail_n = R.trailpre, R.trail_n
                 if R.whole then   -- (the whole area again, without caches)
                     W.maxtr = R.traces + NV.whole_traces(W)
                     W.maxt = (os.clock() - R.started) + NV.whole_time(W)
@@ -9912,6 +10007,16 @@ NV.bg_step = function()      -- nav_tick, only while no walk or route runs
                 os.clock() - job.R.started))
             return
         end
+        if res == "fail" and (job.R.pops or 0) < NV.TRAIL_POCKET then
+            -- a pocket where you stand: again from your trail, as the walk would go
+            -- (NV.trail_retry)
+            local W = NV.trail_retry(job.R)
+            if W then
+                job.R = W
+                NV.bg = job
+                return
+            end
+        end
         if res == "fail" and (job.R.pops or 0) <= 3 and (job.R.pops0 or 0) <= 3 then
             -- the search died where we stand (a corner): nothing about the target. Not
             -- "not reachable" -- queue it again and wait until we stand elsewhere
@@ -9924,6 +10029,7 @@ NV.bg_step = function()      -- nav_tick, only while no walk or route runs
         local door = (res == "found") and NV.route_first_door(job.R, why) or nil
         NV.bg_record(job, res == "found", (job.R.whole and "whole area" or (job.R.pad > 9 and "wide route" or "route"))
             .. (job.R.shifted and ", shifted grid" or "")
+            .. (job.R.trailpre and string.format(", from your trail %d back", NV.TRAIL_BACK[job.R.trail_n] or 0) or "")
             .. (door and (", door " .. tostring(door.name)) or ""), door ~= nil)
     end
 end
@@ -12949,13 +13055,16 @@ radar_pump = function(src)
                 elseif now - WS.present_since < 0.5 then
                     settling = true              -- tiny buffer right after the player first appears
                 else
-                    local px, py = read_actor_pos(p)
+                    local px, py, pz = read_actor_pos(p)
                     if px then
                         if WS.px then
                             local dm = math.sqrt((px - WS.px) ^ 2 + (py - WS.py) ^ 2)
                             if dm > 900 then WS.hold = now + 1.0 end
                         end
                         WS.px, WS.py = px, py
+                        if pz and NV.trail_add then   -- (your trail; a scene may move you)
+                            if ev then NV.trail.ev = true else pcall(NV.trail_add, px, py, pz) end
+                        end
                     end
                 end
             end

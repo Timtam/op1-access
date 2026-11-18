@@ -255,6 +255,22 @@ against one Eissentinel in the study dungeon. Weaknesses in the game's tile orde
 
 ## Walker (user report 2026-11-14)
 
+- **"Searching the whole area", then no way, by a chest -- the search starts from your trail
+  since this change, in a unit test only.** In Olberic's chapter 1 (2026-11-18), twice right
+  after the walker had led to a chest and it was opened, every search from there failed:
+  in a corner by the chest (walls 30 to both sides) the router got out into a pocket of 24
+  cells (Räuberhöhle, after the "Schwarze Kappe"), and of 785 cells with the targets
+  1300-1800 above (before the cave, after the "Lichtseelenstein"), through the box, the
+  whole area, the shifted grid and the search without people. The background checks then
+  called every target "not reachable". 300 further back the same targets had a route at
+  once: the grid is anchored where you stand, and from a tight corner it doesn't get out.
+  Now the pump keeps your trail (a point every 100 of your way, `NV.trail_add`; a new one
+  in a new area, after a jump of 800 or after a scene that moved you). A walk search that
+  failed starts again, the whole area at once, from a trail point 250 back ("Searching again
+  from a bit further back", log `ROUTE again from your trail`), then 700 back; the walk goes
+  back along the trail first ("..., back a bit first"). A background check that failed in a
+  pocket (under 3000 cells) does the same before it says "not reachable". test_trail.lua
+  (30 checks); not yet tried in the game.
 - **An arrow stuck after a battle — fixed 2026-11-16, not yet seen in the game.** A random
   encounter stopped a walk ("Walk stopped" as the battle began). The walker let go of "up"
   then, but the game missed that release: after the battle the character walked off alone
