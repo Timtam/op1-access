@@ -464,10 +464,18 @@ Open:
   thread; `LoopAsync` and `ExecuteWithDelay` become `LoopInGameThreadWithDelay` and
   `ExecuteInGameThreadWithDelay`; `RegisterKeyBind` only records the bind, and
   `M.key_poll` reads the keys every frame on the game thread (`shim.KeyScan`, the same
-  GetAsyncKeyState test and exact-modifier rule as UE4SS). UE4SS 4 hooks `KSUIManager:Open`
-  natively, so the game's own C++ opens of the HUD's kinds 22 (world map) and 28 (party
-  chat available) reached the mod at every talk; they are left unsaid (no UE4SS 3 log has
-  them). Under UE4SS 3 (no game-thread timers) everything runs as before.
+  GetAsyncKeyState test and exact-modifier rule as UE4SS). Under UE4SS 4 the mod hooks no
+  native function: UE4SS 4 hooks `KSUIManager:Open` and `KSUserWidgetBase:UIOpen` with a
+  native hook, whose thunk walks the calling Blueprint frame's out-parameter list until
+  NULL. In UE 4.18 that list isn't always NULL-terminated: when a traveler's story began
+  (2026-11-18, Olberic, "Die Geschichte dieses Reisenden beginnen? Ja"),
+  `UIManagerBP_C:PlayAfterFadeOut` called `KSUIManager:Open`, the walk ran past the list
+  into the UClass "Class" (whose class is itself) and spun forever on the game thread; the
+  game froze for good (`build/user-logs/hang-20261118-063458*`, UE4SS PDB:
+  `UnrealScriptFunctionHook`, UFunctionStructs.cpp line 232). Under UE4SS 3 these hooks only
+  saw Blueprint calls and never fired in its logs (the screens are read by the polls), so
+  nothing is lost. (The same hook passed the HUD's own opens of "World map" and "Party chat
+  available" at every talk.) Under UE4SS 3 (no game-thread timers) everything runs as before.
   Tried 2026-11-17/18 on UE4SS 4.0.0: start, load, navigator, walker (routes of 10,000
   units), talk, main menu, equipment, world map, battles with number keys and results,
   game over and "Weiter ab letztem Speicherpunkt", a shop, the path-action menu, an inn

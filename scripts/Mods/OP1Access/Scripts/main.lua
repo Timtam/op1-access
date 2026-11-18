@@ -725,11 +725,6 @@ local UI_KIND_SUPPRESSED = {
     [0]  = true,  -- "Title screen": KSUIManager fires it spuriously during loads;
                   -- the real title is the bespoke UIMainTitle (poll loop -> "Title").
     [27] = true, [103] = true, [104] = true,
-    -- UE4SS 4 hooks KSUIManager:Open natively, so the game's own C++ calls reach us too:
-    -- the HUD opens "World map" (22) and "Party chat available" (28) again at the start
-    -- and end of every talk and when the main menu opens (2026-11-17). UE4SS 3 never
-    -- passed them on (no log has them); the world map has its own reader.
-    [22] = true, [28] = true,
 }
 
 -- Auto-radar menu gate. In-game menu / battle / shop / conversation widget CLASSES
@@ -1011,6 +1006,15 @@ local function safe_register(path, fn, label)
     if label:find("Close") then off = OP1_NO_UICLOSE
     elseif label:find("Open") then off = OP1_NO_UIOPEN end
     if off then log("hook disabled by config: " .. label); return end
+    -- UE4SS 4 hooks these NATIVE functions (/Script/...) with a native hook. Its thunk
+    -- walks the calling Blueprint frame's out-parameter list until NULL; in UE 4.18 that
+    -- list isn't always NULL-terminated, and the walk spun forever on the game thread:
+    -- the game froze for good when a traveler's story began (2026-11-18, dump hang-
+    -- 20261118-063458: UIManagerBP_C:PlayAfterFadeOut -> KSUIManager:Open, its list ran
+    -- into the UClass "Class", whose class is itself). UE4SS 3 hooked only Blueprint
+    -- calls of them, and in its logs they never fired: the screens are read by the polls.
+    -- So under UE4SS 4 they stay off.
+    if M.V4 and path:find("^/Script/") then log("hook left off under UE4SS 4 (native function): " .. label); return end
     local ok, err = pcall(RegisterHook, path, M.fg_guard(fn))
     log(string.format("RegisterHook %s: %s%s", label, tostring(ok),
         ok and "" or (" (" .. tostring(err) .. ")")))
