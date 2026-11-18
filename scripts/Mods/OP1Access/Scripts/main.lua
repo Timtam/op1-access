@@ -4712,6 +4712,35 @@ M.bt_targets = function()   -- addresses under a visible target cursor, sorted
     table.sort(t)
     return t
 end
+-- THE ATTACK'S WEAPON (2026-11-18, user: switching weapons with Left/Right in the battle
+-- menu said nothing). A command item (BattleCommandMenuItem_C) has an AttributeIconPlate_C
+-- (+0x258) with AttributeList (TArray<uint8> +0x240), the entry shown AttributeIndex
+-- (+0x270; NextCommandAttribute / PrevCommandAttribute step it, wrapping) and
+-- EnableAttributeIcon (+0x258). An entry is the index into the plate's icon table
+-- (SetCommandAttribute: Conv_ByteToInt, Array_Get), whose order the Blueprint's defaults
+-- give: sword, spear, dagger, axe, bow, staff, unknown, fire, ice, lightning, wind, light,
+-- dark (M.ATTR_KEYS: the M.WEAK_DE keys). Read raw, as all battle widgets' pointers.
+-- Returns the word and how many there are to switch between, or nil.
+M.ATTR_KEYS = { [0] = "sword", [1] = "spear", [2] = "dagger", [3] = "ax", [4] = "arrow", [5] = "cane",
+    [7] = "Fire", [8] = "Ice", [9] = "Thunder", [10] = "Wind", [11] = "Light", [12] = "Dark" }
+M.bt_attr = function(it)
+    local plate = M.peekp(it, 0x258)
+    if not (plate and shim and shim.Peek) then return nil end
+    local function pk(off, kind)
+        local v
+        pcall(function() v = shim.Peek(plate + off, kind) end)
+        return v
+    end
+    local en = pk(0x258, "u8")
+    if not en or en == 0 then return nil end
+    local data, num, idx = pk(0x240, "ptr"), pk(0x248, "i32"), pk(0x270, "i32")
+    if not (data and data ~= 0 and num and idx) or num < 1 or num > 13 or idx < 0 or idx >= num then return nil end
+    local v
+    pcall(function() v = shim.Peek(data + idx, "u8") end)
+    local key = v and M.ATTR_KEYS[v]
+    if not (key and M.WEAK_DE[key]) then return nil end
+    return tr(M.WEAK_DE[key]), num
+end
 M.bt_menu = function()   -- the focused command of the topmost open menu
     local best, bf
     for _, m in ipairs(M.bt_list("BattleCommandMenu_C")) do
@@ -4738,8 +4767,13 @@ M.bt_menu = function()   -- the focused command of the topmost open menu
         pcall(function() open, b = mm.MenuOpen, mm.BoostLevel end)
         if open and type(b) == "number" and b > boost then boost = b end
     end
+    -- the weapon (or element) on the item: on the top menu (Attack), and where there is a
+    -- choice
+    local weapon, wnum = nil, 0
+    pcall(function() weapon, wnum = M.bt_attr(it) end)
+    if weapon and bf ~= 1 and (wnum or 0) < 2 then weapon = nil end
     return { floor = bf, cur = ci, text = text, add = M.wtext(it.TextAddInfo), usable = usable, who = who,
-        boost = boost }
+        boost = boost, weapon = weapon, wnum = wnum }
 end
 M.bt_help = function()
     for _, h in ipairs(M.bt_list("BattleCommandHelpWindow_C")) do
@@ -4862,9 +4896,12 @@ M.poll_battle = function()
             local fresh = not (bt.said or ""):match("^M")   -- the menu (re)appeared
             if fresh and sig == bt.last_sig and now - (bt.last_t or -10) < 2.0 then
                 bt.said = sig   -- it only flickered (opening the menu): nothing new
+                bt.weapon = m.weapon
             else
                 local s = m.text
                 if m.add and not M.placeholder(m.add) then s = s .. ", " .. M.bt_addinfo(m.add); bt.add_said = sig end
+                if m.weapon then s = s .. ", " .. m.weapon end   -- "Angriff, Speer" (M.bt_attr)
+                bt.weapon = m.weapon
                 if not m.usable then s = trf("%s, unavailable", s) end
                 -- a new turn (the top menu just opened): whose
                 if m.floor == 1 and fresh then
@@ -4876,6 +4913,11 @@ M.poll_battle = function()
                 speak(s)
                 bt.help_at = now + 0.3
             end
+        elseif m.weapon and m.weapon ~= bt.weapon then
+            -- Left/Right on the same command: the weapon alone
+            log(string.format("BATTLE weapon %s (%d to choose from)", m.weapon, m.wnum or 0))
+            bt.weapon = m.weapon
+            speak(m.weapon)
         end
         bt.last_sig, bt.last_t, bt.gone_t = sig, now, nil
         -- the boost level: say each change while the menu is up; the first time, also
