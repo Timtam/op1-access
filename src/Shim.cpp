@@ -14,6 +14,7 @@
 //   PreferSAPI(bool)           -> bool   (force SAPI as primary)
 //   InstallTalkHook(ufuncAddr) -> bool   (native-hook GetTalkText; speaks dialogue)
 //   PollTalk()                 -> string|nil  (last captured line, for logging)
+//   TalkQueue(ms)              -> bool  (the next dialogue line within ms queues, not cuts in)
 //   DtCount / DtRowAt / DtFind -> DataTable rows (RowMap), read only
 //   Peek / PeekFName           -> SEH-guarded raw reads of fields Lua can't reach
 //   GameTextFName(cmp, num)    -> string|nil  (GameText label FName -> localized text)
@@ -23,6 +24,7 @@
 #include <windows.h>
 #include <winhttp.h>
 
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <cstdint>
@@ -138,6 +140,9 @@ std::mutex   g_talk_mtx;
 std::string  g_last_talk;          // UTF-8, last captured line(s)
 std::string  g_last_name;          // UTF-8, last resolved speaker display name
 bool         g_talk_new = false;
+// TalkQueue: until this GetTickCount64 time the next dialogue line is queued after
+// what is being said instead of cutting it off (0 = off; one line only).
+std::atomic<unsigned long long> g_talk_queue_until{0};
 using FnExec = void (*)(void*, void*, void*);
 FnExec       g_gtt_orig = nullptr;
 
@@ -353,7 +358,10 @@ void capture_talk(void* result, void* frame) {
     // poll loop, which intermittently dies after a chapter load (PollTalk would
     // then never run). The hook always fires. This only queues: the speech
     // worker talks to the screen reader, never the game thread.
-    speech::output(u8, static_cast<size_t>(u), true);
+    // (Except right after the Lua side said something that must not be cut off --
+    // the skip hint at a scene's start, TalkQueue: then this one line queues.)
+    const unsigned long long qu = g_talk_queue_until.exchange(0);
+    speech::output(u8, static_cast<size_t>(u), !(qu != 0 && GetTickCount64() < qu));
 
     // Also publish for the loop to LOG it (it no longer speaks -> no double-speak).
     char nu8[384]; int nu = 0;
@@ -817,6 +825,16 @@ int l_poll_talk(lua_State* L) {
         return 1;
     }
     lua_pushnil(L);
+    return 1;
+}
+
+// TalkQueue(ms): the next dialogue line that comes within ms milliseconds is queued
+// after what is being said instead of cutting it off (the skip hint at the start of a
+// scene, 2026-11-18: the scene's first line came right after it). 0 turns it off.
+int l_talk_queue(lua_State* L) {
+    const lua_Integer ms = arg_int(L, 1, 0);
+    g_talk_queue_until.store(ms > 0 ? GetTickCount64() + static_cast<unsigned long long>(ms) : 0);
+    lua_pushboolean(L, 1);
     return 1;
 }
 
@@ -1656,6 +1674,7 @@ const luaL_Reg op1access_funcs[] = {
     {"InstallTalkHook",      l_install_talk_hook},
     {"InstallGameTextResolver", l_install_gametext_resolver},
     {"PollTalk",             l_poll_talk},
+    {"TalkQueue",            l_talk_queue},
     {"AudioInit",            l_audio_init},
     {"AudioShutdown",        l_audio_shutdown},
     {"AudioStatus",          l_audio_status},

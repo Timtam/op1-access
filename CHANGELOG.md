@@ -50,6 +50,8 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
 ### Story and exploration
 
 - Dialogue with speaker names, area names, door and action prompts.
+- A scene you can skip says so as it starts: "Hold Backspace to skip". The game itself
+  shows that hint only after a key press.
 - Path actions (J): facing someone tells you which path actions you can use on them and
   whether one is done already or not possible yet; the J menu says the same. The screens
   of all eight travelers' path actions are read: what a person carries with price or

@@ -11672,6 +11672,74 @@ M.poll_action_popup = function()
     speak(key and (action .. ", " .. key) or action, false)
 end
 
+-- SKIP HINT (user 2026-11-18): a scene the game lets you skip says so once as it starts
+-- ("Rücktaste halten zum Überspringen"); the game itself shows it only after a key is
+-- pressed in the scene. Its skip widget, UIEventSkip_C (one, on the game instance), is
+-- opened by EventManagerBP_C:PlayAfterFadeOut with UIManager:Open(101) only when the
+-- scene's PlayEventData.EventSkip > 0, and closed by FinishPre (Close(101)) at the end; a
+-- challenge dialog inside a scene closes and reopens it (TempEventSkip, RestoreEventSkip).
+-- Holding MenuCancel (Backspace or Escape, DefaultInput.ini) fills its bar and skips; the
+-- walker's Backspace stays quiet in scenes.
+-- Open = Visibility (UWidget +0xB7) neither collapsed (1) nor hidden (2), and Sequence
+-- (+0x248) not 2: its UIClose sets 2 and hides it. Freshly built it is visible with
+-- Sequence 0 until its first tick outside a scene closes it, so the hint waits until the
+-- widget was seen closed once (armed). Once per scene: a scene flag that is off for less
+-- than 2 s (chained scenes) is the same scene. Not in a battle. Read raw through a kept
+-- handle; found again at most every 10 s, never while a fade is up.
+M.SKIP_VIS, M.SKIP_SEQ = 0xB7, 0x248
+M.skip_state = function()   -- open (bool), visibility, sequence -- or nil (no widget yet)
+    local h = M.skip_h
+    if not M.handle_ok(h) then
+        M.skip_h, h = nil, nil
+        local now = os.clock()
+        if M.fade_now or now - (M.skip_find_t or -99) < 10.0 then return nil end
+        M.skip_find_t = now
+        local nm
+        pcall(function()
+            local x = FindFirstOf("UIEventSkip_C")
+            if x and x:IsValid() then h = M.handle(x); nm = x:GetFullName() end
+        end)
+        M.skip_h = h
+        if not h then return nil end
+        log(string.format("SKIPHINT widget %X %s", h.a, tostring(nm)))
+    end
+    local vis, seq
+    pcall(function() vis = shim.Peek(h.a + M.SKIP_VIS, "u8"); seq = shim.Peek(h.a + M.SKIP_SEQ, "i32") end)
+    if not (vis and seq) then return nil end
+    return vis ~= 1 and vis ~= 2 and seq ~= 2, vis, seq
+end
+-- S: the state between polls; open: M.skip_state's (nil = unknown); ev: a scene plays;
+-- now: os.clock(). True when the hint is due.
+M.skip_hint_due = function(S, open, ev, battle, now)
+    if ev and not battle then S.off_t = nil
+    elseif not S.off_t then S.off_t = now end
+    if S.said and S.off_t and now - S.off_t >= 2.0 then S.said = false end   -- that scene is over
+    if open == nil then return false end
+    if not open then S.armed = true; return false end
+    if S.armed and ev and not battle and not S.said then
+        S.said, S.armed = true, false
+        return true
+    end
+    return false
+end
+M.skip_hint_poll = function(ev, battle, now)
+    local S = M.skip_s
+    if not S then S = {}; M.skip_s = S end
+    local open, vis, seq = M.skip_state()
+    local sig = tostring(vis) .. "/" .. tostring(seq)
+    if open ~= nil and sig ~= S.sig then
+        S.sig = sig
+        log(string.format("SKIPHINT %s (visibility %s, sequence %s, scene %s, armed %s)",
+            open and "open" or "closed", tostring(vis), tostring(seq), tostring(ev), tostring(S.armed)))
+    end
+    if M.skip_hint_due(S, open, ev, battle, now) then
+        log("SKIPHINT said")
+        speak(tr("Hold Backspace to skip"), false)
+        -- the scene's first line often comes right after: it waits for the hint
+        if shim and shim.TalkQueue then pcall(shim.TalkQueue, 3000) end
+    end
+end
+
 -- INTERACTION HINT (talk + path action). The game picks ONE character you would talk
 -- to: player.refTalkChara, set while you stand close to an NPC and FACE them (nil when
 -- you turn away). For that same pick the field-command manager fills ActiveCommandList
@@ -13068,6 +13136,7 @@ radar_pump = function(src)
             log("BATTLE " .. (battle and "started" or "ended"))
             if not battle then M.battle_end_t = now end   -- (the area banner waits: poll_area_name)
         end
+        if M.skip_hint_poll then pcall(M.skip_hint_poll, ev, battle, now) end   -- "hold Backspace to skip"
         if battle then ev = true end
         if ev then WS.ev_t = now end
         local settling = false
