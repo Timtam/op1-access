@@ -40,6 +40,11 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   there ("fast travel to Rippeltiden, then 2 areas"); Ctrl+Backspace again puts the
   cursor on that town, and Enter travels.
 - The game over menu.
+- The status screen: each traveler's name, level, jobs, job points, stats, EXP to the next
+  level, path action and talent; Up and Down switch travelers.
+- The journal: the travelers' stories and the regions' side stories with their progress,
+  the entries of each (chapter, new or finished) and their text: who asked, the story so
+  far, the result.
 - Shops and inns: the shop's name and your money, its commands, the goods with price and how
   many you have, the amount to buy or sell with the total, and for weapons and armor what
   they would change for each traveler. After buying a weapon or armor and choosing to

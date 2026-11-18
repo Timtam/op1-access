@@ -604,6 +604,22 @@ Open:
 
 ## Menus
 
+- **Status screen and journal: in a unit test only.** Both said nothing (user, 2026-11-18;
+  the log: a minute on StatusMenuWidget_C, eleven seconds on MainMenuMissionRecord_C,
+  silent). Built from the cooked Blueprints (scripts/bp-disasm.py) without seeing the
+  screens. Status: Up/Down step through the party (SelectedCharacterIndex); said are the
+  name, which of how many and the level, then queued the jobs, the job points, the ten
+  stats (ListItemParamWidget_63, ValueBefore = base plus equipment), the EXP to the next
+  level, the path action with what it does and the talent with its text. Journal: Status
+  2/4 the travelers' stories / the regions' side stories, Left/Right over the gauges (name,
+  progress in percent, "not available yet"), LB/RB between the two (said with the
+  caption, then the footer's help); Decide opens the list (the list reader: title,
+  chapter, "new" / "finished" from the marker glyph "0" / "1"), with the text beside it
+  as the help line (who asked, the story so far, the result). Not checked in the game:
+  the labels' wording (the JP labels may be said twice), whether the marker glyph sits in
+  column 3, the keys for LB/RB, the "watch again?" dialog (the dialog reader should say
+  it), the equippable weapons (icons only, not said). Ctrl+F5 dumps both (MDUMP status /
+  journal).
 - **Key names in tutorials: one heard.** Since e41f695 the circled letters the game uses
   for keys ("Drückt die Ⓞ-Taste", "Ⓙ drücken", "ⒶⒹ") are said as plain letters. Heard in
   the radar tutorial: "Drückt die O-Taste, um das Radar ein- und auszuschalten". Other

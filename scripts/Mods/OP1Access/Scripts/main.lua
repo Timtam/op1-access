@@ -1917,6 +1917,221 @@ do
     end
 end
 
+-- STATUS SCREEN (user 2026-11-18: it said nothing). StatusMenuWidget_C on the active
+-- stack shows one traveler; Up/Down step through the party (OnCursorUp/DownRepeat ->
+-- Up/DownCategory: SelectedCharacterIndex over the tabs, CategoryDisplayedNum of them;
+-- then UpdateCategory, in the same frame). What it fills (bytecode): BaseStatus --
+-- TitleText the name, LvNum the level, NextExpText/NextExpNum the EXP to the next one;
+-- Equipment -- Job_10/Job_10_Name the first job, Job_20/Job_20_Name the second (collapsed
+-- without one), KSTextBlock_2/_3/_4 the job points; Params -- ListItemParamWidget_63
+-- .Param_01..param_10 (ParamName; ValueBefore = base plus equipment: HP, SP, ...);
+-- Special_Action -- ActionCommand/ActionText the path action and ActionFieldText what it
+-- does, SpecificText/SpecificActionName the talent and SpecificActionText. The designer's
+-- dummies ("Name", "999", full-width digits) are skipped. Said when the traveler changes:
+-- name, which of how many and level at once; the rest queued.
+M.STATUS_DUMMY = { ["Name"] = true, ["999"] = true, ["99999"] = true, ["0000"] = true }
+M.status_text = function(w, name)
+    local tb
+    pcall(function() tb = w[name] end)
+    if not tb then return nil end
+    local v = M.wvis(tb)
+    if v == 1 or v == 2 then return nil end
+    local s = M.wtext(tb)
+    if not s or M.placeholder(s) or M.STATUS_DUMMY[s] or s:find("^\239\188[\144-\153]") then return nil end
+    return s
+end
+-- -> the line said at once and the rest, or nil (no name yet)
+M.status_lines = function(w)
+    local function t(n) return M.status_text(w, n) end
+    local name = t("TitleText")
+    if not name then return nil end
+    local idx, num
+    pcall(function() idx, num = w.SelectedCharacterIndex, w.CategoryDisplayedNum end)
+    local head = name
+    if type(idx) == "number" and type(num) == "number" and num > 1 then
+        head = head .. ", " .. trf("%d of %d", idx + 1, num)
+    end
+    local lv = t("LvNum")
+    if lv then head = head .. ", " .. trf("level %s", lv) end
+    local rest = {}
+    local function add(s) if s and s ~= "" then rest[#rest + 1] = s end end
+    local function pair(label, value)
+        if not value then return nil end
+        return label and (label .. ": " .. value) or value
+    end
+    add(pair(t("Job_10"), t("Job_10_Name")))
+    add(pair(t("Job_20"), t("Job_20_Name")))
+    local jp = t("KSTextBlock_3")
+    if jp then
+        local a, b = t("KSTextBlock_2"), t("KSTextBlock_4")
+        add(((a and a ~= b) and (a .. " ") or "") .. jp .. (b and (" " .. b) or ""))
+    end
+    local stats, pl = {}, nil
+    pcall(function() pl = w.ListItemParamWidget_63 end)
+    for n = 1, pl and 10 or 0 do
+        local p, val
+        pcall(function() p = pl[(n == 10) and "param_10" or string.format("Param_%02d", n)] end)
+        if p then pcall(function() val = p.ValueBefore end) end
+        local pn = p and M.wtext(p.ParamName)
+        if type(val) == "number" and pn and not M.placeholder(pn) and not M.STATUS_DUMMY[pn] then
+            stats[#stats + 1] = pn .. " " .. string.format("%d", val)
+        end
+    end
+    if #stats > 0 then add(table.concat(stats, ", ")) end
+    add(pair(t("NextExpText"), t("NextExpNum")))
+    local act = pair(t("ActionCommand"), t("ActionText"))
+    if act then
+        local d = t("ActionFieldText")
+        add(d and (act .. ". " .. d) or act)
+    end
+    local tal = pair(t("SpecificText"), t("SpecificActionName"))
+    if tal then
+        local d = t("SpecificActionText")
+        add(d and (tal .. ". " .. d) or tal)
+    end
+    return head, (#rest > 0) and M.join_text(rest) or nil
+end
+do
+    local S = {}
+    M.poll_status = function()
+        local w, cls = M.get_active_screen()
+        if cls ~= "StatusMenuWidget_C" or not w then S.sig, S.t0 = nil, nil; return end
+        local idx
+        pcall(function() idx = w.SelectedCharacterIndex end)
+        local sig = tostring(idx) .. "|" .. tostring(M.status_text(w, "TitleText"))
+        if sig == S.sig then return end
+        local now = os.clock()
+        if S.sig == nil then   -- just opened: a moment for the screen to fill its texts
+            S.t0 = S.t0 or now
+            if now - S.t0 < 0.25 then return end
+        end
+        local okl, head, rest = pcall(M.status_lines, w)
+        if not (okl and head) then return end
+        S.sig = sig
+        log(string.format("STATUS %s: %s | %s", tostring(idx), head, tostring(rest)))
+        speak(head, true)
+        if rest then speak(rest, false) end
+    end
+end
+
+-- JOURNAL (user 2026-11-18: it said nothing). MainMenuMissionRecord_C on the active stack.
+-- Status by value (EMAINMENU_SEQ_MISSIONRECORD, from the enum's names table; the bytecode
+-- agrees): 2 the travelers' stories, 3 a story's list, 4 the regions' side stories, 5
+-- their list, 6 the cursor moving, 7 switching stories / side stories, 8 "watch again?".
+-- Left/Right move SelectPos over GaugeList (MainMenuMissionRecordGaugeMain_C / ...Sub_C:
+-- GaugeText the traveler's or region's name, MaxGaugePercent the progress 0..1,
+-- IsUnEnable not open yet); LB/RB switch the two (IsOpenMainMission). The caption says
+-- which (TmpHeaderUI.CaptionText: eMAINMENU_CAPTION_MISSION_MAIN / _SUB), the footer what
+-- to do (TmpFooterUI.HelpText). Decide opens the list, a ListWidget_C pushed active: the
+-- list reader says its rows (M.ml_screen "journal") and the text beside it as the help
+-- line (M.journal_text).
+M.journal_gauge = function(w)
+    local pos
+    pcall(function() pos = w.SelectPos end)
+    if type(pos) ~= "number" then return nil end
+    local gs = {}
+    pcall(function() w.GaugeList:ForEach(function(_, e) gs[#gs + 1] = e:get() end) end)
+    local g = gs[pos + 1]
+    if not g then return nil end
+    local name = M.wtext(g.GaugeText)
+    if not name then pcall(function() name = M.wtext(g.BaseTextBlock) end) end
+    if not name or M.placeholder(name) then return nil end
+    if name:match("^[%?%s]+$") then name = tr("Unknown") end
+    local un, pct = false, nil
+    pcall(function() un = g.IsUnEnable and true or false end)
+    pcall(function() pct = g.MaxGaugePercent end)
+    local s = name
+    if un then s = trf("%s, not available yet", s)
+    elseif type(pct) == "number" then s = s .. ", " .. trf("%d percent", math.floor(pct * 100 + 0.5)) end
+    if #gs > 1 then s = s .. ", " .. trf("%d of %d", pos + 1, #gs) end
+    return s
+end
+-- A row of the journal's list: col1 the title, col2 a story's chapter ("" for a side
+-- story), and a marker glyph in the last column (bytecode: GetAreaListItemData,
+-- CreateMainMissionListItem): "1" a side story finished (MissionState >= 2), "0" a new
+-- entry. Said "Titel, Kapitel 2, neu" -- not "Titel, 1".
+M.journal_row = function(c1, c2, c3)
+    local mark = (c3 == "1" or c3 == "0") and c3 or ((c2 == "1" or c2 == "0") and c2) or nil
+    local say = c1
+    if c2 and c2 ~= mark and not M.placeholder(c2) then say = say .. ", " .. c2 end
+    if mark == "1" then say = trf("%s, finished", say)
+    elseif mark == "0" then say = trf("%s, new", say) end
+    return say
+end
+-- The text beside the journal's list (ListItemTextArea_C): who asked (side stories), the
+-- story so far, the result; the parts its view mode hides are left out.
+M.journal_text = function(owner)
+    local ta
+    pcall(function() ta = owner.ListItemTextArea end)
+    if not ta then return nil end
+    local function shown(part)
+        local a
+        pcall(function() a = ta[part] end)
+        if not a then return true end
+        local v = M.wvis(a)
+        return v ~= 1 and v ~= 2
+    end
+    local function txt(f)
+        local s
+        pcall(function() s = M.wtext(ta[f]) end)
+        if s and not M.placeholder(s) then return s end
+        return nil
+    end
+    local parts = {}
+    if shown("OrdererArea") then
+        local on, ol = txt("OrdererName"), txt("OrdererText")
+        if on then parts[#parts + 1] = ol and (ol .. ": " .. on) or on end
+    end
+    if shown("StoryArea") then parts[#parts + 1] = txt("StoryText") end
+    if shown("ResultArea") then parts[#parts + 1] = txt("ResultText") end
+    local out = {}
+    for _, p in ipairs(parts) do if p then out[#out + 1] = p end end
+    return #out > 0 and M.join_text(out) or nil
+end
+do
+    local J = {}
+    M.poll_journal = function()
+        local w, cls = M.get_active_screen()
+        if cls ~= "MainMenuMissionRecord_C" or not w then
+            -- its list or the "watch again?" dialog on top: the gauge again when back
+            if cls == "ListWidget_C" or cls == "UICommonDialogBP_C" then
+                if J.sig then J.away = true end
+            else
+                J.sig, J.mode, J.t0, J.away = nil, nil, nil, nil
+            end
+            return
+        end
+        if J.away then J.away, J.sig = nil, nil end
+        local st, mainm
+        pcall(function() st, mainm = w.Status, w.IsOpenMainMission end)
+        if st ~= 2 and st ~= 4 and st ~= 6 then return end
+        local now = os.clock()
+        if J.mode == nil then   -- just opened: a moment for the gauges to fill
+            J.t0 = J.t0 or now
+            if now - J.t0 < 0.3 then return end
+        end
+        local okg, line = pcall(M.journal_gauge, w)
+        if not (okg and line) then return end
+        local mode = mainm and "main" or "sub"
+        local sig = mode .. "|" .. line
+        if sig == J.sig then return end
+        local first = J.mode ~= mode
+        J.sig, J.mode, J.t0 = sig, mode, nil
+        log(string.format("JOURNAL status %s %s: %s", tostring(st), mode, line))
+        if first then
+            -- which of the two, then (queued) what to do there
+            local cap, help
+            pcall(function() cap = M.wtext(w.TmpHeaderUI.CaptionText) end)
+            pcall(function() help = M.wtext(w.TmpFooterUI.HelpText) end)
+            if cap and M.placeholder(cap) then cap = nil end
+            speak(cap and (cap .. ". " .. line) or line, true)
+            if help and not M.placeholder(help) then speak(help, false) end
+        else
+            speak(line, true)
+        end
+    end
+end
+
 -- GAME OVER (user report 2026-11-14: after the party fell, the menu was silent).
 -- UIGameOver_C, on the active stack (object dump): NowCursorPos @0x2D0 indexes CursorList
 -- @0x2C0, the GameoverItemWidget_C items Save @0x288 ("Weiter ab letztem Speicherpunkt")
@@ -3612,6 +3827,34 @@ M.menu_dump = function()
         log(string.format("MDUMP party#%d vis=%s cur=%s open=%s valid=%s caption=%s | %s", i, tostring(M.wvis(w)), tostring(cp),
             tostring(open), tostring(valid), tostring(M.wtext(w.CaptionText)), table.concat(mem, " ; ")))
     end)
+    -- the status screen and the journal (2026-11-18): what their readers see
+    each("StatusMenuWidget_C", function(w, i)
+        local idx, num
+        pcall(function() idx, num = w.SelectedCharacterIndex, w.CategoryDisplayedNum end)
+        local okl, head, rest = pcall(M.status_lines, w)
+        log(string.format("MDUMP status#%d vis=%s idx=%s num=%s | %s | %s", i, tostring(M.wvis(w)), tostring(idx),
+            tostring(num), tostring(okl and head), tostring(okl and rest)))
+    end)
+    each("MainMenuMissionRecord_C", function(w, i)
+        local st, pos, mainm, idx
+        pcall(function() st, pos, mainm, idx = w.Status, w.SelectPos, w.IsOpenMainMission, w.MissionListSelectIdx end)
+        local gs = {}
+        pcall(function()
+            w.GaugeList:ForEach(function(k, e)
+                local g = e:get()
+                local pct, un
+                pcall(function() pct, un = g.MaxGaugePercent, g.IsUnEnable end)
+                gs[#gs + 1] = string.format("%d:%s %s%s", k, tostring(M.wtext(g.GaugeText)), tostring(pct), un and " off" or "")
+            end)
+        end)
+        local cap, help
+        pcall(function() cap = M.wtext(w.TmpHeaderUI.CaptionText) end)
+        pcall(function() help = M.wtext(w.TmpFooterUI.HelpText) end)
+        local okt, jt = pcall(M.journal_text, w)
+        log(string.format("MDUMP journal#%d vis=%s status=%s pos=%s main=%s listidx=%s caption=%s help=%s text=%s | %s", i,
+            tostring(M.wvis(w)), tostring(st), tostring(pos), tostring(mainm), tostring(idx), tostring(cap), tostring(help),
+            tostring(okt and jt), table.concat(gs, " ; ")))
+    end)
     -- every VISIBLE text block of the menu screens, with its path (where a title lives)
     for _, tcls in ipairs({ "TextBlock", "KSTextBlock" }) do
         local list
@@ -3714,6 +3957,7 @@ M.ml_screen = function(addr, w)
         end
         if cls == "ShopMenuWidget_C" and is("ProductList") then return "shop", owner end
         if cls == "SupportAbilityChangeWidget_C" and is("SupportAbilitySelectList") then return "support", owner end
+        if cls == "MainMenuMissionRecord_C" and is("ListWidget") then return "journal", owner end
         return nil   -- another screen's list (read plainly)
     end
     for _, o in ipairs(M.ml_list("MainMenuItemListWidget_C")) do
@@ -4209,6 +4453,7 @@ M.poll_menu_list = function()
             say = say .. ", " .. c2
         end
         if scr == "items" and stv == 1 then say = trf("%s, not usable here", say) end
+        if scr == "journal" then say = M.journal_row(c1, c2, M.wtext(row.RefText_Col3)) end
         if scr == "abilities" then
             -- learned = the row's check mark (RefImg_Strikethrough shown). ItemStatus 1 only
             -- means greyed: with too few LBP every skill is greyed, and "Analyse, erlernt"
@@ -4237,7 +4482,7 @@ M.poll_menu_list = function()
             if slot then st.sup_slot = slot end
         end
     end
-    M.ml_speak(st, now, sig, say, extra, scr, which, owner, scr == "support")
+    M.ml_speak(st, now, sig, say, extra, scr, which, owner, scr == "support" or scr == "journal")
 end
 -- Say a list line (sig names what it is: the same again stays quiet), and 0.3 s later its
 -- help line: extra (a tab's support rows, a support slot's description) or the help box,
@@ -4282,7 +4527,12 @@ M.ml_speak = function(st, now, sig, say, extra, scr, which, owner, nowait)
                 local okc, c = pcall(M.eq_changes, owner)
                 if okc and c then parts[#parts + 1] = c end
             end
-            local hh = M.ml_help()
+            -- the journal: the text beside its list instead of a help box
+            if scr == "journal" then
+                local okj, jt = pcall(M.journal_text, owner)
+                if okj and jt then parts[#parts + 1] = jt end
+            end
+            local hh = (scr ~= "journal") and M.ml_help() or nil
             -- a locked skill's help is just "???"
             if hh and not hh:match("^[%?%s]+$") then parts[#parts + 1] = hh end
             -- a support ability: what it changes (max. HP ...), after its description
@@ -5415,6 +5665,8 @@ M.fast_steps = {
     { "saveload", function() M.poll_saveload() end },
     { "options", function() M.poll_options() end },
     { "mainmenu", function() M.poll_mainmenu() end },
+    { "status", function() M.poll_status() end },
+    { "journal", function() M.poll_journal() end },
     { "worldmap", function() M.poll_worldmap() end },
     { "gameover", function() M.poll_gameover() end },
     { "shop", function() M.poll_shop() end },
