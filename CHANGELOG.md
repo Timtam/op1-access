@@ -72,7 +72,10 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   for directions. It says which chests are opened or purple, which targets are higher or lower
   than you (a floor, or a terrace a few steps up), which can't be reached, where exits
   lead and how dangerous the area behind them is, and what kind of shop a shop is. A
-  tavern leads to its barkeep, not to the door. People are listed by the game's own names
+  tavern leads to its barkeep, not to the door. Everyone the game has placed is on the
+  radar and in the people list from the start: also the nameless townsfolk, the village
+  chiefs, barkeeps and many side-story people, who used to show up only after you had
+  talked to them. People are listed by the game's own names
   for them: a line said by someone else no longer renames the person you just talked to,
   and a person in the next area no longer takes on the name of one you met before.
 - The minimap's markers: what each one is (side story with the person's name, hidden item,

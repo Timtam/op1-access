@@ -7294,8 +7294,18 @@ local function npc_interesting(o)
     local id = 0
     do local a = ptext:match("_(%d+)_%d+$"); if a then id = tonumber(a) or 0 end end
     local istest = label:find("^TEST_") ~= nil
+    -- That rule left out real people (user 2026-11-18: one stood in a Pflastersten doorway,
+    -- the walker said "Jemand steht im Weg", yet the radar and the people list had nobody;
+    -- the game picks such people to talk to). In the placement table (3528 rows) the ID is
+    -- 0 for: the game's GENERIC people (493 NNPC_*, CN_NP_COM_000000_0000: townsfolk, an
+    -- event's henchmen), the village chiefs (CN_NP_MOS_000000_0000 ...), barkeeps and
+    -- dungeon merchants (CN_NP_SYS_..._0010/_0020), and every side-story person whose label
+    -- has letters in it (CN_SS_FO3_0101B1_0003, CN_MS_BAL_0000A0_0000: not all digits).
+    -- So every PLACED character (NPC_* / NNPC_*, all PlacementType 1) is a person; out
+    -- stay the save points' books (below), editor dummies and actors without a label.
+    local person = label:find("^N?NPC_") ~= nil
 
-    local keep = learned or (not istest and id > 0)
+    local keep = learned or (not istest and (id > 0 or person))
     -- (kept only by a talk, with no lines of its own: a save point? asked once per actor)
     local savept = false
     if keep and id == 0 then
@@ -7764,7 +7774,11 @@ NV.resolve_name = function(o)
         rec.sname, rec.sdone = nm, true
     end
     if rec.sname and rec.sname ~= "???" then return rec.sname end
-    return rec.name or rec.sname
+    if rec.name then return rec.name end
+    -- "???" is a story person not met yet; the game's generic people (NNPC_*) have no
+    -- name at all (theirs is "???" too)
+    if rec.lbl and rec.lbl:find("^NNPC_") then return nil end
+    return rec.sname
 end
 
 -- SHOPKEEPERS (2026-11-15, user report: the walk to the Wirtshaus in Atlasdam ended in
@@ -8270,6 +8284,7 @@ local function nav_announce(prefix)
     -- learned in a talk only where there is none. Per-focus only, cached.
     if t.cat == "npc" and not t.name and t.actor then
         if NV.resolve_name then t.name = NV.resolve_name(t.actor) end
+        if t.name and t.name:match("^[%?%s]+$") then t.name = tr("Unknown") end   -- (not "? ? ?")
         -- no name: the save point's book is an NPC too (it was "npc 1 of 7: up left,
         -- 156" by the save point, 2026-11-14) -- its minimap marker names it
         if not t.name then

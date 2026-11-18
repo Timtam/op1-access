@@ -679,6 +679,19 @@ Open:
 
 ## Navigation
 
+- **Every placed person on the radar and in the list: in a unit test only.** In a
+  Pflastersten doorway the walker said "Jemand steht im Weg" four times, and the game
+  picked that person to talk to (path-action hint without a name), but the radar and the
+  people list had nobody there (user, 2026-11-18). It was one of the game's GENERIC people
+  (NNPC_TMntS_A_00x, text label CN_NP_COM_000000_0000): the rule "talkable iff the text
+  label's dialogue ID is non-zero" left out all 493 NNPC_* in the placement table, and
+  besides them the village chiefs (CN_NP_MOS_000000_0000), barkeeps and dungeon
+  merchants, and every side-story person whose label has letters in it
+  (CN_SS_FO3_0101B1_0003: not all digits) -- all only after a talk. Since then every placed
+  character (NPC_* / NNPC_*) counts, save points' books, editor dummies and actors
+  without a label stay out. Generic people have no name ("Person 3 of 18: up, 300"); a
+  story person whose name is still "???" is said "Unknown". Not heard yet: whether the
+  radar gets too busy in big towns.
 - **Exits walked to their trigger box: in a unit test only.** From the Östliche to the
   Südliche Sonnschatt-Sandwüste the walker wouldn't go on into the next area (user,
   2026-11-18): it went for the exit actor's root (F_Desert_1_2, LevelTrigger_To_F_Desert_1_1
