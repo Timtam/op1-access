@@ -6696,7 +6696,8 @@ local function bump_step()
     if (moved > 250 and rate > 2200) or moved > 1200 then
         log(string.format("DOOR jump=%.0f dt=%.2f rate=%.0f", moved, dt, rate))
         pcall(function() shim.AudioPlayCue(DOOR_CUE) end)
-        if beacon_on then beacon_rescan_at = now + 0.7 end
+        -- (beacon_on is declared further down: read through M, else it is the global, nil)
+        if M.beacon_is_on and M.beacon_is_on() then beacon_rescan_at = now + 0.7 end
         M.jump_t = now   -- the navigator's list is stale now (NV.list_stale)
         bump_snap = nil
         return
@@ -6857,7 +6858,7 @@ local function audio_test_cycle()
         local st = "?"; pcall(function() st = shim.AudioStatus() end)
         log("AudioInit: " .. tostring(ok) .. " status=" .. tostring(st))
         if not audio_inited then speak(trf("Audio init failed: %s", tostring(st))); return end
-        load_cues()
+        if M.load_cues then M.load_cues() end   -- (declared further down)
     end
     audio_test_phase = (audio_test_phase % (#AUDIO_TESTS + 1)) + 1
     pcall(function() shim.AudioTest(4) end)                          -- engine test off
@@ -6890,6 +6891,7 @@ end
 -- player position as the Steam Audio listener and the nearest object as source 0,
 -- so the cue pans + swells as you walk. Re-toggle after a map change to rescan.
 local beacon_on  = false
+M.beacon_is_on = function() return beacon_on end   -- (for code above this line)
 local beacon_objs = {}
 local beacon_slotof = {}   -- stable beacon_objs index -> shim slot (declick: one object, one slot)
 -- Range model: ping EVERY object within a FIXED radius (no density filter), so an
@@ -6921,6 +6923,7 @@ local function load_cues()
         end
     end
 end
+M.load_cues = load_cues   -- (for the audio test above)
 
 -- RADAR rule for NPCs: LEARNED-ONLY. Every static field (NPCInfoData, the
 -- EventID/EvetName arrays, trigger collision -- tcol=3 across all 17) reads
@@ -8804,6 +8807,11 @@ NV.trail_add = function(x, y, z)
     T.pts[#T.pts + 1] = { x = x, y = y, z = z }
     if #T.pts > 80 then table.remove(T.pts, 1) end
 end
+-- for the pump (radar_pump), which can't see NV (a local of its own block): there
+-- `NV.trail_add` was the GLOBAL NV, nil -- the pump died at every field tick and the radar
+-- never came back after a load (2026-11-18, 7b449d5; luac -l showed `GETTABUP _ENV "NV"`)
+M.trail_add = NV.trail_add
+M.trail_event = function() NV.trail.ev = true end
 -- The trail point to search from: the newest one at least `back` along the trail behind
 -- cur and `mindist` from it in a straight line; and the points from cur to it, in walking
 -- order (cur first). nil when the trail is too short.
@@ -13161,8 +13169,8 @@ radar_pump = function(src)
                             if dm > 900 then WS.hold = now + 1.0 end
                         end
                         WS.px, WS.py = px, py
-                        if pz and NV.trail_add then   -- (your trail; a scene may move you)
-                            if ev then NV.trail.ev = true else pcall(NV.trail_add, px, py, pz) end
+                        if pz and M.trail_add then   -- (your trail; a scene may move you)
+                            if ev then pcall(M.trail_event) else pcall(M.trail_add, px, py, pz) end
                         end
                     end
                 end
