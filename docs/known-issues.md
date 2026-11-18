@@ -185,6 +185,12 @@ against one Eissentinel in the study dungeon. Weaknesses in the game's tile orde
 (1c473c0) heard on the flats: "weak to Bogen, 2 unknown", then "weak to Bogen, Eis,
 1 unknown". Not yet seen or checked:
 
+- **The attack's weapon: in a unit test only.** Left/Right on Attack switch the weapon, and
+  nothing was said (user, 2026-11-18). Since 42c9b2d Attack says it ("Angriff, Speer") and a
+  switch says the new one ("Bogen"), from the item's AttributeIconPlate_C (AttributeList,
+  AttributeIndex; the icon table's order sword, spear, dagger, axe, bow, staff, unknown,
+  fire ... dark read from the cooked Blueprint). Log: `BATTLE weapon`. Not heard yet;
+  whether skills that carry an element show it there too (then said only with a choice).
 - **More than five weaknesses.** The panel has five tiles; an enemy with more is logged
   ("WEAK"). Not seen.
 - **Locked weaknesses: in a unit test only.** A boss that calls helpers has its
