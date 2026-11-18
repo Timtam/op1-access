@@ -7,7 +7,7 @@ gets fixed, delete its entry (the commit message keeps the history).
 
 - **English was heard only in a short session.** Since 7d483f2 the mod's own words follow
   the game's text language (Scripts/lang/<language>.po, docs/translations.md); de.po
-  covers all 414 texts and a whole German session logged no "I18N missing" line. Since
+  covers all texts (498 on 2026-11-18) and a whole German session logged no "I18N missing" line. Since
   59f846a the language comes from the game's own setting (KSGameStatics:GetLanguage); a
   switch in the options is followed within 2-5 s (title options to English, field menu
   options back to German, 2026-11-16). Heard in English: the title and load menus, the
@@ -604,27 +604,34 @@ Open:
 
 ## Menus
 
-- **Status screen and journal: in a unit test only.** Both said nothing (user, 2026-11-18;
-  the log: a minute on StatusMenuWidget_C, eleven seconds on MainMenuMissionRecord_C,
-  silent). Built from the cooked Blueprints (scripts/bp-disasm.py) without seeing the
-  screens. Status: Up/Down step through the party (SelectedCharacterIndex); said are the
-  name, which of how many and the level, then queued the jobs, the job points, the ten
-  stats (ListItemParamWidget_63, ValueBefore = base plus equipment), the EXP to the next
-  level, the path action with what it does and the talent with its text. Journal: Status
-  2/4 the travelers' stories / the regions' side stories, Left/Right over the gauges (name,
-  progress in percent, "not available yet"), LB/RB between the two (said with the
-  caption, then the footer's help); Decide opens the list (the list reader: title,
-  chapter, "new" / "finished" from the marker glyph "0" / "1"), with the text beside it
-  as the help line (who asked, the story so far, the result). Not checked in the game:
-  the labels' wording (the JP labels may be said twice), whether the marker glyph sits in
-  column 3, the keys for LB/RB, the "watch again?" dialog (the dialog reader should say
-  it), the equippable weapons (icons only, not said). Ctrl+F5 dumps both (MDUMP status /
+- **Status screen and journal: tried with one party.** Both were silent (user,
+  2026-11-18); read since 90bfd3a, fixed after a test in the game (1f74464) and heard
+  again with Slot 1 (Cyrus, Ophilia, Tressa, Olberic). Status: name, which of four and
+  level, then the job, the weapons carried ("Waffe: Speer, Bogen", from the pictures'
+  texture names), "LBP erhalten: 398 LBP", the ten stats, the EXP to the next level, the
+  path action and the talent; Up/Down. Journal: caption, footer help and keys
+  ("Rücktaste: Zurück, O: Nebengeschichten"), Left/Right over the travelers (the four
+  not open yet are skipped by the game and no longer said on the way), O/Q between the
+  stories and the side stories, a list's title ("Tagebuch von Ophilia", "Aufzeichnungen
+  in Küstenland: Rippeltiden"), rows with "Kapitel 1, Eintrag 17", "neu" (the game's
+  "!", gone once seen) and "abgeschlossen", the text beside. Not tried: a second job
+  (Job_20; nobody in the party has one), a side story's region that isn't open yet. The
+  regions are counted in the game's list order ("Alle, 1 von 9", "Küstenland, 4 von 9"),
+  which may not be the order they are drawn in. Ctrl+F5 dumps both (MDUMP status /
   journal).
-- **Key names in tutorials: one heard.** Since e41f695 the circled letters the game uses
-  for keys ("Drückt die Ⓞ-Taste", "Ⓙ drücken", "ⒶⒹ") are said as plain letters. Heard in
-  the radar tutorial: "Drückt die O-Taste, um das Radar ein- und auszuschalten". Other
-  key signs (⑤, ⑥ in the battle's boost help, probably gamepad buttons) are left as they
-  are.
+- **Q reads the objective only in the field, the menu's list and a talk** (since
+  1f74464): in the journal Q is the game's LB, and "Kein Ziel" was said over its switch to
+  the main story. The world map isn't on the active stack (nil, like the field), so Q
+  there still reads the objective; whether the map itself uses Q wasn't checked.
+- **Key caps: the journal's footer heard.** Since 0fe4fd1 every glyph of the game's
+  key-cap table (CommonKeyConfigDataTable) is said by name; heard in the journal: "W S A
+  D: Auswählen, E: Bestätigen, Rücktaste: Zurück, O: Nebengeschichten", and earlier the
+  radar tutorial's "O-Taste". Not heard: gamepad and mouse buttons, the Italian, Spanish
+  and French caps. The table gives some glyphs to two keys; the mod names the likelier
+  one: ⓛ the gamepad's A (the table's Add and End_DE too), ⓒ Left arrow (BackSpace_FR
+  too), ┣ Backspace (Equals_DE too), ┢ Caps Lock (LeftBracket_DE, RightBracket_DE too),
+  ┠ Shift (Pound_DE, Yen_DE too). Punctuation keys are left as they are, and so are ⑤
+  and ⑥ in the battle's boost help.
 - **The radar has no map to read.** Sighted players mentioned a town minimap with the
   walkable paths. Octopath Traveler II has one; this game's radar is a cloudy circle with
   icons only (checked on screenshots and in the game files). A minimap with a top-down
