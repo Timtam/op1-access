@@ -25,7 +25,7 @@ gets fixed, delete its entry (the commit message keeps the history).
   period, Shift+comma, Shift+period); dialogue lines are in the list (a dump after
   Kit's dialogue, 2026-11-16) but weren't listened to through the keys. A line said
   twice in a row is kept once.
-- **The skip hint: in a unit test only.** A scene the game lets you skip says "Hold
+- **The skip hint: said once in the game.** A scene the game lets you skip says "Hold
   Backspace to skip" ("Rücktaste halten zum Überspringen") once as it starts (user,
   2026-11-18: the game shows its own hint only after a key press). The source is the
   game's skip widget, UIEventSkip_C (bytecode): EventManagerBP_C:PlayAfterFadeOut opens it
@@ -35,9 +35,10 @@ gets fixed, delete its entry (the commit message keeps the history).
   Open = Visibility (+0xB7) neither hidden nor collapsed and Sequence (+0x248) not 2; once
   per scene. The scene's first line, when it comes within 3 s, waits for the hint (the
   shim's TalkQueue; before, a dialogue line always cut off what was being said). Log:
-  `SKIPHINT`. Not seen yet: whether Open(101) makes the widget visible (if not, nothing
-  is said), whether the hint comes before the first line, and that talking to
-  townspeople stays quiet.
+  `SKIPHINT`. In the game (2026-11-18, the scene before the fight with Gaston): the widget
+  was closed (visibility 2) in the field, Open(101) made it visible (0, sequence 0) as the
+  scene began, and the hint was said; the first line came 3.3 s later. Not seen yet: a
+  first line within 3 s (TalkQueue), and that talking to townspeople stays quiet.
 
 ## Shops, inns and the tavern
 
