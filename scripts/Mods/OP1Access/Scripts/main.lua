@@ -2058,6 +2058,26 @@ M.journal_row = function(c1, c2, c3)
     elseif mark == "0" then say = trf("%s, new", say) end
     return say
 end
+-- The keys a menu's footer offers, as the game shows them (a MenuFooter_C's
+-- MenuGuideItem00..07: ButtonGuideText_00 the key caps, GuideText_00 the action; speak()
+-- says a key cap as its letter): "Q O: Wechseln, E: Auswählen" or nil. The journal's
+-- Left/Right only go through the travelers; switching to the side stories is LB/RB
+-- (Q / O in DefaultInput.ini), which only the footer tells (user 2026-11-18).
+M.footer_guides = function(f)
+    if not f then return nil end
+    local out = {}
+    for k = 0, 7 do
+        local it
+        pcall(function() it = f["MenuGuideItem0" .. k] end)
+        if not it then break end
+        local iv = M.wvis(it)
+        if iv == 0 or iv == 3 or iv == 4 then
+            local t, g = M.wtext(it.GuideText_00), M.wtext(it.ButtonGuideText_00)
+            if t and g and not M.placeholder(t) and not M.placeholder(g) then out[#out + 1] = g .. ": " .. t end
+        end
+    end
+    return #out > 0 and table.concat(out, ", ") or nil
+end
 -- The text beside the journal's list (ListItemTextArea_C): who asked (side stories), the
 -- story so far, the result; the parts its view mode hides are left out.
 M.journal_text = function(owner)
@@ -2119,13 +2139,18 @@ do
         J.sig, J.mode, J.t0 = sig, mode, nil
         log(string.format("JOURNAL status %s %s: %s", tostring(st), mode, line))
         if first then
-            -- which of the two, then (queued) what to do there
-            local cap, help
+            -- which of the two, then (queued) what to do there and the footer's keys
+            local cap, help, keys
             pcall(function() cap = M.wtext(w.TmpHeaderUI.CaptionText) end)
             pcall(function() help = M.wtext(w.TmpFooterUI.HelpText) end)
+            pcall(function() keys = M.footer_guides(w.TmpFooterUI) end)
             if cap and M.placeholder(cap) then cap = nil end
+            if help and M.placeholder(help) then help = nil end
             speak(cap and (cap .. ". " .. line) or line, true)
-            if help and not M.placeholder(help) then speak(help, false) end
+            local tail = {}
+            if help then tail[#tail + 1] = help end
+            if keys then tail[#tail + 1] = keys end
+            if #tail > 0 then speak(M.join_text(tail), false) end
         else
             speak(line, true)
         end
@@ -3851,9 +3876,10 @@ M.menu_dump = function()
         pcall(function() cap = M.wtext(w.TmpHeaderUI.CaptionText) end)
         pcall(function() help = M.wtext(w.TmpFooterUI.HelpText) end)
         local okt, jt = pcall(M.journal_text, w)
-        log(string.format("MDUMP journal#%d vis=%s status=%s pos=%s main=%s listidx=%s caption=%s help=%s text=%s | %s", i,
-            tostring(M.wvis(w)), tostring(st), tostring(pos), tostring(mainm), tostring(idx), tostring(cap), tostring(help),
-            tostring(okt and jt), table.concat(gs, " ; ")))
+        local okk, keys = pcall(M.footer_guides, w.TmpFooterUI)
+        log(string.format("MDUMP journal#%d vis=%s status=%s pos=%s main=%s listidx=%s caption=%s help=%s keys=%s text=%s | %s",
+            i, tostring(M.wvis(w)), tostring(st), tostring(pos), tostring(mainm), tostring(idx), tostring(cap), tostring(help),
+            tostring(okk and keys), tostring(okt and jt), table.concat(gs, " ; ")))
     end)
     -- every VISIBLE text block of the menu screens, with its path (where a title lives)
     for _, tcls in ipairs({ "TextBlock", "KSTextBlock" }) do
