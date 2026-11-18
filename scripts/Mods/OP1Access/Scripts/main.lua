@@ -13064,6 +13064,7 @@ radar_pump = function(src)
             -- mid-teardown -- don't ask the game for it (see the battle check above)
             WS.present_since = nil
             settling = true
+            WS.why = "fade"
         elseif not ev then
             -- position reads PAUSE during events (scenes teleport the player step by
             -- step; freezing WS.px makes the whole displacement register as ONE jump).
@@ -13073,6 +13074,7 @@ radar_pump = function(src)
             if not p then
                 WS.present_since = nil        -- no field player: title / load in progress
                 settling = true
+                WS.why = "no player"
             else
                 if not WS.present_since then WS.present_since = now end
                 -- TRANSITION GATE -- the readable "central gate" for load/exit safety.
@@ -13090,12 +13092,67 @@ radar_pump = function(src)
                     end)
                     kf = WS.fade
                 end
-                local faded = nil
-                if kf then pcall(function() faded = kf:IsFadeVisible() end) end
+                local faded, ferr = nil, nil
+                if kf then
+                    local okf, e = pcall(function() faded = kf:IsFadeVisible() end)
+                    if not okf then ferr = tostring(e) end
+                end
+                -- A KSFade that can't be read -- after loading a save from the title the radar
+                -- never came back (2026-11-18, "fade false, settling true" for minutes): the
+                -- first one found can be the title world's, not yet freed. Every 2 s the
+                -- instances are searched (FindAllOf) for one that answers.
+                if kf and faded == nil and now - (WS.fade_seek_t or -99) >= 2.0 then
+                    WS.fade_seek_t = now
+                    local pick, n = nil, 0
+                    pcall(function()
+                        for _, x in ipairs(FindAllOf("KSFade") or {}) do
+                            n = n + 1
+                            local v
+                            pcall(function() if x:IsValid() then v = x:IsFadeVisible() end end)
+                            if type(v) == "boolean" and not pick then pick, faded = x, v end
+                        end
+                    end)
+                    log(string.format("FADE unreadable (%s): %d KSFade, %s", tostring(ferr or "no answer"), n,
+                        pick and ("one answers: " .. tostring(faded)) or "none answers"))
+                    if pick then WS.fade, WS.fade_h = pick, M.handle(pick) end
+                end
+                -- still no answer: go by the player controller -- the character has had the
+                -- input for 2 s (a load or an exit takes it away at once, M.ctrl_state)
+                if faded == nil then
+                    local cm, ci = nil, nil
+                    pcall(function() cm, ci = M.ctrl_state() end)
+                    if cm == 0 and ci ~= nil and ci ~= 0 then
+                        WS.input_ok_t = WS.input_ok_t or now
+                        if now - WS.input_ok_t >= 2.0 then
+                            faded = false
+                            if not WS.fade_fallback then
+                                WS.fade_fallback = true
+                                log("FADE unreadable: going by the controller (the character has the input)")
+                            end
+                        end
+                    else
+                        WS.input_ok_t = nil
+                    end
+                else
+                    WS.input_ok_t, WS.fade_fallback = nil, nil
+                end
+                local why = nil
                 if faded ~= false then
                     settling = true              -- fade up / unreadable / no mgr -> don't poke the world
+                    why = (not kf) and "no KSFade" or (faded == nil and "KSFade unreadable" or "fade up")
                 elseif now - WS.present_since < 0.5 then
                     settling = true              -- tiny buffer right after the player first appears
+                    why = "player just appeared"
+                end
+                WS.why = why
+                if why then
+                    -- (blocked for long: say why once, then every 30 s)
+                    if why ~= WS.why_said or now - (WS.why_t or -99) > 30 then
+                        if why ~= "player just appeared" and why ~= "fade up" then
+                            log("SETTLE " .. why)
+                            WS.why_said, WS.why_t = why, now
+                        end
+                    end
                 else
                     local px, py, pz = read_actor_pos(p)
                     if px then
@@ -13157,9 +13214,9 @@ radar_pump = function(src)
         -- decide the radar changes -- to see in a log which of them comes back first after
         -- a dialogue, a scene, a battle or a load ("input" = InputMode/IsPlayerCharacterInput)
         do
-            local st = string.format("event %s, theater %s, battle %s, fade %s, settling %s, input %s/%s",
+            local st = string.format("event %s, theater %s, battle %s, fade %s, settling %s%s, input %s/%s",
                 tostring(ev_play), tostring(ev_theater), tostring(battle), tostring(fade_now), tostring(settling),
-                tostring(cmode), tostring(cinp))
+                (settling and WS.why) and (" (" .. WS.why .. ")") or "", tostring(cmode), tostring(cinp))
             if st ~= WS.state then
                 WS.state = st
                 log(string.format("STATE %.3f %s", now, st))
