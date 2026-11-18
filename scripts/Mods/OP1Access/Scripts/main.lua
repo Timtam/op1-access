@@ -7437,6 +7437,50 @@ M.is_save_point = function(o, uniq)
     end)
     return yes
 end
+-- What a placed person is wired for, from its placement row (PlacementData): fc = a path
+-- action's data (FCmd_Purchase_ID: Purchase/Steal, FCmd_Lure_ID: Guide/Allure,
+-- FCmd_Battle_ID: Challenge/Provoke, FCmd_Search_ID: Scrutinize/Inquire), ev = an event
+-- of its own (EventType_A..E / EventLabel_A..E: its talk, a shop, a side story, a save
+-- point). -> { fc, ev }, or nil when the row can't be read; once per actor (the record).
+-- In the placement table (2080 people) all 493 NNPC_* and 45 NPC_* have neither: the
+-- crowds in taverns and streets, an event's henchmen. Facing one, the game still picks
+-- it to talk to and the field-command list still holds the party's path actions, but
+-- the balloon stays away, Enter does nothing and J offers only "Sich trennen" (user
+-- 2026-11-18 evening: "a heap of unnamed people without talk or path actions").
+M.NPC_FC_FIELDS = { "FCmd_Purchase_ID", "FCmd_Lure_ID", "FCmd_Battle_ID", "FCmd_Search_ID" }
+M.npc_wiring = function(o)
+    local addr
+    pcall(function() addr = o:GetAddress() end)
+    local rec = addr and M.npc_rec(o, addr)
+    if type(rec) == "table" and rec.wire ~= nil then return rec.wire or nil end
+    local w = nil
+    pcall(function()
+        local pd = o.PlacementData
+        if not pd then return end
+        local seen, fc, ev = false, false, false
+        local function set(v)
+            if v == nil then return false end
+            seen = true
+            local s = fname_to_str(v)
+            return s ~= "" and s ~= "None"
+        end
+        for _, f in ipairs(M.NPC_FC_FIELDS) do
+            local v
+            pcall(function() v = pd[f] end)
+            if set(v) then fc = true end
+        end
+        for _, L in ipairs({ "A", "B", "C", "D", "E" }) do
+            local t, lb
+            pcall(function() t = pd["EventType_" .. L] end)
+            pcall(function() lb = pd["EventLabel_" .. L] end)
+            if t ~= nil then seen = true end
+            if (type(t) == "number" and t ~= 0) or set(lb) then ev = true end
+        end
+        if seen then w = { fc = fc, ev = ev } end
+    end)
+    if type(rec) == "table" then rec.wire = w or false end
+    return w
+end
 local function npc_interesting(o)
     local addr = nil
     pcall(function() addr = o:GetAddress() end)
@@ -7467,8 +7511,12 @@ local function npc_interesting(o)
     -- So every PLACED character (NPC_* / NNPC_*, all PlacementType 1) is a person; out
     -- stay the save points' books (below), editor dummies and actors without a label.
     local person = label:find("^N?NPC_") ~= nil
+    -- ... except those with nothing to talk about and no path action (M.npc_wiring): out,
+    -- also when "learned" (the game's Talk ran for one of them without a talk)
+    local wire = person and M.npc_wiring(o) or nil
+    local idle = (wire ~= nil) and not wire.fc and not wire.ev
 
-    local keep = learned or (not istest and (id > 0 or person))
+    local keep = (learned or (not istest and (id > 0 or person))) and not idle
     -- (kept only by a talk, with no lines of its own: a save point? asked once per actor)
     local savept = false
     if keep and id == 0 then
@@ -7480,9 +7528,9 @@ local function npc_interesting(o)
         end
         if savept then keep = false end
     end
-    local dbg = string.format("uniq=%s label=%s ptext=%s id=%d learned=%s%s",
+    local dbg = string.format("uniq=%s label=%s ptext=%s id=%d learned=%s%s%s",
         tostring(uniq), label == "" and "-" or label, ptext == "" and "-" or ptext, id, tostring(learned),
-        savept and " (save point)" or "")
+        savept and " (save point)" or "", idle and " (no talk, no path action)" or "")
     return keep, dbg, lname
 end
 
@@ -12334,11 +12382,20 @@ M.interact_poll = function()
     if mgr then local _; _, raw = read_active_commands(mgr) end
     local has_path = false
     for _, b in ipairs(raw) do if b ~= 0 then has_path = true; break end end
+    -- the list holds the party's path actions for anyone the game picks, also for a
+    -- person without a path action of their own (a tavern guest: "Wege-Aktion: Studieren;
+    -- Führen; Kaufen; Herausfordern", and J offered only "Sich trennen", user 2026-11-18):
+    -- the person's placement row decides (M.npc_wiring; unreadable: as before)
+    local function no_path(o)
+        local okw, wr = pcall(M.npc_wiring, o)
+        return okw and wr ~= nil and not wr.fc
+    end
+    if has_path and tobj and no_path(tobj) then has_path = false end
     -- the path target is the talk pick; without one (rare), the nearest NPC
     local addr = taddr
     if addr == 0 and has_path then
         local npc = M.nearest_npc and M.nearest_npc(250)
-        if npc then pcall(function() addr = npc:GetAddress() end) end
+        if npc and not no_path(npc) then pcall(function() addr = npc:GetAddress() end) end
     end
     local sig = string.format("%X:%s", addr, has_path and table.concat(raw, ",") or "-")
     if sig ~= M.ia_sig then

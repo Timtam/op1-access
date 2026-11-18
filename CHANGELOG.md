@@ -64,7 +64,8 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
 - A scene you can skip says so as it starts: "Hold Backspace to skip". The game itself
   shows that hint only after a key press.
 - Path actions (J): facing someone tells you which path actions you can use on them and
-  whether one is done already or not possible yet; the J menu says the same. The screens
+  whether one is done already or not possible yet; the J menu says the same. Someone
+  without any (a tavern guest) gets no such hint. The screens
   of all eight travelers' path actions are read: what a person carries with price or
   chance (Purchase, Steal), the person's strength, skills and how often they can be called
   (Challenge, Provoke, Guide, Allure, also when you swap followers), H'aanit's monsters,
@@ -78,10 +79,11 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   for directions. It says which chests are opened or purple, which targets are higher or lower
   than you (a floor, or a terrace a few steps up), which can't be reached, where exits
   lead and how dangerous the area behind them is, and what kind of shop a shop is. A
-  tavern leads to its barkeep, not to the door. Everyone the game has placed is on the
-  radar and in the people list from the start: also the nameless townsfolk, the village
+  tavern leads to its barkeep, not to the door. Everyone you can talk to or use a path
+  action on is on the radar and in the people list from the start: also the village
   chiefs, barkeeps and many side-story people, who used to show up only after you had
-  talked to them. People are listed by the game's own names
+  talked to them. The crowds you can do neither with (tavern guests, passers-by) stay
+  out of the list; the walker still goes round them. People are listed by the game's own names
   for them: a line said by someone else no longer renames the person you just talked to,
   and a person in the next area no longer takes on the name of one you met before.
 - The minimap's markers: what each one is (side story with the person's name, hidden item,

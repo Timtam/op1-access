@@ -686,20 +686,26 @@ Open:
 
 ## Navigation
 
-- **Every placed person on the radar and in the list: heard in one town.** In a
-  Pflastersten doorway the walker said "Jemand steht im Weg" four times, and the game
-  picked that person to talk to (path-action hint without a name), but the radar and the
-  people list had nobody there (user, 2026-11-18). It was one of the game's GENERIC people
-  (NNPC_TMntS_A_00x, text label CN_NP_COM_000000_0000): the rule "talkable iff the text
-  label's dialogue ID is non-zero" left out all 493 NNPC_* in the placement table, and
-  besides them the village chiefs (CN_NP_MOS_000000_0000), barkeeps and dungeon
-  merchants, and every side-story person whose label has letters in it
-  (CN_SS_FO3_0101B1_0003: not all digits) -- all only after a talk. Since then every placed
-  character (NPC_* / NNPC_*) counts, save points' books, editor dummies and actors
-  without a label stay out. Generic people have no name ("Person 3 of 18: up, 300"); a
-  story person whose name is still "???" is said "Unknown". Heard in Pflastersten
-  (2026-11-18): 20 people, the nameless ones, the village chief and the barkeep among them,
-  the save point's book not. Not heard yet: whether the radar gets too busy in big towns.
+- **People on the radar: those you can talk to or use a path action on. Not heard yet.**
+  The rule "talkable iff the text label's dialogue ID is non-zero" left out the village
+  chiefs (CN_NP_MOS_000000_0000), barkeeps and dungeon merchants and every side-story
+  person whose label has letters in it (CN_SS_FO3_0101B1_0003) until you had talked to
+  them; the text label is the NAME's handle, not a dialogue. In the morning of 2026-11-18
+  every placed character (NPC_* / NNPC_*) was made a person (692ac8c): a man in a
+  Pflastersten doorway had blocked the walker ("Jemand steht im Weg") and the hint said
+  "Wege-Aktion: Studieren; Führen; Kaufen; Herausfordern" for him. In the evening the user
+  heard "a heap of unnamed people without talk or path actions": the tavern's guests
+  (NNPC_TMntS_A_001..005, the doorway man among them). Their placement rows have no
+  path-action data (FCmd_Purchase/Lure/Battle/Search_ID = None, Permission_FCmd 2) and no
+  event (EventType_A..E 0); facing one, the game still picks them to talk to and the
+  field-command list still holds the party's four actions, but the balloon stays away,
+  Enter does nothing and J offers only "Sich trennen". In the whole placement table (2080
+  people) all 493 NNPC_* and 45 NPC_* have neither (crowds, an event's henchmen, a few
+  named story figures in dungeons). Since then those are left out of the radar, the list
+  and the hint, also after the game's Talk ran for one (M.npc_wiring, read once per
+  actor; unreadable rows: kept as before); the walker still keeps away from them and names
+  one in the way ("Jemand steht im Weg"). Not heard yet: Pflastersten with the filter;
+  whether the radar gets too busy in big towns.
 - **Exits walked to their trigger box: in a unit test only.** From the Östliche to the
   Südliche Sonnschatt-Sandwüste the walker wouldn't go on into the next area (user,
   2026-11-18): it went for the exit actor's root (F_Desert_1_2, LevelTrigger_To_F_Desert_1_1
