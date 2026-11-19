@@ -8342,6 +8342,71 @@ M.actor_is_zone = function(o)
     pcall(function() a = o:GetAddress() end)
     return a ~= 0 and M.house_is_zone(a)
 end
+-- INSIDE A HOUSE, BY THE GAME'S OWN WORD (user 2026-11-19, Klarach): every placement
+-- row has HouseInFlag (PlacementInfoData @0x29). Alfyn, to recruit, stands OUTSIDE by
+-- Zeph's house (PC_TRivS_000A at (-30,-560), HouseInFlag off): 200 past the room box of
+-- that house, but inside its 250 padding and on the inner side of its doorway plane, so
+-- the walker took him for inside, led to Zeph's door, and Zeph stands in front of it:
+-- "Zeph steht im Weg", no walk. A chest in Zeph's house (TrsrBx_River_TS_03, HouseInFlag
+-- on) lies in a side room behind the doorway plane: never "in a building", the search
+-- failed. An NPC carries its row (PlacementData); a chest only its position, so the
+-- table's object rows (PlacementType 2) are indexed once and matched by position -- the
+-- same spot to the unit, as rows of all maps share the table. -> true, false or nil.
+M.PLACED_TABLE = "/Game/Character/Database/PlacementInfoData"
+M.placed_house_at = function(x, y, z)
+    if M.placed_objs == nil then
+        -- (not loaded yet: asked again at most every 30 s -- StaticFindObject costs ~7 ms)
+        local now = os.clock()
+        if now - (M.placed_try_t or -99) < 30 then return nil end
+        M.placed_try_t = now
+        local dt = shim and shim.DtCount and shim.Peek and M.dt_addr(M.PLACED_TABLE)
+        if not dt then return nil end
+        M.placed_objs = false
+        local n = shim.DtCount(dt) or 0
+        local list = {}
+        for i = 0, n - 1 do
+            local _, _, row = shim.DtRowAt(dt, i)
+            if row and shim.Peek(row + 0x08, "u8") == 2 then
+                local rx, ry, rz = shim.Peek(row + 0x44, "f32"), shim.Peek(row + 0x48, "f32"), shim.Peek(row + 0x4C, "f32")
+                local h = shim.Peek(row + 0x29, "u8")
+                if rx and ry and h then list[#list + 1] = { x = rx, y = ry, z = rz or 0, h = (h ~= 0) } end
+            end
+        end
+        log(string.format("PLACED object rows: %d of %d", #list, n))
+        if #list > 0 then M.placed_objs = list end
+    end
+    if not M.placed_objs then return nil end
+    local hit, n = nil, 0
+    for _, r in ipairs(M.placed_objs) do
+        if math.abs(r.x - x) < 2 and math.abs(r.y - y) < 2 and math.abs(r.z - (z or r.z)) < 200 then
+            n = n + 1
+            hit = r
+        end
+    end
+    if n ~= 1 then return nil end   -- none, or two rows of different maps on one spot
+    return hit.h
+end
+NV.target_in_house = function(t)
+    if type(t) ~= "table" or not t.actor then return nil end
+    if t.tin_done then return t.tin end
+    t.tin_done = true
+    local o, v = t.actor, nil
+    local cls = class_name_of(o)
+    if cls == "KSFieldNPCCharacter_C" then
+        pcall(function()
+            local h = o.PlacementData.HouseInFlag
+            if type(h) == "boolean" then v = h end
+        end)
+    elseif cls == "TreasureBoxBP_C" then
+        local x, y, z = read_actor_pos(o)
+        if x then
+            local okp, h = pcall(M.placed_house_at, x, y, z)
+            if okp then v = h end
+        end
+    end
+    t.tin = v
+    return v
+end
 -- WHICH house, when several hold the target: room boxes overlap -- in Flammhuld the
 -- tavern's reaches 1600 past its door, over House_B next to it, and the first door in
 -- the list that held the target won. The Söldner in House_B (its door 116 from the
@@ -8349,7 +8414,11 @@ end
 -- walls; no try reached him (user, 2026-11-16). So every door is looked at first, and
 -- the one nearest the target wins (a door on another floor counts farther) -- unless the
 -- player's own house holds the target too and its door is about as near.
-M.house_door_for = function(tx, ty, tz, px, py, pz, dolog, allow_plane)
+-- tin: what the game itself says (NV.target_in_house, the placement's HouseInFlag):
+-- false = the target stands outside every house, true = inside one (then the padded
+-- room box alone decides which: an L-shaped house reaches past its doorway plane), nil =
+-- unknown (the box and the plane as before).
+M.house_door_for = function(tx, ty, tz, px, py, pz, dolog, allow_plane, tin)
     if M.house_cache_area ~= M.area_said then
         M.house_cache, M.plane_cache, M.house_cache_area = {}, {}, M.area_said
     end
@@ -8378,12 +8447,13 @@ M.house_door_for = function(tx, ty, tz, px, py, pz, dolog, allow_plane)
             end
             local ipb = inroom(px, py, pz)        -- in the padded box: inside or at the door
             local it, how = inroom(tx, ty, tz) and inner(tx, ty), "room"
+            if tin == false then it = false elseif tin == true then it = inroom(tx, ty, tz) end
             -- really inside: the game's own flag; the box and the plane only if unreadable
             local entered = M.house_entered(daddr)
             local ip
             if entered ~= nil then ip = entered else ip = ipb and inner(px, py) end
             -- fallback: the doorway plane alone, only after a failed route
-            if not it and allow_plane and pl then
+            if not it and allow_plane and pl and tin ~= false then
                 local side = math.abs((tx - pl.cx) * pl.ny - (ty - pl.cy) * pl.nx)
                 if along(tx, ty) > 60 and along(tx, ty) < 2500 and side < 1500
                     and math.abs((tz or pl.cz) - pl.cz) < 800 and along(px, py) < 0 then
@@ -8393,13 +8463,13 @@ M.house_door_for = function(tx, ty, tz, px, py, pz, dolog, allow_plane)
             local nm = "?"
             if dolog then pcall(function() nm = door:GetFName():ToString() end) end
             if dolog and dx and math.sqrt((dx - tx) ^ 2 + (dy - ty) ^ 2) < 3000 then
-                log(string.format("HOUSE %s door=(%.0f,%.0f,%.0f) room=%s plane=%s target_in=%s(%s) player_in=%s/%s entered=%s",
+                log(string.format("HOUSE %s door=(%.0f,%.0f,%.0f) room=%s plane=%s target_in=%s(%s) player_in=%s/%s entered=%s game=%s",
                     nm, dx, dy, dz or 0,
                     box and string.format("%d actors x%.0f..%.0f y%.0f..%.0f z%.0f..%.0f mean(%.0f,%.0f)", box.n,
                         box.minx, box.maxx, box.miny, box.maxy, box.minz, box.maxz, box.mx, box.my) or "none",
                     pl and string.format("n(%.2f,%.2f) off=%.0f side=%s t%.0f p%.0f", pl.nx, pl.ny, pl.off,
                         tostring(pl.side), along(tx, ty), along(px, py)) or "none",
-                    tostring(it), how, tostring(ipb), tostring(ip), tostring(entered)))
+                    tostring(it), how, tostring(ipb), tostring(ip), tostring(entered), tostring(tin)))
             end
             -- a house's door is near its room: ignore doors far from the target (a door
             -- 17000 away whose room actors spread over half the map matched Russell)
@@ -8478,7 +8548,7 @@ local function nav_announce(prefix)
     local key = NV.tkey(t)
     local noted = false
     if t.cat ~= "building" then
-        local okd, door, how = pcall(M.house_door_for, ox, oy, oz or pz, px, py, pz)
+        local okd, door, how = pcall(M.house_door_for, ox, oy, oz or pz, px, py, pz, nil, nil, NV.target_in_house(t))
         if okd and (door or how == "atdoor") then lvl = lvl .. ", " .. tr("inside a building"); noted = true
         elseif NV.is_noroute(key, px, py) then
             lvl = lvl .. ", " .. (NV.noroute[key].door and tr("inside a building") or tr("not reachable")); noted = true
@@ -8992,7 +9062,7 @@ local function nav_route_finish(goalnode)
                 if g and g.key and g.cat ~= "door" then
                     local okd, door, dx, dy, dz = false, nil, nil, nil, nil
                     if g.cat ~= "exit" then   -- an exit is its own way out, never "in a house"
-                        okd, door = pcall(M.house_door_for, g.x, g.y, g.z, R.px, R.py, R.pz, true, true)
+                        okd, door = pcall(M.house_door_for, g.x, g.y, g.z, R.px, R.py, R.pz, true, true, g.tin)
                     end
                     if okd and door then dx, dy, dz = read_actor_pos(door) end
                     NV.noroute[g.key] = { x = R.px, y = R.py, area = M.area_said, door = dx and door or nil }
@@ -10538,7 +10608,8 @@ NV.bg_record = function(job, ok, how, viadoor)
         -- through the room's door. A door is never "inside" its own plane (along > 60).
         local door = nil
         if job.cat ~= "exit" then
-            local okd, d = pcall(M.house_door_for, job.tx, job.ty, job.tz, job.px, job.py, job.pz, false, true)
+            local okd, d = pcall(M.house_door_for, job.tx, job.ty, job.tz, job.px, job.py, job.pz, false, true,
+                NV.target_in_house(job.t))
             if okd and d then door = d end
         end
         NV.noroute[job.key] = { x = job.px, y = job.py, area = job.area, door = door }
@@ -10591,7 +10662,7 @@ NV.bg_new = function(t, p, px, py, pz)
         -- behind a door: the walk leads there via the door. Standing just outside the
         -- target's door, its shut door failed the search: Russell "not reachable" at the
         -- library door (2026-11-14)
-        local okd, door, how, pdoor = pcall(M.house_door_for, tx, ty, tz, px, py, pz)
+        local okd, door, how, pdoor = pcall(M.house_door_for, tx, ty, tz, px, py, pz, nil, nil, NV.target_in_house(t))
         if okd and (door or pdoor or how == "atdoor") then return nil end
     else
         -- a house door as the target: from inside another house the shut door would
@@ -11152,7 +11223,8 @@ local function nav_walk_start(quiet)
     -- walks inside (then you stand at the door, so this leg is skipped).
     local samehouse = false
     if t.cat ~= "building" then
-        local okd, door, how, pdoor = pcall(M.house_door_for, ox, oy, oz, px, py, pz, true)
+        NV.goal.tin = NV.target_in_house(t)   -- (the game's word, for the door after a failed route too)
+        local okd, door, how, pdoor = pcall(M.house_door_for, ox, oy, oz, px, py, pz, true, nil, NV.goal.tin)
         -- you are in (or at the door of) the target's house: route straight in. If the
         -- door is still shut that fails -- then say "open the door", not "not reachable"
         samehouse = okd and (how == "same" or how == "atdoor")

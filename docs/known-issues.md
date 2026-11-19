@@ -942,6 +942,24 @@ Open:
   way. In the game: the walk to chest 4 took over the check's traces ("ROUTE takes over
   the traces of the checks from here", 491 traces, 0.2 s); the one to chest 3 came after
   a finished check (1451 traces, 0.3 s).
+- **Inside a building, by the game's own flag: not walked yet.** In Klarach (user,
+  2026-11-19) Alfyn, to recruit, could not be reached, nor a chest. Alfyn's figure
+  (PC_TRivS_000A at (-30,-560), HouseInFlag off in its placement row) stands outside,
+  200 south of Zeph's house: inside the room box's 250 padding and on the inner side of
+  the doorway plane, so the walk went to Zeph's door, and Zeph (NPC_TRivS_M_002A_Lead) stands
+  70 in front of that door: "Zeph steht im Weg", every time. The chest
+  (TrsrBx_River_TS_03 at (-290,250), HouseInFlag on) stands in the house's side room
+  (Nina's: bed, carpet), on the OUTER side of the doorway plane: "not in a building", and
+  the whole-area search failed. Every placement row has HouseInFlag; a person carries its
+  row (PlacementData), a chest only its spot, so the table's object rows are indexed once
+  (PLACED log line) and a chest is matched to the unit (rows of all maps share the table:
+  two on one spot = unknown). Since then false = in no house, true = the padded room box
+  alone picks the house; unknown as before (NV.target_in_house, M.house_door_for's tin).
+  The chest stays out of reach while Zeph stands at his door, which the game wants: the
+  only door of that house is behind him (the walls: BlockingVolume16/20 leave a gap of 85
+  at the door). In the game's data he is inside the house for a stretch of Alfyn's
+  story (variants B/C, flags 5960-6324), so the chest is probably meant for then. Not
+  heard in the game yet: Alfyn reached; the chest said to be "inside a building".
 - **Room detection only works for some buildings.** "Inside a building" comes from the
   box around a door's `Actor_Room` actors (good for the Atlasdam library), and since
   2026-11-14 the target must also be on the inner side of the doorway plane, so people

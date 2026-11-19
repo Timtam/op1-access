@@ -109,6 +109,10 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   it: the route takes the way round. Exits are walked to the line where they really
   take you on, not to a point that can stand behind an invisible wall (from the Östliche
   to the Südliche Sonnschatt-Sandwüste the walk got stuck just short of it).
+  Whether a person or a chest is inside a building now comes from the game itself:
+  Alfyn, waiting by Zeph's house in Klarach, was taken for inside it, and the walk went
+  to Zeph's door, where Zeph stands ("Zeph steht im Weg"). A chest in a house's side
+  room is now said to be inside a building, and the walk leads to that house's door.
 
 ### Battles
 
