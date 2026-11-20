@@ -285,7 +285,7 @@ msgstr "Berufsstatus"
 msgid "Save and load"
 msgstr "Speichern und Laden"
 
-#: main.lua:731 main.lua:12592
+#: main.lua:731 main.lua:12643
 msgid "Path action"
 msgstr "Wege-Aktion"
 
@@ -521,7 +521,7 @@ msgstr "Nicht verfügbar"
 msgid "Category %s"
 msgstr "Kategorie %s"
 
-#: main.lua:2013 main.lua:2129 main.lua:12899
+#: main.lua:2013 main.lua:2129 main.lua:12950
 #, lua-format
 msgid "%d of %d"
 msgstr "%d von %d"
@@ -564,7 +564,7 @@ msgstr "%s, abgeschlossen"
 msgid "%s, new"
 msgstr "%s, neu"
 
-#: main.lua:2574 main.lua:2684 main.lua:4602 main.lua:5369 main.lua:13011
+#: main.lua:2574 main.lua:2684 main.lua:4602 main.lua:5369 main.lua:13062
 #, lua-format
 msgid "%s, unavailable"
 msgstr "%s, nicht verfügbar"
@@ -647,7 +647,7 @@ msgstr "unbekannter Ort"
 msgid "danger level %d to %d"
 msgstr "Gefahrenstufe %d bis %d"
 
-#: main.lua:2913 main.lua:3296 main.lua:13674
+#: main.lua:2913 main.lua:3296 main.lua:13725
 #, lua-format
 msgid "danger level %d"
 msgstr "Gefahrenstufe %d"
@@ -869,7 +869,7 @@ msgstr "Reiter %d"
 msgid "%s, next skill %s LBP"
 msgstr "%s, nächste Fertigkeit %s LBP"
 
-#: main.lua:4600 main.lua:13009
+#: main.lua:4600 main.lua:13060
 msgid "on hand"
 msgstr "im Besitz"
 
@@ -1585,7 +1585,7 @@ msgstr "Markierung"
 msgid "person"
 msgstr "Person"
 
-#: main.lua:7214 main.lua:7858 main.lua:8611 main.lua:8686 main.lua:11195
+#: main.lua:7214 main.lua:7858 main.lua:8611 main.lua:8686 main.lua:11246
 msgid "In battle"
 msgstr "Im Kampf"
 
@@ -1688,7 +1688,7 @@ msgstr "Wegabtastung nicht verfügbar"
 msgid "Navigation traces failed, retrying"
 msgstr "Wegabtastung fehlgeschlagen, neuer Versuch"
 
-#: main.lua:7860 main.lua:8540 main.lua:10491 main.lua:10792 main.lua:11204
+#: main.lua:7860 main.lua:8540 main.lua:10542 main.lua:10843 main.lua:11255
 msgid "No player"
 msgstr "Kein Spieler"
 
@@ -1709,11 +1709,11 @@ msgstr "Blockiert: %s"
 msgid "No target"
 msgstr "Kein Ziel"
 
-#: main.lua:8541 main.lua:10492
+#: main.lua:8541 main.lua:10543
 msgid "No position"
 msgstr "Keine Position"
 
-#: main.lua:8543 main.lua:10795 main.lua:11207
+#: main.lua:8543 main.lua:10846 main.lua:11258
 msgid "Target lost"
 msgstr "Ziel verloren"
 
@@ -1783,377 +1783,377 @@ msgstr "und mehr"
 msgid "Walking, %s, total %d"
 msgstr "Gehe los, %s, insgesamt %d"
 
-#: main.lua:8987
+#: main.lua:8988
 msgid "Searching again from a bit further back"
 msgstr "Suche noch einmal von etwas weiter hinten"
 
-#: main.lua:9020 main.lua:10532
+#: main.lua:9021 main.lua:10583
 msgid "direct"
 msgstr "direkt"
 
-#: main.lua:9030
+#: main.lua:9031
 msgid "Through the door first"
 msgstr "Erst durch die Tür"
 
-#: main.lua:9032
+#: main.lua:9033
 msgid "through the door"
 msgstr "durch die Tür"
 
-#: main.lua:9041
+#: main.lua:9042
 msgid "The door is shut. Open it with E, then backspace again"
 msgstr "Die Tür ist zu. Mit E öffnen, dann wieder Rücktaste"
 
-#: main.lua:9057
+#: main.lua:9058
 msgid "Stuck, no way on from here. Step aside, then backspace again"
 msgstr "Festgesteckt, von hier geht es nicht weiter. Einen Schritt zur Seite, dann wieder Rücktaste"
 
-#: main.lua:9063
+#: main.lua:9064
 msgid "No route found, search limit reached"
 msgstr "Kein Weg gefunden, Suchgrenze erreicht"
 
-#: main.lua:9075
+#: main.lua:9076
 msgid "Probably inside a building. Routing to its door"
 msgstr "Wohl in einem Gebäude. Route zu seiner Tür"
 
-#: main.lua:9080
+#: main.lua:9081
 msgid "Not reachable, no route found"
 msgstr "Nicht erreichbar, kein Weg gefunden"
 
-#: main.lua:9083
+#: main.lua:9084
 msgid "No route found"
 msgstr "Kein Weg gefunden"
 
-#: main.lua:9159
+#: main.lua:9160
 #, lua-format
 msgid "%s is in the way"
 msgstr "%s steht im Weg"
 
-#: main.lua:9159
+#: main.lua:9160
 msgid "Someone"
 msgstr "Jemand"
 
-#: main.lua:9189
+#: main.lua:9190
 msgid "downstairs"
 msgstr "abwärts"
 
-#: main.lua:9190
+#: main.lua:9191
 msgid "upstairs"
 msgstr "aufwärts"
 
-#: main.lua:9195
+#: main.lua:9196
 msgid "A shut door on the way"
 msgstr "Eine geschlossene Tür auf dem Weg"
 
-#: main.lua:9196
+#: main.lua:9197
 msgid "back a bit first"
 msgstr "erst ein Stück zurück"
 
-#: main.lua:9197
+#: main.lua:9198
 msgid "to the door"
 msgstr "zur Tür"
 
-#: main.lua:9197
+#: main.lua:9198
 msgid "traced route"
 msgstr "berechnete Route"
 
-#: main.lua:9200
+#: main.lua:9201
 #, lua-format
 msgid "Path: %s. Total %d%s%s."
 msgstr "Weg: %s. Insgesamt %d%s%s."
 
-#: main.lua:9200
+#: main.lua:9201
 msgid "through a door"
 msgstr "durch eine Tür"
 
-#: main.lua:9952
+#: main.lua:9953
 #, lua-format
 msgid "Entrance not reached, %d person is standing there"
 msgid_plural "Entrance not reached, %d people are standing there"
 msgstr[0] "Eingang nicht erreicht, dort steht %d Person"
 msgstr[1] "Eingang nicht erreicht, dort stehen %d Personen"
 
-#: main.lua:9954
+#: main.lua:9955
 msgid "Entrance not reached"
 msgstr "Eingang nicht erreicht"
 
-#: main.lua:10468
+#: main.lua:10519
 msgid "Searching the whole area"
 msgstr "Suche im ganzen Gebiet"
 
-#: main.lua:10482 main.lua:10486
+#: main.lua:10533 main.lua:10537
 msgid "Still routing"
 msgstr "Suche noch den Weg"
 
-#: main.lua:10514
+#: main.lua:10565
 msgid "close by"
 msgstr "ganz nah"
 
-#: main.lua:10516
+#: main.lua:10567
 msgid "Right here"
 msgstr "Genau hier"
 
-#: main.lua:10535
+#: main.lua:10586
 #, lua-format
 msgid "Path: straight ahead, %d"
 msgstr "Weg: geradeaus, %d"
 
-#: main.lua:10786 main.lua:11198
+#: main.lua:10837 main.lua:11249
 msgid "Targets changed, none here"
 msgstr "Ziele geändert, hier keine"
 
-#: main.lua:10787 main.lua:11199
+#: main.lua:10838 main.lua:11250
 #, lua-format
 msgid "Targets changed. %s, %d target. "
 msgid_plural "Targets changed. %s, %d targets. "
 msgstr[0] "Ziele geändert. %s, %d Ziel. "
 msgstr[1] "Ziele geändert. %s, %d Ziele. "
 
-#: main.lua:10791
+#: main.lua:10842
 msgid "No target selected. Home and end pick a category, page up and down a target."
 msgstr "Kein Ziel gewählt. Pos1 und Ende wählen eine Kategorie, Bild auf und Bild ab ein Ziel."
 
-#: main.lua:10799
+#: main.lua:10850
 msgid "same level"
 msgstr "gleiche Ebene"
 
-#: main.lua:10802
+#: main.lua:10853
 #, lua-format
 msgid "%s %d of %d, %s, %d, %s. "
 msgstr "%s %d von %d, %s, %d, %s. "
 
-#: main.lua:10806
+#: main.lua:10857
 #, lua-format
 msgid "Path: %s. Total %d."
 msgstr "Weg: %s. Insgesamt %d."
 
-#: main.lua:10808
+#: main.lua:10859
 msgid "Routing."
 msgstr "Suche Weg."
 
-#: main.lua:11081
+#: main.lua:11132
 msgid "Opening the door"
 msgstr "Öffne die Tür"
 
-#: main.lua:11116
+#: main.lua:11167
 msgid "The door doesn't open. Press E yourself, then backspace again"
 msgstr "Die Tür geht nicht auf. Selbst E drücken, dann wieder Rücktaste"
 
-#: main.lua:11176
+#: main.lua:11227
 msgid "same route as before"
 msgstr "dieselbe Route wie vorhin"
 
-#: main.lua:11187 main.lua:11192 main.lua:11324
+#: main.lua:11238 main.lua:11243 main.lua:11375
 msgid "Walk stopped"
 msgstr "Angehalten"
 
-#: main.lua:11188
+#: main.lua:11239
 msgid "Routing cancelled"
 msgstr "Wegsuche abgebrochen"
 
-#: main.lua:11195
+#: main.lua:11246
 msgid "Scene running, try again after"
 msgstr "Szene läuft, danach erneut versuchen"
 
-#: main.lua:11203
+#: main.lua:11254
 msgid "No target selected"
 msgstr "Kein Ziel gewählt"
 
-#: main.lua:11244
+#: main.lua:11295
 #, lua-format
 msgid "Leaving the building first. Routing to its door, %d"
 msgstr "Erst aus dem Gebäude hinaus. Route zur Tür, %d"
 
-#: main.lua:11265
+#: main.lua:11316
 #, lua-format
 msgid "%s is inside a building. Routing to its door, %d"
 msgstr "%s ist in einem Gebäude. Route zur Tür, %d"
 
-#: main.lua:11276
+#: main.lua:11327
 msgid "Not reachable from here. Press again to try anyway"
 msgstr "Von hier nicht erreichbar. Nochmal drücken, um es trotzdem zu versuchen"
 
-#: main.lua:11282
+#: main.lua:11333
 msgid "navmesh path"
 msgstr "Navmesh-Weg"
 
-#: main.lua:11286
+#: main.lua:11337
 #, lua-format
 msgid "Routing to %s, %d"
 msgstr "Suche Weg: %s, %d"
 
-#: main.lua:11365
+#: main.lua:11416
 msgid "Trying another way"
 msgstr "Versuche einen anderen Weg"
 
-#: main.lua:11365 main.lua:11755
+#: main.lua:11416 main.lua:11806
 msgid "Rerouting"
 msgstr "Neue Route"
 
-#: main.lua:11368
+#: main.lua:11419
 msgid "Walk interrupted, backspace to resume"
 msgstr "Unterbrochen, Rücktaste zum Fortsetzen"
 
-#: main.lua:11437 main.lua:11585 main.lua:11636 main.lua:11642 main.lua:11649 main.lua:11745
-#: main.lua:11751
+#: main.lua:11488 main.lua:11636 main.lua:11687 main.lua:11693 main.lua:11700 main.lua:11796
+#: main.lua:11802
 msgid "Arrived"
 msgstr "Angekommen"
 
-#: main.lua:11486 main.lua:11625
+#: main.lua:11537 main.lua:11676
 #, lua-format
 msgid "Still shut. %s, then backspace again"
 msgstr "Noch zu. %s, dann wieder Rücktaste"
 
-#: main.lua:11486 main.lua:11604 main.lua:11625
+#: main.lua:11537 main.lua:11655 main.lua:11676
 msgid "press E"
 msgstr "E drücken"
 
-#: main.lua:11487 main.lua:11627
+#: main.lua:11538 main.lua:11678
 msgid "then backspace again"
 msgstr "dann wieder Rücktaste"
 
-#: main.lua:11509
+#: main.lua:11560
 msgid "At the door. Open it, then backspace again"
 msgstr "An der Tür. Öffnen, dann wieder Rücktaste"
 
-#: main.lua:11510
+#: main.lua:11561
 msgid "At the exit, no way through"
 msgstr "Am Ausgang, kein Durchgang"
 
-#: main.lua:11565
+#: main.lua:11616
 msgid "Walk cancelled"
 msgstr "Abgebrochen"
 
-#: main.lua:11604
+#: main.lua:11655
 #, lua-format
 msgid "Still shut. %s"
 msgstr "Noch zu. %s"
 
-#: main.lua:11656
+#: main.lua:11707
 msgid "Walk ended, went through a door"
 msgstr "Beendet, durch eine Tür gegangen"
 
-#: main.lua:11679
+#: main.lua:11730
 msgid "Walk interrupted"
 msgstr "Unterbrochen"
 
-#: main.lua:11758
+#: main.lua:11809
 #, lua-format
 msgid "Can't reach, closest %d"
 msgstr "Nicht erreichbar, am nächsten %d"
 
-#: main.lua:11835
+#: main.lua:11886
 msgid "No prompt here, trying another side"
 msgstr "Keine Aktionsanzeige hier, versuche eine andere Seite"
 
-#: main.lua:11842
+#: main.lua:11893
 msgid "No prompt here, and no other side found"
 msgstr "Keine Aktionsanzeige hier und keine andere Seite gefunden"
 
-#: main.lua:11846
+#: main.lua:11897
 msgid "No prompt at this item"
 msgstr "Keine Aktionsanzeige an diesem Gegenstand"
 
-#: main.lua:12428
+#: main.lua:12479
 msgid "Hold Backspace to skip"
 msgstr "Rücktaste halten zum Überspringen"
 
-#: main.lua:12570
+#: main.lua:12621
 msgid "Save point"
 msgstr "Speicherpunkt"
 
-#: main.lua:12592
+#: main.lua:12643
 msgid "Talk"
 msgstr "Sprechen"
 
-#: main.lua:12772
+#: main.lua:12823
 #, lua-format
 msgid "action %s"
 msgstr "Aktion %s"
 
-#: main.lua:12840 main.lua:12872
+#: main.lua:12891 main.lua:12923
 msgid "done"
 msgstr "erledigt"
 
-#: main.lua:12840 main.lua:12873
+#: main.lua:12891 main.lua:12924
 msgid "not possible"
 msgstr "nicht möglich"
 
-#: main.lua:12874
+#: main.lua:12925
 msgid "unavailable"
 msgstr "nicht verfügbar"
 
-#: main.lua:12940
+#: main.lua:12991
 #, lua-format
 msgid "Now: %s"
 msgstr "Jetzt: %s"
 
-#: main.lua:12940
+#: main.lua:12991
 #, lua-format
 msgid "New: %s"
 msgstr "Neu: %s"
 
-#: main.lua:13010
+#: main.lua:13061
 msgid "stolen"
 msgstr "gestohlen"
 
-#: main.lua:13010
+#: main.lua:13061
 msgid "bought"
 msgstr "gekauft"
 
-#: main.lua:13023
+#: main.lua:13074
 msgid "strength"
 msgstr "Stärke"
 
-#: main.lua:13220 main.lua:13221
+#: main.lua:13271 main.lua:13272
 msgid "save point"
 msgstr "Speicherpunkt"
 
-#: main.lua:13220
+#: main.lua:13271
 msgid "hidden item"
 msgstr "verborgenes Objekt"
 
-#: main.lua:13220
+#: main.lua:13271
 msgid "objective"
 msgstr "Hauptziel"
 
-#: main.lua:13220
+#: main.lua:13271
 msgid "side story"
 msgstr "Nebengeschichte"
 
-#: main.lua:13221
+#: main.lua:13272
 msgid "exit toward objective"
 msgstr "Ausgang zum Hauptziel"
 
-#: main.lua:13221
+#: main.lua:13272
 msgid "traveler to recruit"
 msgstr "Reisender zum Anwerben"
 
-#: main.lua:13353
+#: main.lua:13404
 #, lua-format
 msgid "Marker gone: %s"
 msgstr "Markierung weg: %s"
 
-#: main.lua:13392
+#: main.lua:13443
 #, lua-format
 msgid "New marker: %s, %s, %d"
 msgstr "Neue Markierung: %s, %s, %d"
 
-#: main.lua:13532
+#: main.lua:13583
 #, lua-format
 msgid "marker type %d"
 msgstr "Markierungstyp %d"
 
-#: main.lua:13540
+#: main.lua:13591
 #, lua-format
 msgid "%s, collected"
 msgstr "%s, eingesammelt"
 
-#: main.lua:13552
+#: main.lua:13603
 #, lua-format
 msgid "%s, to %s"
 msgstr "%s, nach %s"
 
-#: main.lua:13556
+#: main.lua:13607
 #, lua-format
 msgid "%s place"
 msgstr "%s, Ort"

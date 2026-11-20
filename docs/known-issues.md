@@ -955,6 +955,17 @@ Open:
   way. In the game: the walk to chest 4 took over the check's traces ("ROUTE takes over
   the traces of the checks from here", 491 traces, 0.2 s); the one to chest 3 came after
   a finished check (1451 traces, 0.3 s).
+- **Ledges are no steps: in a unit test only.** In Ravus manor's library (user, 2026-11-20)
+  the route to a chest (TrsrBx_Cliff_D11_02 at (210,-3150), floor -400) went over the
+  tables: their tops at -300 (papers on them) were cells "@-299" between floor cells
+  "@-399", the knee-high line rising with the step cleared each table's edge, and the
+  walk bumped and re-routed for minutes. Since then a rise or drop over 45 between two
+  cells is a step only where the floor between them climbs: NV.rise_ok probes the
+  capsule's profile at both ends (level there = no rise: the river bed under the Maiya
+  bridge's invisible deck) and at 1/2, 1/4 and 3/4 (a point clearly between the floors =
+  stairs or a ramp); otherwise a ledge, refused (ledges=N in the ROUTE lines). Not tried
+  in the game: whether the library's chest has a way round the tables at floor level,
+  and stairs whose steps the capsule's profile doesn't see.
 - **Inside a building, by the game's own flag: not walked yet.** In Klarach (user,
   2026-11-19) Alfyn, to recruit, could not be reached, nor a chest. Alfyn's figure
   (PC_TRivS_000A at (-30,-560), HouseInFlag off in its placement row) stands outside,

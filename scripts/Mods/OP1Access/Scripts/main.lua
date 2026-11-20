@@ -8956,8 +8956,9 @@ local function nav_route_finish(goalnode)
     NV.route = nil
     if not R then return end
     if not goalnode then
-        log(string.format("ROUTE fail traces=%d pops=%d slides=%d people-blocked=%d no-room=%d capsule-floors=%d too-narrow=%d %.1fs",
-            R.traces, R.pops, R.slides or 0, R.ppl_hit or 0, R.nroom or 0, R.npawn or 0, R.ntight or 0, os.clock() - R.started))
+        log(string.format("ROUTE fail traces=%d pops=%d slides=%d people-blocked=%d no-room=%d capsule-floors=%d too-narrow=%d ledges=%d %.1fs",
+            R.traces, R.pops, R.slides or 0, R.ppl_hit or 0, R.nroom or 0, R.npawn or 0, R.ntight or 0, R.nledge or 0,
+            os.clock() - R.started))
         -- people stood in the way of some steps: was it them? The same search without
         -- people; if that finds a way, the person on it is named (below, R.blame)
         if R.people and (R.ppl_hit or 0) > 0 and not R.nopeople and not R.capped then
@@ -9188,8 +9189,8 @@ local function nav_route_finish(goalnode)
     local ez = (door and R.mode == "walk") and (door.z or R.oz) or R.oz   -- the walk's end
     if ez - R.pz < -250 then floorword = ", " .. tr("downstairs")
     elseif ez - R.pz > 250 then floorword = ", " .. tr("upstairs") end
-    log(string.format("ROUTE ok cells=%d wps=%d traces=%d slides=%d no-room=%d capsule-floors=%d too-narrow=%d %.1fs (%d ticks, %.1f ms/tick, %.3f ms/trace)",
-        #chain, #pts, R.traces, R.slides or 0, R.nroom or 0, R.npawn or 0, R.ntight or 0, os.clock() - R.started,
+    log(string.format("ROUTE ok cells=%d wps=%d traces=%d slides=%d no-room=%d capsule-floors=%d too-narrow=%d ledges=%d %.1fs (%d ticks, %.1f ms/tick, %.3f ms/trace)",
+        #chain, #pts, R.traces, R.slides or 0, R.nroom or 0, R.npawn or 0, R.ntight or 0, R.nledge or 0, os.clock() - R.started,
         R.ticks or 0, (R.cpu or 0) * 1000 / math.max(1, R.ticks or 0), (R.cpu or 0) * 1000 / math.max(1, R.traces)))
     if R.mode == "walk" then
         if door then speak(tr("A shut door on the way")) end
@@ -10058,6 +10059,54 @@ NV.ground_at = function(R, ksl, p, wx, wy, za)
     R.gcache2[gk] = z
     return z, 1
 end
+-- A RISE OR DROP between two cells (more than 45) is walkable only as stairs or a ramp:
+-- the floor between them climbs. A ledge shows only its two levels in between: in Ravus
+-- manor's library (user 2026-11-20) the route went over the TABLES (floor -399, table tops
+-- -299 with papers on them, "@-299" between "@-399" in the ROUTE lines), the knee-high
+-- line rising with the step cleared each table's edge, and the walk bumped into them for
+-- minutes. Probed on the capsule's own profile (what the character stands on; channel 0
+-- is blind to some stairs) at 1/2, 1/4 and 3/4 of the step: a point clearly between the
+-- two floors -> a slope; none -> a ledge, no step. (Step-in routes: NV.stepin_rise_ok.)
+NV.RISE_FREE, NV.RISE_MARGIN = 45, 12
+NV.rise_ok = function(R, ksl, p, best, ax, ay, bx, by, zb)
+    local az = best.z
+    if best.k == R.startk and not R.shifted then
+        -- (the start node's z is the player's capsule, not the floor: the floor under him)
+        if R.start_floor == nil then R.start_floor = NV.ground_at(R, ksl, p, R.px, R.py, R.pz) or false end
+        az = R.start_floor or (R.pz - (M.pfoot or 82))
+    end
+    if math.abs(zb - az) <= NV.RISE_FREE then return true end
+    local lo, hi = math.min(az, zb), math.max(az, zb)
+    local top = hi + 160
+    R.gcache3 = R.gcache3 or {}
+    local function floor(sx, sy)   -- the floor at a point on the capsule's profile, or false
+        local gk = math.floor(sx / 10 + 0.5) .. "," .. math.floor(sy / 10 + 0.5) .. "@" .. math.floor(hi / 50 + 0.5)
+        local z = R.gcache3[gk]
+        if z == nil then
+            R.traces = R.traces + 1
+            local ok, hit, oh = line_blocked(ksl, p, sx, sy, top, sx, sy, lo - 120, NV_TRACE)
+            z = false
+            if ok and hit then
+                local dist
+                pcall(function() if type(oh.Distance) == "number" then dist = oh.Distance end end)
+                if dist and dist >= 1 then z = top - dist end
+            end
+            R.gcache3[gk] = z
+        end
+        return z
+    end
+    -- the two ends level on the capsule's profile: channel 0 read one end's floor under
+    -- something the character stands on (the Maiya bridge's ends: the river bed 456 under
+    -- the invisible deck 507, test_water.lua) -- no rise at all
+    local fa, fb = floor(ax, ay), floor(bx, by)
+    if fa and fb and math.abs(fa - fb) <= NV.RISE_FREE then return true end
+    for _, f in ipairs({ 0.5, 0.25, 0.75 }) do
+        local z = floor(ax + (bx - ax) * f, ay + (by - ay) * f)
+        if z and z > lo + NV.RISE_MARGIN and z < hi - NV.RISE_MARGIN then return true end
+    end
+    R.nledge = (R.nledge or 0) + 1
+    return false
+end
 -- STEP-IN ROUTES know their floors (R.groundch, the capsule's own profile), so two more
 -- rules there (test_inn.lua: a corner cut through the inn's base wall, and a 96 ledge
 -- taken as a step because the knee-high line rose with it):
@@ -10144,7 +10193,7 @@ NV.slide_step = function(R, ksl, p, best, d, nx, ny)
         local bx, by = cx + qx * s, cy + qy * s
         local zb, u = NV.ground_at(R, ksl, p, bx, by, best.z)
         used = used + u
-        if zb and math.abs(zb - best.z) <= 200 then
+        if zb and math.abs(zb - best.z) <= 200 and (R.stepin or NV.rise_ok(R, ksl, p, best, ax, ay, bx, by, zb)) then
             -- straight from where this cell stands, or (into the passage from open
             -- ground) a side step inside this cell first, then parallel: from a cell 50
             -- off the passage's middle the slanted corridor clipped its entrance
@@ -10254,7 +10303,9 @@ NV.route_slice = function(R, budget, itercap, deadline)
                     local zb, used = nav_ground(R, ksl, p, nx, ny, best.z)
                     budget = budget - used
                     if zb and math.abs(zb - best.z) <= 200
-                        and (not R.stepin or NV.stepin_rise_ok(R, ksl, p, best, nx, ny, zb)) then
+                        and (not R.stepin or NV.stepin_rise_ok(R, ksl, p, best, nx, ny, zb))
+                        and (R.stepin or NV.rise_ok(R, ksl, p, best, R.px + best.x * NV.STEP, R.py + best.y * NV.STEP,
+                            R.px + nx * NV.STEP, R.py + ny * NV.STEP, zb)) then
                         local nk = key3(nx, ny, zlayer(R, zb))
                         -- wall check at knee height between the two ground points
                         local ekey = best.k .. ">" .. nk

@@ -118,6 +118,9 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   Alfyn, waiting by Zeph's house in Klarach, was taken for inside it, and the walk went
   to Zeph's door, where Zeph stands ("Zeph steht im Weg"). A chest in a house's side
   room is now said to be inside a building, and the walk leads to that house's door.
+  Routes no longer go over tables and other ledges: in Ravus manor's library the walk
+  climbed onto the tables in its plan and bumped into them for minutes; a step up or down
+  between two spots now counts only where stairs or a ramp lead there.
 
 ### Battles
 
