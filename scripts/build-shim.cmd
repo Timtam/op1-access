@@ -2,7 +2,7 @@
 :: build-shim.cmd
 ::
 :: Builds Prism (static library, via CMake) and OP1AccessShim.dll, which links
-:: Prism in, then deploys the shim to the game's Mods/OP1Access/Scripts folder.
+:: Prism in, then deploys the shim to the game's ue4ss\Mods\OP1Access\Scripts folder.
 ::
 :: Dependencies live in tools\ (gitignored; scripts\fetch-deps.ps1 fetches them).
 :: Set OP1_TOOLS to use a tools folder elsewhere, e.g. the main checkout's when
@@ -31,9 +31,8 @@ set SHIM_OUT=%BUILD%\OP1AccessShim.dll
 :: Win64 (game exe dir) -- phonon.dll must live here so the shim's implicit
 :: dependency on it resolves at load time (Scripts\ is NOT on the DLL search path).
 if not defined GAME_BIN set "GAME_BIN=C:\Program Files (x86)\Steam\steamapps\common\OCTOPATH TRAVELER\Octopath_Traveler\Binaries\Win64"
-:: UE4SS 4 keeps its mods in Win64\ue4ss\Mods, UE4SS 3 in Win64\Mods.
-set "GAME_MODS=%GAME_BIN%\Mods\OP1Access"
-if exist "%GAME_BIN%\ue4ss\UE4SS.dll" set "GAME_MODS=%GAME_BIN%\ue4ss\Mods\OP1Access"
+:: UE4SS 4 keeps its mods in Win64\ue4ss\Mods.
+set "GAME_MODS=%GAME_BIN%\ue4ss\Mods\OP1Access"
 
 if not exist "%LUASRC%\lapi.c" (
     echo [build] LuaRaw sources not found at "%LUASRC%". Run the UE4SS source clone first.

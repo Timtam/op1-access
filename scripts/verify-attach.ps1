@@ -15,8 +15,8 @@ Press Ctrl+C to stop watching.
 $ErrorActionPreference = 'Stop'
 
 $gameW64 = 'C:\Program Files (x86)\Steam\steamapps\common\OCTOPATH TRAVELER\Octopath_Traveler\Binaries\Win64'
-# UE4SS 4 writes its log into Win64\ue4ss, UE4SS 3 into Win64.
-$logPath = if (Test-Path (Join-Path $gameW64 'ue4ss\UE4SS.dll')) { Join-Path $gameW64 'ue4ss\UE4SS.log' } else { Join-Path $gameW64 'UE4SS.log' }
+# UE4SS 4 writes its log into Win64\ue4ss.
+$logPath = Join-Path $gameW64 'ue4ss\UE4SS.log'
 
 if (-not (Test-Path $gameW64)) {
     Write-Host "[verify] Game folder not found at: $gameW64" -ForegroundColor Red
