@@ -31,8 +31,7 @@ Browse local files to find it. Everything lands in Octopath_Traveler\Binaries\Wi
 Mods), phonon.dll, and the mod in ue4ss\Mods\OP1Access. If UE4SS 4 is installed already,
 ue4ss\Mods\OP1Access and phonon.dll are enough; add the line "OP1Access : 1" to
 ue4ss\Mods\mods.txt and set "GuiConsoleEnabled = 0" in ue4ss\UE4SS-settings.ini (UE4SS's console
-window would take the focus away from the game). An older UE4SS 3 has UE4SS.dll right in Win64:
-remove it first (UE4SS.dll, UE4SS-settings.ini and the folder Mods there), or use the installer.
+window would take the focus away from the game).
 Start the game with your screen reader running. You hear "OP1 Access loaded" ("OP1 Access
 geladen" when the game's text language is German).
 

@@ -28,8 +28,8 @@ so a new pin fetches again there.
 and `OP1AccessShim.dll` with Lua, Prism, MinHook and miniaudio linked in (`phonon.dll` stays a DLL
 next to the game EXE). It also links a `luac.exe` from the same Lua objects and runs `luac -p` on
 `main.lua`, so a syntax error fails the build. Without arguments it copies the shim, `phonon.dll` and
-Prism's notices into the game (`Win64\ue4ss\Mods\OP1Access` when UE4SS 4 is there, else
-`Win64\Mods\OP1Access`; `GAME_BIN` sets another Win64 folder); `--no-deploy` only builds.
+Prism's notices into the game (`Win64\ue4ss\Mods\OP1Access`; `GAME_BIN` sets another Win64
+folder); `--no-deploy` only builds.
 `OP1_TOOLS` points it at another `tools\` folder, for example the main checkout's when building in
 a worktree.
 
@@ -86,14 +86,12 @@ Installing:
 
 1. The package is the `--zip` file, else the newer of the latest release's ZIP (downloaded) and an
    `OP1Access-*.zip` next to the installer.
-2. UE4SS 4 is copied if `dwmapi.dll` or `ue4ss\UE4SS.dll` is missing. UE4SS 3.0.1 (what earlier
-   packages brought: `UE4SS.dll` right in `Win64`, recognized by its hash) is replaced without
-   asking, and its files in `Win64` go: `UE4SS.dll`, its settings and log, its stock mods and
-   `Mods\mods.txt` (other mods' folders in `Win64\Mods` stay; UE4SS 4 no longer loads them). Another
-   UE4SS build is replaced only after asking (`--replace-ue4ss` in silent mode); if it stays, the mod
-   goes into its `Mods` folder. Stock mods, `UE4SS-settings.ini` and `mods.txt` are only added when
-   missing.
-3. `ue4ss\Mods\OP1Access` is replaced; an old `Win64\Mods\OP1Access` is moved there first. Sounds
+2. UE4SS 4 is copied if `dwmapi.dll` or `ue4ss\UE4SS.dll` is missing. Another UE4SS 4 build is
+   replaced only after asking (`--replace-ue4ss` in silent mode); if it stays, the mod goes into
+   its `ue4ss\Mods` folder all the same. Stock mods, `UE4SS-settings.ini` and `mods.txt` are only
+   added when missing. A UE4SS 3 (`UE4SS.dll` right in `Win64`) isn't looked for: the mod needs
+   UE4SS 4.
+3. `ue4ss\Mods\OP1Access` is replaced. Sounds
    in `Assets` that the user changed or added stay: the installer writes the hashes of the sounds
    it installed to `shipped-assets.txt` in the mod folder, and on the next update a sound that
    matches neither that list nor the new package is the user's.
@@ -103,16 +101,15 @@ Installing:
 5. The installer copies itself into the mod folder (unless the package brought a newer one) and
    writes the uninstall entry.
 
-Uninstalling removes the mod folder (`ue4ss\Mods\OP1Access`, and `Mods\OP1Access` of UE4SS 3),
-`phonon.dll` and the `mods.txt` lines, and, if asked, UE4SS (`dwmapi.dll`, the `ue4ss` folder's
-`UE4SS.dll`, settings, log and stock mods, and what UE4SS 3 left in `Win64`; folders of other mods
-stay).
+Uninstalling removes the mod folder (`ue4ss\Mods\OP1Access`), `phonon.dll` and the `mods.txt`
+line, and, if asked, UE4SS (`dwmapi.dll`, the `ue4ss` folder's `UE4SS.dll`, settings, log and
+stock mods; folders of other mods stay).
 
 After changing `GameInstall.cs`, try it on a fake game folder (a dummy `Octopath_Traveler.exe`
 and an `Octopath_Traveler\Binaries\Win64` folder): `--silent --install --game <folder> --zip
-<package> --no-registry`, once fresh and once over a UE4SS 3.0.1 layout (its `dwmapi.dll` and
-`UE4SS.dll` in `Win64`, a `Mods` folder with `OP1Access` and a sound of your own in its `Assets`),
-then `--silent --uninstall --remove-ue4ss`.
+<package> --no-registry`, once fresh, once again (with a sound of your own in the mod's
+`Assets`), once over another UE4SS build (a changed `ue4ss\UE4SS.dll`, with and without
+`--replace-ue4ss`), then `--silent --uninstall`, with and without `--remove-ue4ss`.
 
 The copy in the mod folder cannot replace or delete itself. It copies itself to
 `%TEMP%\OP1AccessInstaller\` and starts that copy with the same arguments plus `--relaunched`. If

@@ -13,7 +13,7 @@ texts into the release ZIP (`ue4ss/Mods/OP1Access/licenses/`) and lists them in
   (`dwmapi.dll`, the `ue4ss` folder with `UE4SS.dll`, `UE4SS-settings.ini` and
   `Mods`) unchanged, except `GuiConsoleEnabled = 0` in the settings and UE4SS's own
   mods switched off in `mods.txt`. The installer leaves an existing UE4SS 4.0.0 in
-  place and replaces UE4SS 3.0.1. The mod's Lua scripts and `OP1AccessShim.dll` run
+  place. The mod's Lua scripts and `OP1AccessShim.dll` run
   inside it; the shim also compiles UE4SS's Lua 5.4.7 sources (`deps/first/LuaRaw`).
 
 ## Prism

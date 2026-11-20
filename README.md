@@ -35,8 +35,8 @@ use headphones: its sounds come from the direction of what they stand for.
    UE4SS 4.0.0 (unless it is there already) and the mod. It also turns off
    UE4SS's console window, which would take the focus away from the game, and
    UE4SS's own mods (consoles, cheat manager, Blueprint mod loader, key binds),
-   which OP1 Access doesn't need. An installation with UE4SS 3.0.1 from an
-   earlier version is moved over; sounds you put into `Assets` stay.
+   which OP1 Access doesn't need. On updates, sounds you put into `Assets`
+   stay.
 5. Start the game with your screen reader running. You hear
    **“OP1 Access loaded”**. From then on the mod speaks the game's text language
    (“OP1 Access geladen” when the game is set to German).
@@ -59,9 +59,7 @@ into the mod folder, which the mod uses for updates.
    `ue4ss\Mods\OP1Access`.
    If UE4SS 4 is installed already, `ue4ss\Mods\OP1Access` and `phonon.dll` are
    enough; then add the line `OP1Access : 1` to `ue4ss\Mods\mods.txt` and set
-   `GuiConsoleEnabled = 0` in `ue4ss\UE4SS-settings.ini`. An older UE4SS 3 has
-   `UE4SS.dll` right in `Win64`: remove it first (`UE4SS.dll`,
-   `UE4SS-settings.ini` and the `Mods` folder there), or let the installer do it.
+   `GuiConsoleEnabled = 0` in `ue4ss\UE4SS-settings.ini`.
 3. Start the game with your screen reader running.
 
 See `docs/install-state.md` for the exact deployed layout.

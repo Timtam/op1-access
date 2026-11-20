@@ -29,10 +29,8 @@ ue4ss/
       OP1AccessInstaller.exe, README.txt, LICENSE.txt, THIRD-PARTY-NOTICES.txt, licenses/
 ```
 
-UE4SS 3.0.1 (earlier versions of the mod) had everything in `Win64` itself: `UE4SS.dll`,
-`UE4SS-settings.ini`, `UE4SS.log` and `Mods/` with the mod in `Mods/OP1Access`. The installer
-moves such an installation over. The mod finds its own folder either way (`M.MOD_DIR`, from
-`main.lua`'s path).
+The mod finds its own folder from `main.lua`'s path (`M.MOD_DIR`). It needs UE4SS 4.0.0 or
+newer (its game-thread timers); with an older UE4SS it logs that and doesn't start.
 
 ## In this repo
 
