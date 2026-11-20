@@ -973,6 +973,11 @@ Open:
   at the door). In the game's data he is inside the house for a stretch of Alfyn's
   story (variants B/C, flags 5960-6324), so the chest is probably meant for then. Not
   heard in the game yet: Alfyn reached; the chest said to be "inside a building".
+  The flag only speaks for TOWN houses (those with a room box): in Ravus manor (user,
+  2026-11-20) a chest (TrsrBx_Cliff_D11_01 at (340,2250), HouseInFlag off) lies behind one
+  of the manor's room doors ("Ivons", no room box), and the flag had stopped the fallback to
+  that door after the failed route ("Nicht erreichbar"). Since then false counts only for a
+  door with a room box; dungeon doors get the doorway-plane fallback as before.
 - **Room detection only works for some buildings.** "Inside a building" comes from the
   box around a door's `Actor_Room` actors (good for the Atlasdam library), and since
   2026-11-14 the target must also be on the inner side of the doorway plane, so people

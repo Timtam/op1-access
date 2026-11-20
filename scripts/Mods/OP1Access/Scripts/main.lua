@@ -8448,13 +8448,16 @@ M.house_door_for = function(tx, ty, tz, px, py, pz, dolog, allow_plane, tin)
             end
             local ipb = inroom(px, py, pz)        -- in the padded box: inside or at the door
             local it, how = inroom(tx, ty, tz) and inner(tx, ty), "room"
-            if tin == false then it = false elseif tin == true then it = inroom(tx, ty, tz) end
+            -- (the flag speaks for TOWN houses, those with a room box: a dungeon's rooms
+            -- behind doors -- Ravus manor's "Ivons" doors, room=none -- hold chests flagged
+            -- off, and after a failed route their door is still the way: 2026-11-20)
+            if tin == false and box then it = false elseif tin == true then it = inroom(tx, ty, tz) end
             -- really inside: the game's own flag; the box and the plane only if unreadable
             local entered = M.house_entered(daddr)
             local ip
             if entered ~= nil then ip = entered else ip = ipb and inner(px, py) end
             -- fallback: the doorway plane alone, only after a failed route
-            if not it and allow_plane and pl and tin ~= false then
+            if not it and allow_plane and pl and (tin ~= false or not box) then
                 local side = math.abs((tx - pl.cx) * pl.ny - (ty - pl.cy) * pl.nx)
                 if along(tx, ty) > 60 and along(tx, ty) < 2500 and side < 1500
                     and math.abs((tz or pl.cz) - pl.cz) < 800 and along(px, py) < 0 then
