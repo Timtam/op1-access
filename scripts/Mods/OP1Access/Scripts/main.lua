@@ -6,18 +6,21 @@
 --   exposes Speak / Silence / IsSpeakingSupported, backed by Prism (NVDA,
 --   JAWS, ... or OneCore/SAPI when no screen reader runs).
 
--- UE4SS 4: THE WHOLE MOD RUNS ON THE GAME THREAD (2026-11-17). UE4SS runs LoopAsync and
--- ExecuteWithDelay callbacks on its async thread and RegisterKeyBind callbacks on its own
--- thread, hooks and ExecuteInGameThread work on the game thread -- all in this one Lua
--- state. Lua itself is guarded by UE4SS's lock, but the shim's C functions run outside
--- it (the shim has its own copy of Lua), so two threads in this state broke it: in the
--- first 4.0.0 test "Ref was not function" every minute or two, then a crash after 12
--- minutes in a Lua table lookup. UE4SS 4 has game-thread timers. So this file runs once
--- on UE4SS's thread only to queue itself, and then for real on the game thread; its
--- loops are game-thread timers (LoopInGameThreadWithDelay), its delays too, and its keys
--- are read on the game thread (M.key_poll). Without the game-thread timers (UE4SS 3)
--- everything runs as before.
-if LoopInGameThreadWithDelay and ExecuteInGameThreadWithDelay and OP1_BOOT == nil then
+-- THE WHOLE MOD RUNS ON THE GAME THREAD (UE4SS 4.0.0, 2026-11-17). UE4SS runs LoopAsync
+-- and ExecuteWithDelay callbacks on its async thread and RegisterKeyBind callbacks on its
+-- own thread, hooks and ExecuteInGameThread work on the game thread -- all in this one
+-- Lua state. Lua itself is guarded by UE4SS's lock, but the shim's C functions run
+-- outside it (the shim has its own copy of Lua), so two threads in this state broke it:
+-- in the first 4.0.0 test "Ref was not function" every minute or two, then a crash after
+-- 12 minutes in a Lua table lookup. So this file runs once on UE4SS's thread only to
+-- queue itself, and then for real on the game thread; its loops are game-thread timers
+-- (LoopInGameThreadWithDelay), its delays too, and its keys are read on the game thread
+-- (M.key_poll). An older UE4SS without the game-thread timers doesn't start the mod.
+if not (LoopInGameThreadWithDelay and ExecuteInGameThreadWithDelay and ExecuteInGameThread) then
+    print("[OP1Access] needs UE4SS 4.0.0 or newer (game-thread timers): not started\n")
+    return
+end
+if OP1_BOOT == nil then
     OP1_BOOT = "queued"
     local src = debug and debug.getinfo and debug.getinfo(1, "S")
     local path = src and type(src.source) == "string" and src.source:match("^@(.+)$")
@@ -38,33 +41,25 @@ end
 
 local M = {}
 
--- UE4SS 4 (game-thread timers; see above). Its LoopAsync / ExecuteWithDelay become
--- game-thread timers here, so every later caller gets those.
-M.V4 = (LoopInGameThreadWithDelay ~= nil and ExecuteInGameThreadWithDelay ~= nil)
-if M.V4 then
-    LoopAsync = function(ms, fn)
-        local h
-        h = LoopInGameThreadWithDelay(ms, function()
-            if fn() == true and h then CancelDelayedAction(h) end
-        end)
-        return h
-    end
-    ExecuteWithDelay = function(ms, fn) return ExecuteInGameThreadWithDelay(ms, fn) end
-    ExecuteAsync = function(fn) return ExecuteInGameThread(fn) end
+-- UE4SS's LoopAsync / ExecuteWithDelay / ExecuteAsync become game-thread timers here (see
+-- above), so every later caller gets those.
+LoopAsync = function(ms, fn)
+    local h
+    h = LoopInGameThreadWithDelay(ms, function()
+        if fn() == true and h then CancelDelayedAction(h) end
+    end)
+    return h
 end
+ExecuteWithDelay = function(ms, fn) return ExecuteInGameThreadWithDelay(ms, fn) end
+ExecuteAsync = function(fn) return ExecuteInGameThread(fn) end
 
--- The mod's own folder: Mods\OP1Access\ (UE4SS 3, everything in Win64) or
--- ue4ss\Mods\OP1Access\ (UE4SS 4), from this file's own path -- relative to Win64 (the
--- game's working folder) or absolute.
+-- The mod's own folder (ue4ss\Mods\OP1Access\), from this file's own path -- relative to
+-- Win64 (the game's working folder) or absolute.
 M.MOD_DIR = (function()
     local s = debug and debug.getinfo and debug.getinfo(1, "S")
     local p = s and type(s.source) == "string" and s.source:match("^@(.-)[Ss]cripts[/\\][^/\\]+%.lua$")
     if p and p ~= "" then return (p:gsub("/", "\\")) end
-    for _, c in ipairs({ "ue4ss\\Mods\\OP1Access\\", "Mods\\OP1Access\\" }) do
-        local f = io.open(c .. "Scripts\\main.lua", "rb")
-        if f then f:close(); return c end
-    end
-    return "Mods\\OP1Access\\"
+    return "ue4ss\\Mods\\OP1Access\\"
 end)()
 
 -- The eight travelers' display names (identical in the English and German text). A
@@ -187,9 +182,8 @@ M.LANG_BY_NONE = { ["None"] = "en", ["Keine"] = "de", ["Rien"] = "fr", ["Nada"] 
     ["Nessuno"] = "it", ["なし"] = "ja", ["없음"] = "ko", ["无"] = "zh_cn", ["無"] = "zh_tw" }
 -- The game's own setting first: KSGameStatics:GetLanguage() -> EKSLanguage (the option
 -- "Textsprache"; it switches the text at once). The text of BASIC_COMMAND_001 alone missed
--- the switch to English (2026-11-16: the mod stayed German). A UFunction call, so only
--- on the game thread (UE4SS runs queued game-thread work on whatever thread calls one);
--- other threads get the last answer. Every 5 s, every 2 s until known.
+-- the switch to English (2026-11-16: the mod stayed German). Every 5 s, every 2 s until
+-- known.
 M.LANG_BY_ENUM = { [0] = "ja", [1] = "en", [2] = "it", [3] = "fr", [4] = "de", [5] = "es",
     [6] = "zh_tw", [7] = "zh_cn", [8] = "ko" }
 do
@@ -197,27 +191,19 @@ do
     M.game_lang = function()
         local now = os.clock()
         if now - lang_t < (lang and 5 or 2) then return lang or M.lang_last or "en" end
-        local gt = false
-        if shim and shim.IsGameThread then
-            local okg, isg = pcall(shim.IsGameThread)
-            gt = okg and isg == true
-        end
-        if lang and not gt then return lang end   -- known: the next game-thread call asks
         lang_t = now
         local l
-        if gt then
-            pcall(function()
-                if not gs then gs = StaticFindObject("/Script/Octopath_Traveler.Default__KSGameStatics") end
-                if gs and gs:IsValid() then
-                    local v = gs:GetLanguage()
-                    l = M.LANG_BY_ENUM[tonumber(v)]
-                    if not l and not unknown[tostring(v)] then
-                        unknown[tostring(v)] = true
-                        log("LANG: GetLanguage() gave " .. tostring(v) .. " (" .. type(v) .. ")")
-                    end
+        pcall(function()
+            if not gs then gs = StaticFindObject("/Script/Octopath_Traveler.Default__KSGameStatics") end
+            if gs and gs:IsValid() then
+                local v = gs:GetLanguage()
+                l = M.LANG_BY_ENUM[tonumber(v)]
+                if not l and not unknown[tostring(v)] then
+                    unknown[tostring(v)] = true
+                    log("LANG: GetLanguage() gave " .. tostring(v) .. " (" .. type(v) .. ")")
                 end
-            end)
-        end
+            end
+        end)
         if not l then
             local s
             if M.gt_label then s = M.gt_label("BASIC_COMMAND_001") end
@@ -532,23 +518,13 @@ do
     M.fg_guard = function(fn) return function(...) if not M.fg_ok() then return end return fn(...) end end
 end
 
--- Run fn on the GAME thread. Doing game-object work (FindAllOf, IsValid, ProcessEvent,
--- position reads) from our async LoopAsync / keybind threads races the game freeing
+-- Run fn in UE4SS's next game-thread run (ExecuteInGameThread): after the callback, hook
+-- or key that asks for it, between two of the game's frames. Game-object work (FindAllOf,
+-- IsValid, ProcessEvent, position reads) beside the game thread raced the game freeing
 -- actors (streaming as you walk, mass-freed on window focus-loss) -> uncatchable
--- IsA/ProcessEvent crashes. ExecuteInGameThread serializes us with the game's frame so
--- actors are never half-freed under us. Falls back to direct call if unavailable.
--- BUT UE4SS 3.0.1 runs the queued work inside the FIRST ProcessEvent call made after
--- queueing, on whatever thread makes it: also our async loop's or a key bind's, when
--- they call any UFunction. Then "game thread" work ran beside the real game thread
--- (crash 2026-11-14 in a dialog's Blueprint while the menu reader ran FindAllOf on the
--- async thread). So each queued function checks the thread first (shim.IsGameThread);
--- on a foreign one it waits in M.gt_pending for the next run on the game thread.
+-- IsA/ProcessEvent crashes; the whole mod runs on the game thread now (see the top of
+-- this file), and this queue still lets a handler put its slow part after itself.
 M.gt_pending = {}
-M.on_gt = function()
-    if not (shim and shim.IsGameThread) then return true end
-    local ok, r = pcall(shim.IsGameThread)
-    return not ok or r ~= false   -- nil = window not there yet: as before
-end
 -- Work queued while such a run is going (M.gt_depth > 0) runs right after it, in the
 -- same run, instead of a nested ExecuteInGameThread (UE4SS iterates its queue meanwhile).
 -- One round only: what arrives meanwhile waits for the next run, so a busy queue can't
@@ -564,17 +540,8 @@ M.gt_drain = function()
     end
 end
 M.in_gt = function(fn)
-    if not ExecuteInGameThread then fn(); return end
     if M.gt_depth > 0 then M.gt_pending[#M.gt_pending + 1] = fn; return end
     ExecuteInGameThread(function()
-        if not M.on_gt() then
-            M.gt_pending[#M.gt_pending + 1] = fn
-            M.gt_foreign = (M.gt_foreign or 0) + 1
-            if M.gt_foreign <= 5 or M.gt_foreign % 100 == 0 then
-                log(string.format("GT: queued work on a foreign thread (#%d), deferred", M.gt_foreign))
-            end
-            return
-        end
         M.gt_depth = M.gt_depth + 1
         pcall(M.gt_drain)
         local ok, err = pcall(fn)
@@ -583,20 +550,15 @@ M.in_gt = function(fn)
         M.gt_depth = M.gt_depth - 1
     end)
 end
-log("game-thread exec driver: " .. (ExecuteInGameThread and "ExecuteInGameThread" or "DIRECT (fallback -- not available!)"))
 
--- Key binds run on the GAME thread too (2026-11-14). UE4SS calls them on its own thread
--- under a lock that stops the game thread at its next ProcessEvent -- but not inside
--- Blueprint code, so their game calls still raced it. Every RegisterKeyBind below goes
--- through this wrapper; work a handler queues itself (M.in_gt) runs right after it.
--- (M.key_t: when the last key bind fired, on UE4SS's thread -- how long a key's work then
--- waited for the game thread, for the log)
--- UE4SS 4: KEYS READ ON THE GAME THREAD (2026-11-17). Its key-bind thread would run our
--- Lua beside the game thread's (see the top of this file). So here RegisterKeyBind only
+-- KEYS READ ON THE GAME THREAD (2026-11-17). UE4SS's key-bind thread would run our Lua
+-- beside the game thread's (see the top of this file). So here RegisterKeyBind only
 -- records the bind, and M.key_poll -- every frame, on the game thread -- looks at the
 -- bound keys (shim.KeyScan: GetAsyncKeyState, as UE4SS does) with UE4SS's rules: a bind
 -- fires when its key goes down while exactly its modifiers (Ctrl, Shift, Alt) are held,
--- and only while the game window is in front. Its callback runs right there.
+-- and only while the game window is in front. Its callback runs right there; work it
+-- queues itself (M.in_gt) runs right after it. (M.key_t: when the last key fired, for
+-- the log)
 M.keys = { list = {}, vks = {}, known = {}, down = {} }
 M.KEY_MODBIT = { [0x11] = 1, [0x10] = 2, [0x12] = 4 }   -- ModifierKey CONTROL, SHIFT, ALT
 M.key_register = function(key, a, b)
@@ -641,34 +603,18 @@ M.key_poll = function()
         end
     end
 end
-do
-    local raw = RegisterKeyBind
-    if M.V4 and shim and shim.KeyScan and shim.KeyModifiers then
-        RegisterKeyBind = M.key_register
-        local okp, h
-        if EngineTickAvailable and LoopInGameThreadAfterFrames then
-            okp, h = pcall(LoopInGameThreadAfterFrames, 1, M.key_poll)
-        else
-            okp, h = pcall(LoopInGameThreadWithDelay, 10, M.key_poll)
-        end
-        log("keys: read on the game thread (" .. ((EngineTickAvailable and "every frame") or "every 10 ms") ..
-            "): " .. tostring(okp and h))
-    elseif raw and ExecuteInGameThread then
-        -- (each key also checks that UE4SS's async thread still runs: M.async_check)
-        local function run(f)
-            return function()
-                M.key_t = os.clock()
-                M.in_gt(function()
-                    if M.async_check then pcall(M.async_check, os.clock()) end
-                    f()
-                end)
-            end
-        end
-        RegisterKeyBind = function(key, a, b)
-            if type(a) == "function" then return raw(key, run(a)) end
-            return raw(key, a, run(b))
-        end
+RegisterKeyBind = M.key_register
+if shim and shim.KeyScan and shim.KeyModifiers then
+    local okp, h
+    if EngineTickAvailable and LoopInGameThreadAfterFrames then
+        okp, h = pcall(LoopInGameThreadAfterFrames, 1, M.key_poll)
+    else
+        okp, h = pcall(LoopInGameThreadWithDelay, 10, M.key_poll)
     end
+    log("keys: read on the game thread (" .. ((EngineTickAvailable and "every frame") or "every 10 ms") ..
+        "): " .. tostring(okp and h))
+else
+    log("keys: the shim can't read keys (no KeyScan): the mod's keys are off")
 end
 
 -- Hook enablement (globals, not chunk locals, to dodge the main-chunk 200-local limit).
@@ -676,12 +622,8 @@ end
 --   OP1_NO_CREATED = true  -- NotifyOnNewObject (every widget construction) is THE focus-
 --     out crash: UE4SS's IsA class-match faults on a half-built widget during the
 --     focus-change HUD rebuild, before our callback, so pcall can't catch it. Removed for
---     good; menu detection is now event-driven (UIOpen) + KSUIManager:GetActiveStack.
---   OP1_NO_UICLOSE = true  -- the close hooks are unneeded (poll_active_menu / poll_dialog
---     handle close + re-announce) and a teardown-dispatch risk, so leave them off.
+--     good; menu detection is KSUIManager:GetActiveStack + the polls.
 -- The rest are safe and ON.
-OP1_NO_UICLOSE = true   -- KSUserWidgetBase:UIClose + KSUIManager:Close (off)
-OP1_NO_UIOPEN  = false  -- KSUserWidgetBase:UIOpen + KSUIManager:Open (on)
 OP1_NO_CREATED = true   -- NotifyOnNewObject widget-created (off -- was the crash)
 OP1_NO_TICK = false     -- EventManagerBP:ReceiveTick (pump driver, on)
 OP1_NO_TALK = false     -- NPC Talk hook (on)
@@ -737,8 +679,8 @@ local SCENE_LABELS = {
     -- UICommonDialogBP_C is intentionally not in this list: it constructs
     -- alongside the title screen as part of the framework, and its
     -- announcement would steal the slot from the actual title widgets.
-    -- Real dialog content is announced via the KSUIManager:OpenDialog hook
-    -- with caption + detail + buttons, which is far more useful.
+    -- Dialogs are read by poll_dialog with caption + detail + buttons, which is
+    -- far more useful.
     NarrationWidget_C        = N_("Narration"),
     NarrationMessageWidget_C = N_("Narration message"),
     NarrationNoteWidget_C    = N_("Narration note"),
@@ -753,31 +695,16 @@ local SCENE_LABELS = {
 -- default — but we still log every Construct so we can grow the whitelist.
 
 -- ---------------------------------------------------------------------------
--- EKSUIKind -> friendly name (post-title in-game menus)
+-- EKSUIKind (KSUIManager:Open / GetList): 0 title screen, 10 main menu, 11 shop,
+-- 12 dialog, 13 field actions, 14 purchase, 15 provoke, 16 allure, 17 inquire,
+-- 18 mini map, 19 tutorial, 20 game over, 21 narration, 22 world map, 23 menu,
+-- 24 party chat, 25 flashback, 26 notification, 27 map notification, 28 party chat
+-- available, 29 party change, 30 staff credits, 50 options, 51 equipment, 52 save and
+-- load, 53 character status, 54 items, 55 abilities, 56 tutorials, 57 change jobs,
+-- 58 mission record, 59 story select, 60 event battle, 61 party split, 62 ability
+-- settings, 100 action popup, 101 skip event, 102 judge, 103 auto saving, 104 help.
+-- (The screens are found by the polls: KSUIManager:GetActiveStack and the widgets.)
 -- ---------------------------------------------------------------------------
-local UI_KIND_NAMES = {
-    [0] = N_("Title screen"), [10] = N_("Main menu"), [11] = N_("Shop"),
-    [12] = N_("Dialog"), [13] = N_("Field actions"), [14] = N_("Purchase"),
-    [15] = N_("Provoke"), [16] = N_("Allure"), [17] = N_("Inquire"),
-    [18] = N_("Mini map"), [19] = N_("Tutorial"), [20] = N_("Game over"),
-    [21] = N_("Narration"), [22] = N_("World map"), [23] = N_("Menu"),
-    [24] = N_("Party chat"), [25] = N_("Flashback"), [26] = N_("Notification"),
-    [27] = N_("Map notification"), [28] = N_("Party chat available"),
-    [29] = N_("Party change"), [30] = N_("Staff credits"),
-    [50] = N_("Options"), [51] = N_("Equipment"), [52] = N_("Save and load"),
-    [53] = N_("Character status"), [54] = N_("Items"), [55] = N_("Abilities"),
-    [56] = N_("Tutorials"), [57] = N_("Change jobs"), [58] = N_("Mission record"),
-    [59] = N_("Story select"), [60] = N_("Event battle"), [61] = N_("Party split"),
-    [62] = N_("Ability settings"), [100] = N_("Action popup"),
-    [101] = N_("Skip event"), [102] = N_("Judge"), [103] = N_("Auto saving"),
-    [104] = N_("Help"),
-}
-
-local UI_KIND_SUPPRESSED = {
-    [0]  = true,  -- "Title screen": KSUIManager fires it spuriously during loads;
-                  -- the real title is the bespoke UIMainTitle (poll loop -> "Title").
-    [27] = true, [103] = true, [104] = true,
-}
 
 -- Auto-radar menu gate. In-game menu / battle / shop / conversation widget CLASSES
 -- whose VISIBLE presence means "not free exploration" (radar must go quiet).
@@ -851,41 +778,10 @@ end
 -- StaticConstructObject_Internal for the class and all subclasses) instead
 -- of the BP-implementable Construct UFunction (which doesn't reliably hook
 -- through to derived BP classes). Logs every class name; speaks only those
--- in the whitelist.
+-- in the whitelist. (Off: OP1_NO_CREATED)
 -- ---------------------------------------------------------------------------
--- Debounced announcement. Widget construction happens in bursts (e.g. on
--- title-screen entry, half a dozen scene widgets construct in <50 ms).
--- We collapse a burst to a single "speak the latest matching widget"
--- after WIDGET_DEBOUNCE_MS of quiet, so users only hear the screen they
--- ended up on, not every transient frame.
-local WIDGET_DEBOUNCE_MS = 750
+-- The screen named last (poll_active_menu), so it isn't named twice.
 local last_spoken_class  = nil
-local pending_label      = nil
-local pending_class      = nil
-local pending_token      = 0
-
--- Single point that schedules a debounced "menu became visible" announcement.
--- Called from any signal source: NotifyOnNewObject, UIOpen, SetVisibility.
-local function schedule_menu_announce(cls, label)
-    pending_label = label
-    pending_class = cls
-    pending_token = pending_token + 1
-    local my_token = pending_token
-
-    ExecuteWithDelay(WIDGET_DEBOUNCE_MS, function()
-        if my_token ~= pending_token then return end  -- superseded
-        if not pending_label then return end
-        if pending_class == last_spoken_class then
-            pending_label = nil
-            return
-        end
-        last_spoken_class = pending_class
-        local label_to_speak = pending_label
-        pending_label = nil
-        M.scr_said_t = os.clock()   -- the menu list reader queues its first line after this
-        speak(tr(label_to_speak))
-    end)
-end
 
 -- Registry of SCENE_LABELS widget instances we've observed. Used by the
 -- polling loop to figure out which menu is currently visible. Bounded by
@@ -926,7 +822,8 @@ local cs_coord_mute  = 0     -- polls remaining
 -- freed and replaced -- a register-once flag locks in the dead instance and the live
 -- one never gets added (poll_active_menu prunes the dead one, leaving nothing). Address
 -- dedup lets a fresh instance register once the old one has been pruned, while still
--- ignoring repeat sightings of a still-live one. Shared by the title scan and UIOpen.
+-- ignoring repeat sightings of a still-live one. Used by the screen scan
+-- (scan_scene_registry).
 M.reg_add = function(w, cls, label)
     local addr
     pcall(function() if w and w:IsValid() then addr = w:GetAddress() end end)
@@ -1002,131 +899,28 @@ local function on_widget_created(NewObject)
     -- Do NOT announce on construction. At launch the game builds dozens of menu
     -- widgets up-front (cached, never shown), which produced spurious launch
     -- speech like "Staff credits" / "Other". A screen is announced only when it
-    -- actually becomes visible -- by the poll loop below, or the UIOpen hook.
+    -- actually becomes visible -- by the poll loop below.
 end
 
--- ---------------------------------------------------------------------------
--- Hook: KSUIManager (post-title, in-game)
--- ---------------------------------------------------------------------------
-local last_kind_spoken = nil
-local function on_ui_manager_open(Context, Kind)
-    local k = nil
-    pcall(function() k = Kind:get() end)
-    if not k then return end
-    if UI_KIND_SUPPRESSED[k] then return end
-    if k == last_kind_spoken then return end
-    last_kind_spoken = k
-    -- Only announce KNOWN kinds. The old "Menu <n>" fallback for unmapped kinds was just
-    -- a meaningless number and fired spuriously (e.g. kind 1 on the save/load -> title
-    -- escape -> "Menu 1"). Real menus are read by poll_active_menu + the item readers;
-    -- if a useful menu turns out to be unmapped, add its kind to UI_KIND_NAMES instead.
-    local nm = UI_KIND_NAMES[k]
-    if nm then speak(tr(nm)) end
-end
-
-local function on_ui_manager_close(Context, Kind)
-    local k = nil
-    pcall(function() k = Kind:get() end)
-    if k and k == last_kind_spoken then last_kind_spoken = nil end
-end
-
-local function on_ui_manager_open_dialog(Context, InParam)
-    pcall(function()
-        if not InParam then speak(tr("Dialog")); return end
-        local caption, detail, buttons = "", "", {}
-        pcall(function() caption = ftext_to_string(InParam.CaptionText) end)
-        pcall(function() detail  = ftext_to_string(InParam.DetailText) end)
-        pcall(function()
-            local arr = InParam.ButtonText
-            if arr and arr.ForEach then
-                arr:ForEach(function(_, v) buttons[#buttons + 1] = ftext_to_string(v) end)
-            end
-        end)
-        local parts = {}
-        if caption ~= "" then parts[#parts + 1] = caption end
-        if detail  ~= "" then parts[#parts + 1] = detail end
-        if #buttons > 0 then parts[#parts + 1] = trf("Buttons: %s", table.concat(buttons, ", ")) end
-        speak(#parts > 0 and table.concat(parts, ". ") or tr("Dialog"))
-    end)
-end
-
--- ---------------------------------------------------------------------------
--- Register hooks
--- ---------------------------------------------------------------------------
-local function safe_register(path, fn, label)
-    local off
-    if label:find("Close") then off = OP1_NO_UICLOSE
-    elseif label:find("Open") then off = OP1_NO_UIOPEN end
-    if off then log("hook disabled by config: " .. label); return end
-    -- UE4SS 4 hooks these NATIVE functions (/Script/...) with a native hook. Its thunk
-    -- walks the calling Blueprint frame's out-parameter list until NULL; in UE 4.18 that
-    -- list isn't always NULL-terminated, and the walk spun forever on the game thread:
-    -- the game froze for good when a traveler's story began (2026-11-18, dump hang-
-    -- 20261118-063458: UIManagerBP_C:PlayAfterFadeOut -> KSUIManager:Open, its list ran
-    -- into the UClass "Class", whose class is itself). UE4SS 3 hooked only Blueprint
-    -- calls of them, and in its logs they never fired: the screens are read by the polls.
-    -- So under UE4SS 4 they stay off.
-    if M.V4 and path:find("^/Script/") then log("hook left off under UE4SS 4 (native function): " .. label); return end
-    local ok, err = pcall(RegisterHook, path, M.fg_guard(fn))
-    log(string.format("RegisterHook %s: %s%s", label, tostring(ok),
-        ok and "" or (" (" .. tostring(err) .. ")")))
-end
+-- (No hooks on KSUIManager:Open/Close or KSUserWidgetBase:UIOpen/UIClose: these are native
+-- functions, and UE4SS 4 hooks them with a native hook whose thunk walks the calling
+-- Blueprint frame's out-parameter list until NULL; in UE 4.18 that list isn't always
+-- NULL-terminated, and the walk spun forever on the game thread: the game froze for good
+-- when a traveler's story began (2026-11-18, dump hang-20261118-063458: UIManagerBP_C:
+-- PlayAfterFadeOut -> KSUIManager:Open, its list ran into the UClass "Class", whose class
+-- is itself). Never register a native (/Script/) hook. The screens are read by the polls.)
 
 -- Broad: every widget creation, via UE4SS's NotifyOnNewObject. Fires on
 -- StaticConstructObject_Internal so BP-derived widgets are also caught.
--- This handles FIRST-time-ever construction. For repeat visits to the same
--- widget (e.g. Title -> Save/Load -> Title), we hook UIOpen below.
+-- This handles FIRST-time-ever construction.
 local ok_notify, err_notify = (not OP1_NO_CREATED) and pcall(NotifyOnNewObject, "/Script/UMG.UserWidget", M.fg_guard(on_widget_created)) or false
 log(string.format("NotifyOnNewObject UserWidget: %s%s", tostring(ok_notify),
     ok_notify and "" or (" (" .. tostring(err_notify) .. ")")))
 
 -- ---------------------------------------------------------------------------
--- Widget UIOpen hooks — catches *every* "menu shown" event, including
--- repeat visits where the widget is reused from cache.
--- ---------------------------------------------------------------------------
-
-local function on_widget_uiopen(Context)
-    local widget = Context and Context:get()
-    if not widget then return end
-    local cls = class_name_of(widget)
-    if not cls then return end
-    local label = SCENE_LABELS[cls]
-    if not label then return end
-    log("UIOpen: " .. cls)
-    -- Populate the registry event-driven (this replaces on_widget_created's job for
-    -- in-game menus, which DO fire UIOpen). The pump's radar gate + poll_active_menu
-    -- read scene_widgets. Address-deduped, so a reused cached widget isn't re-added.
-    -- Runs on the game thread like the old construction hook (cross-thread shape unchanged).
-    M.reg_add(widget, cls, label)
-    -- in-game the save/load screen opens at a save point inside an event: its name
-    -- ("Save") comes from the event reader (M.poll_event_menus), with its first slot
-    if cls == "MenuSaveLoad_C" and M.field_player then return end
-    schedule_menu_announce(cls, label)
-end
-
-local function on_widget_uiclose(Context)
-    -- Clear last_spoken_class on close so re-entry of the same screen
-    -- still announces.
-    local widget = Context and Context:get()
-    local cls = class_name_of(widget)
-    if cls then
-        log("UIClose: " .. cls)
-        if cls == last_spoken_class then
-            last_spoken_class = nil
-        end
-    end
-end
-
--- Parent hook: catches every widget that does NOT override UIOpen as a
--- Blueprint event.
-safe_register("/Script/Octopath_Traveler.KSUserWidgetBase:UIOpen",  on_widget_uiopen,  "KSUserWidgetBase.UIOpen")
-safe_register("/Script/Octopath_Traveler.KSUserWidgetBase:UIClose", on_widget_uiclose, "KSUserWidgetBase.UIClose")
-
--- ---------------------------------------------------------------------------
 -- Polling loop: walks the scene_widgets registry on a fixed cadence to
--- detect "menu became visible" transitions that don't fire UIOpen, and
--- "menu became hidden" transitions that don't fire UIClose. Common case is
--- the bespoke Title-screen widgets — they're toggled by visibility flips
+-- detect "menu became visible" and "menu became hidden" transitions. Common
+-- case is the bespoke Title-screen widgets — they're toggled by visibility flips
 -- on a parent switcher rather than via the KS lifecycle.
 --
 -- Cost is bounded: registry stays small (one entry per scene widget ever
@@ -1150,7 +944,7 @@ local pending_polled_n     = 0
 
 -- The poll loop announces ONLY these bespoke title-screen widgets, which are
 -- visibility-toggled with no KS lifecycle event, so nothing else can detect them.
--- Every in-game menu is announced by the KSUIManager:Open hook instead -- keeping
+-- Every in-game menu is read by its own reader instead -- keeping
 -- those OUT of the loop is what stops freshly-constructed cached in-game widgets
 -- from being read out during loads/transitions (the spurious-announce bug).
 local TITLE_FLOW = {
@@ -4717,7 +4511,7 @@ M.ml_speak = function(st, now, sig, say, extra, scr, which, owner, nowait)
         end
     end
 end
--- From the async loop: while a menu is up, the list reader on the game thread, 10x/s.
+-- From the polling loop: while a menu is up, the list reader, 10x/s.
 -- Also INSIDE AN EVENT while a list is the focused screen (2026-11-14: the tavern keeper's
 -- "Ausrüstung" opens the equipment screen within the talk event; the reader stood down
 -- and only "Equipment" was said). M.evm_cls is the event reader's focused screen; never
@@ -5867,7 +5661,7 @@ M.update_check = function(manual)
     M.upd.pending, M.upd.manual = true, manual
     return true
 end
--- From the fast loop (any thread: only the shim's HTTP result and speech).
+-- From the polling loop (no game calls: only the shim's HTTP result and speech).
 M.update_poll = function()
     if not (M.upd.pending and shim and shim.HttpGetPoll) then return end
     local status, body = shim.HttpGetPoll()
@@ -5970,7 +5764,6 @@ M.fast_steps = {
     { "notice", function() M.poll_notice() end },
 }
 M.fast_polls = function()
-    M.fast_q = nil
     M.fast_run = {}
     local t0, slow = os.clock(), nil
     for _, s in ipairs(M.fast_steps) do
@@ -5992,42 +5785,22 @@ M.fast_polls = function()
         end
     end
 end
--- The polling loop's work, one tick (from the LoopAsync below, or from the game-thread
--- fallback driver once UE4SS's async thread died: M.async_check)
+-- The polling loop's work, one tick (from the LoopAsync below, a game-thread timer)
 M.ok_tick = function()
     pcall(M.update_poll)   -- the release check's answer (no game calls)
     if not M.fg_ok() then return end   -- unfocused: skip menu polls (game calls fault)
     pcall(M.event_menus_tick)
     if M.menu_lists_tick then pcall(M.menu_lists_tick) end
-    -- one queued run of the screen polls at a time (a stuck one is re-queued after 2 s)
-    local now = os.clock()
-    if not (M.fast_q and now - M.fast_q < 2.0) then
-        M.fast_q = now
-        if M.V4 then pcall(M.fast_polls)   -- (UE4SS 4: on the game thread already)
-        else M.in_gt(M.fast_polls) end
-    end
-    -- work some other thread took anyway (UE4SS runs queued work in any thread's
-    -- ProcessEvent) waits in M.gt_pending; an empty run kicks it back to the game thread
+    pcall(M.fast_polls)   -- the screen polls
+    -- work queued in a game-thread run's last round waits in M.gt_pending (M.in_gt); an
+    -- empty run picks it up
     if #M.gt_pending > 0 and M.gt_depth == 0 then M.in_gt(function() end) end
-    -- The native GetTalkText hook speaks dialogue directly (independent of this
-    -- loop, which can die after a level load). The loop just logs the line.
-    -- (dialogue polling moved into the radar pump: this loop dies intermittently
-    -- after loads, and talkable-NPC learning must not die with it)
+    -- (Dialogue: the native GetTalkText hook speaks it; talkable-NPC learning runs in the
+    -- radar pump.)
 end
-local ok_loop = pcall(LoopAsync, POLL_INTERVAL_MS, function()
-    M.ok_loop_t = os.clock()   -- (liveness: M.async_check)
-    M.ok_tick()
-end)
+local ok_loop = pcall(LoopAsync, POLL_INTERVAL_MS, M.ok_tick)
 log("Polling loop started: " .. tostring(ok_loop))
-
--- In-game: routed through KSUIManager.
-safe_register("/Script/Octopath_Traveler.KSUIManager:Open",       on_ui_manager_open,        "KSUIManager.Open")
-safe_register("/Script/Octopath_Traveler.KSUIManager:Close",      on_ui_manager_close,       "KSUIManager.Close")
--- KSUIManager:OpenDialog announce is disabled: UICommonDialogBP dialogs (title
--- confirm AND in-game prompts) are now handled uniformly by poll_dialog, which
--- detects them by visibility, adds answer-focus read-out, and avoids the
--- double-speak that registering both paths would cause.
--- safe_register("/Script/Octopath_Traveler.KSUIManager:OpenDialog", on_ui_manager_open_dialog, "KSUIManager.OpenDialog")
+-- (Dialogs, title confirms and in-game prompts alike, are read by poll_dialog.)
 
 -- Phase 0 boot announce
 log("script loaded; shim=" .. tostring(shim ~= nil))
@@ -6776,7 +6549,7 @@ local beacon_rescan_say = false -- speak the object count after the next rescan?
 local world_susp  = false    -- radar pump's scene guard (true during events/transitions)
 local function on_arrow_log(kname)
     bump_arrow_t = os.clock(); bump_arrow_key = kname
-    -- on the game thread: keybind callbacks run on a UE4SS thread, and the pump reads actors
+    -- (after the key's own work: M.in_gt)
     if radar_pump then M.in_gt(function() pcall(radar_pump, "key") end) end
     do return end   -- superseded by the OnCursor* hooks (correct instance + event-driven)
     if dlg_visible then return end          -- a confirm dialog owns the keys; stay quiet
@@ -12153,8 +11926,6 @@ local pump_count  = 0
 local pump_lastt  = 0.0
 local PUMP_MIN_DT = 0.09
 local pump_n      = { hook = 0, loop = 0, key = 0 }   -- per-driver pump counts (diagnostics)
-local pump_loop_t = 0.0                               -- last LoopAsync tick (liveness)
-local pump_heals  = 0
 -- Per-frame tick hooks. EventManagerBP turned out to tick only DURING events on
 -- some maps, so the map-local BPs (triggers/chests -- something is on every
 -- field map) are required: without them the pump starves the moment the
@@ -12185,68 +11956,11 @@ local function arm_pump_tickhook()
         end
     end
 end
--- THE FALLBACK DRIVER (2026-11-17, the Pflastersten inn, "Über Nacht bleiben? Ja"). UE4SS's
--- async thread died there: crash_2026_11_17_16_46_04.dmp, c0000264 (RtlLeaveCriticalSection
--- on a lock it doesn't own) inside UE4SS's Lua machinery on that thread -- the recurring
--- UE4SS bug; the game itself ran on. Both LoopAsyncs (this pump's and the polling loop)
--- live on that thread, so the radar, the walker's routing and every menu reader stood
--- still, and "Pump loop re-armed" only put new loops on the dead thread. EventManagerBP's
--- tick hook fires only during events. So once both loops have been quiet for 5 s
--- (M.async_check, from any other driver: arrow keys, the mod's keys, the tick hook), a
--- hook on the player controller's MoveForward axis event takes over -- the controller
--- lives for the whole session, and an input axis event fires every frame -- and drives
--- nav_drive, the pump and the polling loop's work on the game thread. Not before: a
--- per-frame Lua hook all the time would put more Lua on the game thread while the async
--- thread uses the same Lua state -- the very lock that broke.
-M.FALLBACK_HOOKS = {
-    "/Game/Character/BP/KSPlayerControllerBP.KSPlayerControllerBP_C:InpAxisEvt_MoveForward_K2Node_InputAxisEvent_79",
-}
-M.fallback_armed = false
-M.arm_fallback = function(why)
-    if M.fallback_armed then return end
-    for _, path in ipairs(M.FALLBACK_HOOKS) do
-        local ok = pcall(RegisterHook, path, function()
-            if not M.fg_ok() then return end
-            M.fb_t = os.clock()
-            if not M.fb_first then M.fb_first = true; log("ASYNC fallback driver: its first frame") end
-            pcall(nav_drive)
-            if radar_pump then pcall(radar_pump, "fallback") end
-            local now = os.clock()
-            if now - (M.ok_loop_t or -99) > 1.0 and now - (M.ok_fb_t or -99) >= POLL_INTERVAL_MS / 1000 then
-                M.ok_fb_t = now
-                pcall(M.ok_tick)
-            end
-        end)
-        log(string.format("ASYNC %s: fallback driver %s: %s", why, ok and "armed" or "FAILED", path))
-        if ok then M.fallback_armed = true end
-    end
-end
--- (now: os.clock) Both async loops quiet for 5 s: UE4SS's async thread is gone.
-M.async_check = function(now)
-    if M.fallback_armed or M.V4 then return end   -- (UE4SS 4: no loop of ours on its async thread)
-    local pl, ol = pump_loop_t, M.ok_loop_t
-    if (pl or 0) <= 0 or not ol then return end   -- (not running yet)
-    if now - pl > 5.0 and now - ol > 5.0 then
-        M.arm_fallback(string.format("loops quiet for %.0f / %.0f s", now - pl, now - ol))
-    end
-end
 local function start_pump_loop()
-    return pcall(LoopAsync, 100, function()
-        pump_loop_t = os.clock()
+    return pcall(LoopAsync, 100, function()   -- (a game-thread timer: see the top of the file)
         if not M.fg_ok() then return false end   -- unfocused: skip nav_drive + pump (game calls fault)
-        if M.V4 then   -- (UE4SS 4: this loop is a game-thread timer already)
-            pcall(nav_drive)
-            pcall(radar_pump, "loop")
-            return false
-        end
-        -- run on the game thread (this LoopAsync is a background thread; reading actors
-        -- here races the game's actor frees -> uncatchable crash)
-        M.in_gt(function()
-            if M.trace then log("TR loop navdrive") end
-            pcall(nav_drive)
-            if M.trace then log("TR loop pump") end
-            pcall(radar_pump, "loop")
-        end)
+        pcall(nav_drive)
+        pcall(radar_pump, "loop")
         return false
     end)
 end
@@ -12316,8 +12030,7 @@ end
 -- scene_widgets feeds menu announce (poll_active_menu), options (poll_options),
 -- char-select (cs_instance) AND the radar's menu gate (BLOCKING_CLASSES scan).
 --
--- TWO sources, both cheap (the old broad NotifyOnNewObject is gone for good):
---   * in-game menus -> on_widget_uiopen adds them on open (event-driven).
+-- One cheap source (the old broad NotifyOnNewObject is gone for good):
 --   * the focused screen (title menus + whatever is on top) -> this scan, via
 --     KSUIManager:GetActiveStack -- the SINGLE authoritative screen the game has focused.
 --     This replaced FindAllOf, which returned the title's multiple flickering widget
@@ -14434,26 +14147,13 @@ radar_pump = function(src)
         if WS.px and M.marker_watch then pcall(M.marker_watch, WS.px, WS.py) end
     end
     if pump_count % 30 == 1 then pcall(arm_pump_tickhook) end
-    -- UE4SS's async thread gone (both loops quiet)? Then the game-thread fallback driver
-    -- (M.async_check) -- before the re-arm below resets the pump loop's clock
-    if src ~= "loop" then pcall(M.async_check, now) end
-    -- self-heal: LoopAsyncs can die on level load; if ours has gone quiet, start a
-    -- fresh one (multi-driving is throttled-safe, dead loops just stay dead)
-    -- (UE4SS 4: a game-thread timer doesn't die; a long load only holds it up)
-    if not M.V4 and src ~= "loop" and pump_loop_t > 0 and now - pump_loop_t > 5.0 and pump_heals < 30 then
-        pump_heals = pump_heals + 1
-        pump_loop_t = now
-        local ok = start_pump_loop()
-        log("Pump loop re-armed (#" .. pump_heals .. "): " .. tostring(ok))
-    end
     if (beacon_on or wall_on) and pump_count % 64 == 0 then
-        log(string.format("PUMP #%d hook=%d loop=%d key=%d fallback=%d", pump_count,
-            pump_n.hook or 0, pump_n.loop or 0, pump_n.key or 0, pump_n.fallback or 0))
+        log(string.format("PUMP #%d hook=%d loop=%d key=%d", pump_count,
+            pump_n.hook or 0, pump_n.loop or 0, pump_n.key or 0))
     end
 end
 do
     local okl = start_pump_loop()
-    pump_loop_t = os.clock()
     pcall(arm_pump_tickhook)
     local armed = 0
     for _ in pairs(pump_hooked) do armed = armed + 1 end
