@@ -267,6 +267,17 @@ against one Eissentinel in the study dungeon. Weaknesses in the game's tile orde
 - **Not read at all:** what a boosted command does. The boost help itself
   (BattleCommandBoostHelp_C) only holds the word "Boost" and the key hints O / Q, which
   the mod already knows (object dump, 2026-11-16); there is nothing more in it to read.
+- **Followers in battle: in a unit test only.** A follower called with "Rufen" (Meryls
+  Mutter, guided by Ophilia, against Heathcote; user, 2026-11-20) was said as "Rufen:
+  Physischer Boost" (the call's command), without a name ("Dolchsturm", "Angriff") or as
+  the last enemy ("Heathcote: Physischer Boost": "the only enemy left is it"). It is a
+  BattleSupporterBP_C with an icon in the turn order; since then the mod finds it there
+  without an object search (the icon's Character, its class read raw), names it from
+  SupportData.DisplayNameID (+0x708) and sees it leave (SupportFinish +0x77C). Its turn: its
+  icon fades, as an enemy's; the only enemy is no longer taken while it fights; its first
+  action after the call takes its name (it came with the call, or the menu row it was
+  called from). Not heard in the game yet; whether its icon really fades on its turn is
+  a guess from the enemies' icons. H'aanit's beasts (BattleTameMonsterBP_C) as before.
 - **Who acts is guessed for several enemies** (0e0e5d7). An action right after your
   own input is your character's; otherwise it is the only enemy's, or the one whose
   turn-order icon fades (IsFade, seen once). Not tried with two or more enemies or

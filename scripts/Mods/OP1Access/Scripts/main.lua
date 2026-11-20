@@ -4921,6 +4921,43 @@ M.bt_party = function()
     end
     return out
 end
+-- FOLLOWERS (user 2026-11-20): a person Ophilia guides or Primrose allures, called with
+-- "Rufen", fights for a few turns: a BattleSupporterBP_C (object dump) with its own icon
+-- in the turn order. Its actions were said as the last enemy's ("Heathcote: Physischer
+-- Boost"), without a name ("Dolchsturm"), or as "Rufen: Physischer Boost". Found without
+-- an object search: an order icon's Character (+0x288) that is neither an enemy nor a
+-- traveler, whose class (UObject +0x10 -> the class's name +0x18) is BattleSupporterBP_C;
+-- its name the GameText label SupportData.DisplayNameID (+0x708, an FName),
+-- SupportFinish (+0x77C) once it has left ("Meryls Mutter hat sich aus dem Kampf
+-- zurückgezogen."). All raw reads, as for every battle character.
+M.SUP_NAME, M.SUP_FINISH = 0x708, 0x77C
+M.bt_supporters = function()
+    local out = {}
+    local want = M.sup_cls_cmp
+    if not want then
+        want = M.fname_of("BattleSupporterBP_C")   -- (only once the class is loaded)
+        M.sup_cls_cmp = want
+        if not want then return out end
+    end
+    local known = {}
+    for _, en in ipairs(M.bt_enemies()) do known[en.addr] = true end
+    for _, pm in ipairs(M.bt_party()) do if pm.addr then known[pm.addr] = true end end
+    local seen = {}
+    for _, ic in ipairs(M.bt_list("ActionOrderIcon_C")) do
+        local a = M.peekp(ic, 0x288)   -- Character
+        if a and not known[a] and not seen[a] then
+            seen[a] = true
+            local cls = shim.Peek(a + 0x10, "ptr")
+            if cls and cls ~= 0 and shim.Peek(cls + 0x18, "u32") == want then
+                local cmp, num = shim.Peek(a + M.SUP_NAME, "u32"), shim.Peek(a + M.SUP_NAME + 4, "u32")
+                local fin = shim.Peek(a + M.SUP_FINISH, "u8")
+                local name = (cmp and cmp > 0) and M.gametext(cmp, num) or nil
+                out[#out + 1] = { addr = a, name = name or tr("Companion"), gone = fin ~= nil and fin ~= 0 }
+            end
+        end
+    end
+    return out
+end
 -- The weakness tiles as said: { {name = "Stab"} or {} for a "?", locked = bool } in the
 -- game's order -> "weak to 1 unknown, Stab, Dunkelheit" (a run of "?" as a count, in
 -- place), nil for none. All of them locked: "weak to Stab, 2 unknown, all locked".
@@ -5374,6 +5411,7 @@ M.poll_battle = function()
                     if who then s = who .. ". " .. s end
                 end
                 bt.said = sig
+                bt.item_said = m.text   -- (the row a call came from: a follower's name)
                 speak(s)
                 bt.help_at = now + 0.3
             end
@@ -5529,6 +5567,7 @@ M.dmg_who = function(ctx, owner)   -- the hit character's name: the Owner param,
     if not a or a == 0 then return nil end
     for _, en in ipairs(M.bt_enemies()) do if en.addr == a then return en.name end end
     for _, pm in ipairs(M.bt_party()) do if pm.addr == a then return pm.name end end
+    for _, sp in ipairs(M.bt_supporters()) do if sp.addr == a then return sp.name end end
     return nil
 end
 M.dmg_push = function(s)
@@ -5582,9 +5621,14 @@ M.bt_actor = function()
         for _, pm in ipairs(M.bt_party()) do if pm.addr == bt.menu_who then return pm.name, true end end
     end
     local en = M.bt_living()   -- (a defeated one acts no more: the last one standing is it)
-    if #en == 1 then return en[1].name end
+    -- (...unless a follower fights along: then its icon tells, M.bt_supporters)
+    local sup = M.bt_supporters()
+    local present = 0
+    for _, s in ipairs(sup) do if not s.gone then present = present + 1 end end
+    if #en == 1 and present == 0 then return en[1].name end
     local names = {}
     for _, e in ipairs(en) do names[e.addr] = e.name end
+    for _, s in ipairs(sup) do names[s.addr] = s.name end
     for _, ic in ipairs(M.bt_list("ActionOrderIcon_C")) do
         local a, nx, fade = M.peekp(ic, 0x288), true, false   -- Character
         pcall(function() nx, fade = ic.IsNextOrder, ic.IsFade end)
@@ -5607,11 +5651,22 @@ M.act_hook = function(ctx)
         -- that called it ("Feger (Schwertangriff). Anspringen ..."), said just before.
         local bt = M.bt
         local prev = bt.prev_act
+        -- (a follower: its name, not the command's -- "Rufen: Physischer Boost" for Meryls
+        -- Mutter, 2026-11-20. It came with that call: one more in the fight than then.)
+        local sn, sup_n = nil, 0
+        local oks, sup = pcall(M.bt_supporters)
+        for _, sp in ipairs(oks and sup or {}) do
+            if not sp.gone then sup_n = sup_n + 1; sn = sp.name end
+        end
         if prev and prev.mine and os.clock() - prev.t < 8 and prev.help and s ~= prev.name
             and prev.help:find(s, 1, true) then
-            who, mine = prev.name, false
+            -- (else the menu row it was called from: "Meryls Mutter" under "Rufen", the
+            -- beast's name under H'aanit's command)
+            if sup_n == 1 and sup_n > (prev.sup_n or 0) then who = sn else who = prev.item or prev.name end
+            mine = false
         end
-        bt.prev_act = { name = s, mine = mine == true, t = os.clock(), help = bt.help_said }
+        bt.prev_act = { name = s, mine = mine == true, t = os.clock(), help = bt.help_said, sup_n = sup_n,
+            item = mine and bt.item_said or nil }
         M.bt.act_pending = (who and (who .. ": ") or "") .. s
         M.bt.action = s
         log("ACTION " .. M.bt.act_pending)
@@ -5663,6 +5718,7 @@ M.bt_order = function()
     local names = {}
     for _, en in ipairs(M.bt_enemies()) do names[en.addr] = en.name end
     for _, pm in ipairs(M.bt_party()) do if pm.addr then names[pm.addr] = pm.name end end
+    for _, sp in ipairs(M.bt_supporters()) do if not sp.gone then names[sp.addr] = sp.name end end
     local now_l, next_l = {}, {}
     for _, ic in ipairs(M.bt_list("ActionOrderIcon_C")) do
         local en, a = false, M.peekp(ic, 0x288)   -- Character
