@@ -53,7 +53,6 @@ internal static class Strings
         ["installing_ue4ss"] = ("Installing UE4SS {0} ...", "Installiere UE4SS {0} …"),
         ["ue4ss_present"] = ("UE4SS {0} is already installed.", "UE4SS {0} ist bereits installiert."),
         ["keeping_ue4ss"] = ("Keeping the installed UE4SS.", "Das installierte UE4SS bleibt."),
-        ["removing_old_ue4ss"] = ("Removing the old UE4SS 3 files ...", "Entferne die alten Dateien von UE4SS 3 …"),
         ["installing_mod"] = ("Installing OP1 Access {0} ...", "Installiere OP1 Access {0} …"),
         ["keeping_asset"] = ("Keeping your own sound {0}.", "Dein eigener Sound {0} bleibt."),
         ["config"] = ("Adjusting the UE4SS settings ...", "Passe die UE4SS-Einstellungen an …"),
