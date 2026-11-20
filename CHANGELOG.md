@@ -61,6 +61,11 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
 ### Story and exploration
 
 - Dialogue with speaker names, area names, door and action prompts.
+- The game's notifications at the screen's edge are read. Above all the reputation: a
+  failed Scrutinize, Steal, Allure or Provoke says how many more failures the town takes
+  ("Scheitert noch 4 Mal, und Euer Ruf in der Stadt wird leiden."), then that it is ruined
+  ("Euer Ruf in Klarach hat gelitten.") and, after the tavern restored it, that it is
+  better again.
 - A scene you can skip says so as it starts: "Hold Backspace to skip". The game itself
   shows that hint only after a key press.
 - Path actions (J): facing someone tells you which path actions you can use on them and

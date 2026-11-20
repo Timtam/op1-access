@@ -25,6 +25,19 @@ gets fixed, delete its entry (the commit message keeps the history).
   period, Shift+comma, Shift+period); dialogue lines are in the list (a dump after
   Kit's dialogue, 2026-11-16) but weren't listened to through the keys. A line said
   twice in a row is kept once.
+- **The game's notifications: in a unit test only.** The reputation (user, 2026-11-20)
+  is shown nowhere for good: each town has 25 points (TownTable ConnectionInit/Max), a
+  failed risky path action (Scrutinize, Steal, Allure, Provoke) takes 5 (game param
+  SUB_RELATION_VALUE), at 0 the townsfolk don't react to path actions until the tavern's
+  keeper restores it (ConnectionPrice: Klarach 2000, 1000-100000 elsewhere). The game says
+  it only in a notification at the screen's edge (UICommonNotification_C, UI kind 26):
+  "Scheitert noch {0} Mal ..." with {0} = points / 5, "Euer Ruf in X hat gelitten." at 0,
+  "... hat sich verbessert." after paying. Since then the notification widget is taken
+  from KSUIManager:GetList(26) (asked at most every 2 s while there is none, never in a
+  fade) and each notice it shows is said, queued (NOTICE log lines). Not heard in the
+  game yet: none of these, nor what else the game sends this way. Not built: asking for a
+  town's reputation at any time (the save game holds it per town: TownData.ConnectionValue,
+  read by the BP function KSSaveGameBP_C:GetConnectionValue, which has an out parameter).
 - **The skip hint: said once in the game.** A scene the game lets you skip says "Hold
   Backspace to skip" ("Rücktaste halten zum Überspringen") once as it starts (user,
   2026-11-18: the game shows its own hint only after a key press). The source is the

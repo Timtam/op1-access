@@ -5837,6 +5837,7 @@ M.fast_steps = {
     { "fieldcmd", function() M.poll_fieldcommand() end },
     { "fcscreens", function() M.poll_fc_screens() end },
     { "tavern", function() M.poll_tavern() end },
+    { "notice", function() M.poll_notice() end },
 }
 M.fast_polls = function()
     M.fast_q = nil
@@ -12424,6 +12425,66 @@ M.skip_hint_poll = function(ev, battle, now)
         speak(tr("Hold Backspace to skip"), false)
         -- the scene's first line often comes right after: it waits for the hint
         if shim and shim.TalkQueue then pcall(shim.TalkQueue, 3000) end
+    end
+end
+
+-- THE GAME'S NOTIFICATIONS (user 2026-11-20: the reputation). A failed risky path action
+-- (Scrutinize, Steal, Allure, Provoke) costs the town 5 of its 25 reputation points
+-- (TownTable ConnectionInit/Max 25, game param SUB_RELATION_VALUE 5); the game says so
+-- only in a notification at the screen's edge: "Scheitert noch 4 Mal, und Euer Ruf in der
+-- Stadt wird leiden." (eCONNECTION_REMAINING), at 0 "Euer Ruf in Klarach hat gelitten."
+-- (eCONNECTION_BAD), after the tavern restored it "... hat sich verbessert." (_GOOD). It is
+-- LibUIUtil:CommonNotification -> UIManager:CreateByUIType(26) -> UICommonNotification_C
+-- :AddInfoRequest(text), one widget for all its notices (object dump / bytecode):
+-- KSTextBlock_249 the text, UiState @0x278 (ECOMMON_NOTIFICATION_STATE): 0 hidden, 1 the
+-- window coming in with a text, 2 shown (2 s), 5 the text going out, 3 the next text
+-- coming in, 4 shown, 6 the window going out, 7/8 queued behind a tutorial or a pause.
+-- The widget comes from KSUIManager:GetList(26) (no object search); a new notice is a
+-- state 1 or 3 entered, or one seen after a gap, or a text that changed.
+M.NOTICE_KIND, M.NOTICE_STATE, M.NOTICE_TEXT = 26, 0x278, "KSTextBlock_249"
+M.notice_widget = function()
+    local w = M.kept(M.notice_h)
+    if w then return w end
+    M.notice_h = nil
+    local now = os.clock()
+    if M.fade_now or now - (M.notice_try_t or -99) < 2.0 then return nil end
+    M.notice_try_t = now
+    local kuim = M.ui_manager
+    if not kuim then return nil end
+    local o
+    pcall(function() o = kuim:GetList(M.NOTICE_KIND) end)
+    local ok = false
+    pcall(function() ok = (o ~= nil) and o:IsValid() end)
+    if not ok or class_name_of(o) ~= "UICommonNotification_C" then return nil end
+    M.notice_h = M.handle(o)
+    log(string.format("NOTICE widget %X", M.addr_of(o) or 0))
+    return o
+end
+-- S: the state between polls; st: UiState; txt: its text. -> true when txt is to be said
+M.notice_due = function(S, st, txt)
+    local prev = S.st
+    S.st = st
+    if not (st and st >= 1 and st <= 4) or not txt or txt == "" then return false end
+    local entering = (st == 1 or st == 3) and prev ~= st
+    local after_gap = (prev == nil) or prev == 0 or prev >= 5
+    if entering or after_gap or txt ~= S.text then
+        S.text = txt
+        return true
+    end
+    return false
+end
+M.poll_notice = function()
+    local w = M.notice_widget()
+    if not w then return end
+    local a = M.addr_of(w)
+    local st = a and shim and shim.Peek and shim.Peek(a + M.NOTICE_STATE, "u8")
+    local S = M.notice_s
+    if not S then S = {}; M.notice_s = S end
+    local txt
+    if st and st >= 1 and st <= 4 then pcall(function() txt = M.wtext(w[M.NOTICE_TEXT]) end) end
+    if M.notice_due(S, st, txt) then
+        log("NOTICE " .. txt)
+        speak(txt, false)
     end
 end
 
