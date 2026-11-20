@@ -5714,11 +5714,85 @@ end
 -- one per character and round; IsNextOrder marks the next round's row. (The
 -- timeline's own InterceptIcon_0x slots stayed empty in tests.) Listed in widget
 -- order -- the on-screen order of a bigger fight is still to be checked.
+-- FROM THE CURRENT TURN (user 2026-11-20: at the round's last traveler key 0 said everyone
+-- who had acted already). The battle manager (BattleManagerBP_C, object dump) knows whose
+-- turn it is, ActiveCharacter (+0x3D8), and its BattleActionOrder (+0x3A0, a
+-- BattleActionOrderBP_C) the round as characters: ActionOrder (+0x390, a TArray) this
+-- round, NextOrder (+0x3A0) the next. Said from the active one on: "Jetzt: Therion.
+-- Nächste Runde: ...". The manager is looked for once per battle (FindAllOf, the class
+-- default skipped); without it, the icons as before.
+M.BT_ACTIVE, M.BT_ORDER, M.BT_ROUND, M.BT_NEXT = 0x3D8, 0x3A0, 0x390, 0x3A0
+M.bt_manager = function()
+    local bt = M.bt
+    local m = M.kept(bt.mgr_h)
+    if m then return m end
+    bt.mgr_h = nil
+    local now = os.clock()
+    if now - (bt.mgr_try or -99) < 5 then return nil end
+    bt.mgr_try = now
+    pcall(function()
+        for _, o in pairs(FindAllOf("BattleManagerBP_C") or {}) do
+            local fn = ""
+            pcall(function() fn = o:GetFullName() end)
+            if o:IsValid() and not fn:find("Default__", 1, true) then m = o; break end
+        end
+    end)
+    bt.mgr_h = m and M.handle(m) or nil
+    if m then log(string.format("BT manager %X", M.addr_of(m) or 0)) end
+    return m
+end
+-- a TArray of object pointers at base+off, raw: { addr, ... }
+M.bt_array = function(base, off)
+    local out = {}
+    local data, num = shim.Peek(base + off, "ptr"), shim.Peek(base + off + 8, "i32")
+    if not data or data == 0 or not num or num <= 0 or num > 64 then return out end
+    for i = 0, num - 1 do
+        local p = shim.Peek(data + 8 * i, "ptr")
+        if p and p ~= 0 then out[#out + 1] = p end
+    end
+    return out
+end
+-- names: addr -> name; broken: addr -> true. -> the line, or nil (no order readable)
+M.bt_order_from = function(active, round, nxt, names, broken)
+    local function nm(a) return broken[a] and trf("%s (broken)", names[a]) or names[a] end
+    local start = 1
+    for i, a in ipairs(round) do if a == active then start = i; break end end
+    local now_l, next_l = {}, {}
+    for i = start, #round do if names[round[i]] then now_l[#now_l + 1] = nm(round[i]) end end
+    for _, a in ipairs(nxt) do if names[a] then next_l[#next_l + 1] = nm(a) end end
+    if #now_l == 0 and #next_l == 0 then return nil end
+    local s
+    if #now_l > 0 then s = trf("Now: %s", table.concat(now_l, ", ")) end
+    if #next_l > 0 then
+        local nr = trf("Next round: %s", table.concat(next_l, ", "))
+        s = s and (s .. ". " .. nr) or nr
+    end
+    return s
+end
 M.bt_order = function()
     local names = {}
-    for _, en in ipairs(M.bt_enemies()) do names[en.addr] = en.name end
+    for _, en in ipairs(M.bt_enemies()) do if en.alive then names[en.addr] = en.name end end
     for _, pm in ipairs(M.bt_party()) do if pm.addr then names[pm.addr] = pm.name end end
     for _, sp in ipairs(M.bt_supporters()) do if not sp.gone then names[sp.addr] = sp.name end end
+    local broken = {}
+    for _, ic in ipairs(M.bt_list("ActionOrderIcon_C")) do
+        local a, brk = M.peekp(ic, 0x288), false
+        pcall(function() brk = ic.IsBreak end)
+        if a and brk then broken[a] = true end
+    end
+    local mgr = M.bt_manager()
+    local ma = mgr and M.addr_of(mgr)
+    local ord = ma and shim.Peek(ma + M.BT_ORDER, "ptr")
+    if ord and ord ~= 0 then
+        local active = shim.Peek(ma + M.BT_ACTIVE, "ptr")
+        local round, nxt = M.bt_array(ord, M.BT_ROUND), M.bt_array(ord, M.BT_NEXT)
+        local raw = {}
+        for _, a in ipairs(round) do raw[#raw + 1] = (a == active and "*" or "") .. (names[a] or string.format("%X", a)) end
+        log(string.format("BT order: round [%s], next %d, active %s", table.concat(raw, ", "), #nxt,
+            tostring(active and names[active] or active)))
+        local s = M.bt_order_from(active, round, nxt, names, broken)
+        if s then speak(s); return end
+    end
     local now_l, next_l = {}, {}
     for _, ic in ipairs(M.bt_list("ActionOrderIcon_C")) do
         local en, a = false, M.peekp(ic, 0x288)   -- Character

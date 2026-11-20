@@ -267,6 +267,16 @@ against one Eissentinel in the study dungeon. Weaknesses in the game's tile orde
 - **Not read at all:** what a boosted command does. The boost help itself
   (BattleCommandBoostHelp_C) only holds the word "Boost" and the key hints O / Q, which
   the mod already knows (object dump, 2026-11-16); there is nothing more in it to read.
+- **Turn order from the current turn: in a unit test only.** Key 0 said the whole round
+  from its start, also everyone who had acted (user, 2026-11-20). Since then it reads the
+  battle manager (BattleManagerBP_C, looked for once per battle: FindAllOf, ~80 ms on the
+  first press): ActiveCharacter (+0x3D8) and BattleActionOrder (+0x3A0) with ActionOrder
+  (+0x390, this round) and NextOrder (+0x3A0, the next round), TArrays of characters read
+  raw, and says the round from the active one on ("Jetzt: Therion. Nächste Runde: ...";
+  broken ones marked, defeated left out, a follower named). Not checked in the game:
+  whether ActionOrder keeps the whole round or drops who acted (both work: the active one
+  is looked for in it, else the list is said as it is); the "BT order" log line shows it.
+  Without the manager, the icons as before.
 - **Followers in battle: in a unit test only.** A follower called with "Rufen" (Meryls
   Mutter, guided by Ophilia, against Heathcote; user, 2026-11-20) was said as "Rufen:
   Physischer Boost" (the call's command), without a name ("Dolchsturm", "Angriff") or as

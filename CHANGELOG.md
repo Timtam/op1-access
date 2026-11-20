@@ -126,7 +126,8 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
 
 - Commands, skills and items with costs, targets, the boost level, actions with their actor,
   damage and healing, breaks, status effects and the results. Keys 1 to 5 read an enemy (shield,
-  weaknesses), 6 to 9 a party member, 0 the turn order.
+  weaknesses), 6 to 9 a party member, 0 the turn order from the current turn on ("Jetzt:
+  Therion. Nächste Runde: ..."), not the ones who have acted already.
 - The weapon Attack uses ("Angriff, Speer"), and the new one when Left or Right switch it.
 - A follower you call into the fight (a person Ophilia guides or Primrose allures, with
   "Rufen") is named with its actions ("Meryls Mutter: Physischer Boost"), in the turn
