@@ -4725,8 +4725,31 @@ end
 -- SupportFinish (+0x77C) once it has left ("Meryls Mutter hat sich aus dem Kampf
 -- zurückgezogen."). All raw reads, as for every battle character.
 M.SUP_NAME, M.SUP_FINISH = 0x708, 0x77C
+-- THE FOLLOWER'S OWN TURN (user 2026-11-21: Meryls Mutter's second "Physischer Boost" came
+-- out as "Ghisarma: Physischer Boost" again). A follower has no icon in the turn order: it
+-- acts in a turn of its own right after its caller's (BattleManagerBP_C:SupporterTurn),
+-- so the icons found nobody and the last enemy standing was taken. The battle manager
+-- (M.bt_manager, found as the battle starts) knows: BattleSupporter (+0x550, the followers
+-- in the fight), IsSupporterTurn (+0xFAC), and who acts, ActionCharacter (+0x8B0) next to
+-- ActiveCharacter (M.BT_ACTIVE).
+M.BT_SUPS, M.BT_SUP_TURN, M.BT_ACTION = 0x550, 0xFAC, 0x8B0
+M.bt_sup_entry = function(a)
+    local cmp, num = shim.Peek(a + M.SUP_NAME, "u32"), shim.Peek(a + M.SUP_NAME + 4, "u32")
+    local fin = shim.Peek(a + M.SUP_FINISH, "u8")
+    local name = (cmp and cmp > 0) and M.gametext(cmp, num) or nil
+    return { addr = a, name = name or tr("Companion"), gone = fin ~= nil and fin ~= 0 }
+end
 M.bt_supporters = function()
-    local out = {}
+    local out, seen = {}, {}
+    -- the manager's list (kept since the battle's start: no search here)
+    local mgr = M.kept(M.bt.mgr_h)
+    local ma = mgr and M.addr_of(mgr)
+    if ma then
+        for _, a in ipairs(M.bt_array(ma, M.BT_SUPS)) do
+            if not seen[a] then seen[a] = true; out[#out + 1] = M.bt_sup_entry(a) end
+        end
+    end
+    -- and the turn order's icons
     local want = M.sup_cls_cmp
     if not want then
         want = M.fname_of("BattleSupporterBP_C")   -- (only once the class is loaded)
@@ -4736,21 +4759,27 @@ M.bt_supporters = function()
     local known = {}
     for _, en in ipairs(M.bt_enemies()) do known[en.addr] = true end
     for _, pm in ipairs(M.bt_party()) do if pm.addr then known[pm.addr] = true end end
-    local seen = {}
     for _, ic in ipairs(M.bt_list("ActionOrderIcon_C")) do
         local a = M.peekp(ic, 0x288)   -- Character
         if a and not known[a] and not seen[a] then
             seen[a] = true
             local cls = shim.Peek(a + 0x10, "ptr")
             if cls and cls ~= 0 and shim.Peek(cls + 0x18, "u32") == want then
-                local cmp, num = shim.Peek(a + M.SUP_NAME, "u32"), shim.Peek(a + M.SUP_NAME + 4, "u32")
-                local fin = shim.Peek(a + M.SUP_FINISH, "u8")
-                local name = (cmp and cmp > 0) and M.gametext(cmp, num) or nil
-                out[#out + 1] = { addr = a, name = name or tr("Companion"), gone = fin ~= nil and fin ~= 0 }
+                out[#out + 1] = M.bt_sup_entry(a)
             end
         end
     end
     return out
+end
+-- The manager's view of the action just starting: { sup_turn, action, active } (raw), or
+-- nil without the manager.
+M.bt_turn_state = function()
+    local mgr = M.kept(M.bt.mgr_h)
+    local ma = mgr and M.addr_of(mgr)
+    if not ma then return nil end
+    local st = shim.Peek(ma + M.BT_SUP_TURN, "u8")
+    return { sup_turn = st ~= nil and st ~= 0, action = shim.Peek(ma + M.BT_ACTION, "ptr"),
+        active = shim.Peek(ma + M.BT_ACTIVE, "ptr") }
 end
 -- The weakness tiles as said: { {name = "Stab"} or {} for a "?", locked = bool } in the
 -- game's order -> "weak to 1 unknown, Stab, Dunkelheit" (a run of "?" as a count, in
@@ -5165,6 +5194,9 @@ M.poll_battle = function()
                 names[#names + 1] = (bt.locks and bt.locks[e.addr]) and trf("%s, weaknesses locked", e.name) or e.name
             end
             speak(trf("Battle: %s", table.concat(names, ", ")))
+            -- the battle manager, once now (one object search, during the battle's intro):
+            -- a follower's turn and the turn order read from it (M.bt_actor, key 0)
+            pcall(M.bt_manager)
         end
     end
     -- an action's name banner (BattleActionInfo_C, "Feuerball", an enemy's "Angriff"):
@@ -5452,11 +5484,20 @@ M.bt_actor = function()
         for _, pm in ipairs(M.bt_party()) do if pm.addr == bt.menu_who then return pm.name, true end end
     end
     local en = M.bt_living()   -- (a defeated one acts no more: the last one standing is it)
-    -- (...unless a follower fights along: then its icon tells, M.bt_supporters)
     local sup = M.bt_supporters()
     local present = 0
     for _, s in ipairs(sup) do if not s.gone then present = present + 1 end end
-    if #en == 1 and present == 0 then return en[1].name end
+    -- a follower's own turn (the battle manager, M.bt_turn_state): its name -- the one the
+    -- manager names as acting, else the one still fighting
+    local ts = M.bt_turn_state()
+    bt.turn_state = ts   -- (for the ACTION log line)
+    if ts and ts.sup_turn then
+        for _, s in ipairs(sup) do if s.addr == ts.action or s.addr == ts.active then return s.name end end
+        for _, s in ipairs(sup) do if not s.gone then return s.name end end
+        if sup[1] then return sup[1].name end
+    end
+    -- one enemy left is it -- not while a follower fights and no manager tells its turn
+    if #en == 1 and (ts ~= nil or present == 0) then return en[1].name end
     local names = {}
     for _, e in ipairs(en) do names[e.addr] = e.name end
     for _, s in ipairs(sup) do names[s.addr] = s.name end
@@ -5473,6 +5514,7 @@ M.act_hook = function(ctx)
         local s = M.wtext(ctx:get().CommandName)
         if not s or M.placeholder(s) then return end
         M.act_hook_ok = true
+        M.bt.turn_state = nil
         local who, mine = M.bt_actor()
         -- a message, not an action ("Ihr habt die Bestie gefangen!" came out as the
         -- marmot's, 2026-11-15): no one in front
@@ -5500,7 +5542,21 @@ M.act_hook = function(ctx)
             item = mine and bt.item_said or nil }
         M.bt.act_pending = (who and (who .. ": ") or "") .. s
         M.bt.action = s
-        log("ACTION " .. M.bt.act_pending)
+        -- (what the battle manager said, while a follower fights: to check its fields)
+        local ts, extra = M.bt.turn_state, ""
+        if not ts and sup_n > 0 then ts = M.bt_turn_state() end
+        if ts and sup_n > 0 then
+            local function who_is(a)
+                if not a or a == 0 then return "-" end
+                for _, e in ipairs(M.bt_enemies()) do if e.addr == a then return e.name end end
+                for _, p in ipairs(M.bt_party()) do if p.addr == a then return p.name end end
+                for _, sp in ipairs(oks and sup or {}) do if sp.addr == a then return sp.name end end
+                return string.format("%X", a)
+            end
+            extra = string.format(" [follower turn %s, action %s, active %s]", tostring(ts.sup_turn),
+                who_is(ts.action), who_is(ts.active))
+        end
+        log("ACTION " .. M.bt.act_pending .. extra)
     end)
 end
 M.arm_act_hook = function()

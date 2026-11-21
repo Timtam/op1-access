@@ -137,8 +137,9 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   again, and the command row ("Fangen") no longer cuts the question off.
 - The weapon Attack uses ("Angriff, Speer"), and the new one when Left or Right switch it.
 - A follower you call into the fight (a person Ophilia guides or Primrose allures, with
-  "Rufen") is named with its actions ("Meryls Mutter: Physischer Boost"), in the turn
-  order and with the damage it takes; its actions used to be said as the last enemy's.
+  "Rufen") is named with its actions ("Meryls Mutter: Physischer Boost"), also in the
+  turns of its own it gets right after its caller's, and with the damage it takes; its
+  actions used to be said as the last enemy's.
 - A defeated enemy is said ("Räuber defeated") and leaves keys 1 to 5, which count only
   the enemies still fighting.
 - The result screen waits until the EXP count-up is over (or skipped) and then says the
