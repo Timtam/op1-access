@@ -4819,9 +4819,27 @@ M.bt_lock_watch = function(bt, now)
         end
     end
 end
-M.bt_enemy_text = function(en)
+-- H'aanit's capture (and stealing in battle): the success rate over the enemy,
+-- BattleSuccessRate_C (TitleText "Erfolgschance", RateValue "60 %"), seen 2026-11-15 on
+-- screen while nothing was said. -> "Erfolgschance 60 %", or nil while it isn't shown.
+M.bt_rate_text = function(w)
+    local sr
+    pcall(function() sr = w.BattleSuccessRate end)
+    local sv = sr and M.wvis(sr)
+    if not (sv == 0 or sv == 3 or sv == 4) then return nil end
+    local t, r
+    pcall(function() t, r = M.wtext(sr.TitleText), M.wtext(sr.RateValue) end)
+    if not r or M.placeholder(r) then return nil end
+    return ((t and not M.placeholder(t)) and (t .. " ") or "") .. r
+end
+-- (label: the name to say, M.bt_target_name's "Majesto-Murmeltier auf 2"; default en.name)
+M.bt_enemy_text = function(en, label)
     local w = en.w
-    local parts = { en.name }
+    local parts = { label or en.name }
+    -- the success rate right after the name: at the line's end it was cut off by the next
+    -- target and by the capture question (user 2026-11-21: "the chance isn't read out")
+    local rate = M.bt_rate_text(w)
+    if rate then parts[#parts + 1] = rate end
     local sh
     pcall(function() sh = M.wtext(w.BreakStatusIcon.Text_BreakGauge) end)
     if sh == "0" then parts[#parts + 1] = tr("broken")
@@ -4868,18 +4886,6 @@ M.bt_enemy_text = function(en)
             local p = s:find(", " .. bw, 1, true)
             if sh == "0" and st[i]:find(",") and p then s = s:sub(1, p + 1) .. st[i] .. s:sub(p + 2 + #bw) end
             table.remove(st, i)
-        end
-    end
-    -- H'aanit's capture (and stealing in battle): the success rate over the enemy,
-    -- BattleSuccessRate_C (TitleText "Erfolgschance", RateValue "60 %"), seen
-    -- 2026-11-15 on screen while nothing was said
-    local sr
-    pcall(function() sr = w.BattleSuccessRate end)
-    local sv = sr and M.wvis(sr)
-    if sr and (sv == 0 or sv == 3 or sv == 4) then
-        local t, r = M.wtext(sr.TitleText), M.wtext(sr.RateValue)
-        if r and not M.placeholder(r) then
-            s = s .. ", " .. ((t and not M.placeholder(t)) and (t .. " ") or "") .. r
         end
     end
     if #st > 0 then s = s .. ". " .. table.concat(st, "; ") end
@@ -4973,9 +4979,34 @@ M.bt_party_text = function(pm)
     if #st > 0 then s = s .. ". " .. table.concat(st, "; ") end
     return s
 end
+-- ENEMY POSITIONS (user 2026-11-21): two "Majesto-Murmeltier" sounded the same as targets,
+-- and key 0 couldn't tell which of them acts when. An enemy's position is its number
+-- key (1-5: M.bt_living's order, "Gegner 2 von 4"). Key 0 names it for every enemy, a
+-- target only when another enemy still fighting has the same name. (living: M.bt_living())
+M.bt_pos_name = function(name, pos) return trf("%s at %d", name, pos) end
+M.bt_target_name = function(en, living)
+    local pos, same = nil, 0
+    for i, e in ipairs(living or M.bt_living()) do
+        if e.addr == en.addr then pos = i end
+        if e.name == en.name then same = same + 1 end
+    end
+    if pos and same > 1 then return M.bt_pos_name(en.name, pos) end
+    return en.name
+end
+-- The target with its success rate ("Majesto-Murmeltier auf 2, Erfolgschance 100 %"), for
+-- the capture question that follows; nil without a rate shown.
+M.bt_rate_line = function(addr)
+    for _, en in ipairs(M.bt_enemies()) do
+        if en.addr == addr then
+            local rate = M.bt_rate_text(en.w)
+            return rate and (M.bt_target_name(en) .. ", " .. rate) or nil
+        end
+    end
+    return nil
+end
 M.bt_describe = function(addr)   -- a battle character by address: enemy or party
     for _, en in ipairs(M.bt_enemies()) do
-        if en.addr == addr then return M.bt_enemy_text(en) end
+        if en.addr == addr then return M.bt_enemy_text(en, M.bt_target_name(en)) end
     end
     for _, pm in ipairs(M.bt_party()) do
         if pm.addr == addr then return M.bt_party_text(pm) end
@@ -5151,6 +5182,9 @@ M.poll_battle = function()
         end
     end
     bt.primed = true
+    -- a question on top (H'aanit's "Diesen Feind gefangen nehmen?") has the word: the
+    -- command row under it ("Fangen") was said right after it and cut it off (2026-11-21)
+    if dlg_visible then return end
     local tg = M.bt_targets()
     -- H'aanit's capture (and stealing in battle) picks its target without a target cursor
     -- (all cursors hidden, 2026-11-15): the enemy whose success rate shows is the target
@@ -5181,6 +5215,8 @@ M.poll_battle = function()
             bt.said = sig
             if #tg == 1 then speak(M.bt_describe(tg[1]) or tr("target"))
             else speak(trf("%d targets", #tg)) end
+            -- for the capture question: the target with its chance (M.poll_dialog)
+            bt.rate_line = (#tg == 1) and M.bt_rate_line(tg[1]) or nil
         end
         return
     end
@@ -5206,6 +5242,7 @@ M.poll_battle = function()
                 end
                 bt.said = sig
                 bt.item_said = m.text   -- (the row a call came from: a follower's name)
+                bt.rate_line = nil
                 speak(s)
                 bt.help_at = now + 0.3
             end
@@ -5565,7 +5602,9 @@ M.bt_order_from = function(active, round, nxt, names, broken)
 end
 M.bt_order = function()
     local names = {}
-    for _, en in ipairs(M.bt_enemies()) do if en.alive then names[en.addr] = en.name end end
+    -- every enemy with its position, the number key that reads it ("Majesto-Murmeltier
+    -- auf 2"): which of two of the same name acts when (user 2026-11-21)
+    for i, en in ipairs(M.bt_living()) do names[en.addr] = M.bt_pos_name(en.name, i) end
     for _, pm in ipairs(M.bt_party()) do if pm.addr then names[pm.addr] = pm.name end end
     for _, sp in ipairs(M.bt_supporters()) do if not sp.gone then names[sp.addr] = sp.name end end
     local broken = {}
@@ -6204,6 +6243,10 @@ poll_dialog = function()
             local okd, d = pcall(M.fc_dialog_desc, inst)
             if okd and d then desc = d end
         end
+        -- in battle, H'aanit's capture question after its target: the target and its chance
+        -- in front ("Majesto-Murmeltier, Erfolgschance 100 %. Diesen Feind gefangen nehmen?")
+        -- -- the target line before it was cut off by it (2026-11-21)
+        if not desc and M.battle_now and M.bt and M.bt.rate_line then desc = M.bt.rate_line end
         -- (the purchase question names the item in its caption already: said twice)
         if desc and desc == caption then desc = nil end
         if not desc and not result_dlg and #buttons >= 2 and M.fc_busy and M.fc_target_name then
