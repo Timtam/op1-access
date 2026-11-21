@@ -10974,6 +10974,17 @@ NV.face_goal = function(retry)
         tx, ty = g.face.x, g.face.y
         local ia = NV.iapproach
         if ia then ia.px, ia.py, ia.next = px, py, os.clock() + 1.0 end
+        -- ...or of a person (NV.person_spot): the steps until the game picks them, again
+        local gp = g.person
+        if gp and not retry then
+            NV.approach = { addr = gp.addr, tries = 0, next = os.clock() + 0.7, x = tx, y = ty, z = gp.z,
+                name = gp.name, spots = gp.spots, t0 = os.clock(), px = px, py = py }
+            if M.talk_pick == gp.addr then
+                log("NAVWALK in talk range (on arrival)")
+                NV.approach = nil
+                return
+            end
+        end
         t = nil
     elseif not retry and t and g.key and NV.tkey(t) == g.key and t.actor
         and class_name_of(t.actor) == "TreasureBoxBP_C" then
@@ -11005,7 +11016,18 @@ NV.face_goal = function(retry)
             local nm
             pcall(function() nm = shim.NpcName(a) end)
             if nm == "" or nm == "???" then nm = nil end
-            if a ~= 0 then NV.approach = { addr = a, tries = 0, next = os.clock() + 0.7, x = tx, y = ty, name = nm } end
+            if a ~= 0 then
+                local _, _, z = read_actor_pos(t.actor)
+                NV.approach = { addr = a, tries = 0, next = os.clock() + 0.7, x = tx, y = ty, z = z, name = nm,
+                    spots = {}, t0 = os.clock(), px = px, py = py }
+                -- already the game's pick (you face them in range): no step -- it could only
+                -- lose the pick
+                if M.talk_pick == a then
+                    log("NAVWALK in talk range (on arrival)")
+                    NV.approach = nil
+                    return
+                end
+            end
         end
     end
     local dx, dy = tx - px, ty - py
@@ -11075,6 +11097,75 @@ NV.item_spot = function(ia, p, px, py)
         end
     end
     return best
+end
+
+-- Another spot to talk to a person from (NV.approach, after the steps there got no pick;
+-- user 2026-11-21: Mercedes behind the library counter, "Arrived" 154 away, four steps,
+-- no pick -- J then offered the follower's "Sich trennen"). Of 16 spots around them (8
+-- directions, 100 and 140 away) one with ground at about their floor and a clear line at
+-- head height to just short of them -- walls and shelves block it, a counter doesn't (the
+-- game picks across one) -- nearest to you, not where you stand, not tried before. Each
+-- lies on one of the walk's 8 directions from the person, so the step from there faces
+-- them square: the game picks a person only when you stand nearly square in front
+-- (Mercedes: picked 26 to the side at 161, not 48 to the side at 166, 2026-11-14).
+NV.person_spot = function(a, p, px, py)
+    local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+    if not (ksl and p and px and a.z) then return nil end
+    local floor = a.z - 90   -- (an actor's position is its capsule's middle)
+    local best, bestd = nil, 1e9
+    for k = 0, 7 do
+        local ang = k * math.pi / 4
+        for _, r in ipairs({ 100, 140 }) do
+            local cx, cy = a.x + r * math.cos(ang), a.y + r * math.sin(ang)
+            local d = math.sqrt((cx - px) ^ 2 + (cy - py) ^ 2)
+            local fresh = d > 70
+            for _, s in ipairs(a.spots or {}) do
+                if math.sqrt((cx - s.x) ^ 2 + (cy - s.y) ^ 2) < 60 then fresh = false end
+            end
+            if fresh and d < bestd then
+                local ok, hit, oh = line_blocked(ksl, p, cx, cy, floor + 250, cx, cy, floor - 200)
+                local gz
+                if ok and hit then
+                    local dist
+                    pcall(function() if type(oh.Distance) == "number" then dist = oh.Distance end end)
+                    gz = dist and (floor + 250 - dist)
+                end
+                if gz and math.abs(gz - floor) < 60 then
+                    local ex, ey = a.x + (cx - a.x) / r * 40, a.y + (cy - a.y) / r * 40
+                    local ok2, hit2 = line_blocked(ksl, p, cx, cy, gz + 150, ex, ey, gz + 150, NV_TRACE)
+                    if ok2 and not hit2 then best, bestd = { x = cx, y = cy, z = gz + 90 }, d end
+                end
+            end
+        end
+    end
+    return best
+end
+-- The steps at a person got no pick (nav_tick): walk to another side (NV.person_spot), up
+-- to two, as for a chest -- only right after the steps, where they ended (not after a
+-- menu in between, nor once you walked off: no walk you didn't ask for). Else say so;
+-- it used to end without a word.
+NV.approach_fail = function(a)
+    local p = get_player_obj()
+    local px, py
+    if p then px, py = read_actor_pos(p) end
+    local fresh = os.clock() - (a.t0 or -99) < 6 and px and a.px
+        and math.sqrt((px - a.px) ^ 2 + (py - a.py) ^ 2) < 120
+    local spot
+    if fresh and #(a.spots or {}) < 2 then
+        local oks, s = pcall(NV.person_spot, a, p, px, py)
+        if oks then spot = s else log("NAVWALK person spot error: " .. tostring(s)) end
+    end
+    if spot then
+        a.spots[#a.spots + 1] = spot
+        log(string.format("NAVWALK person: no pick at (%.0f,%.0f), trying (%.0f,%.0f)", px, py, spot.x, spot.y))
+        speak(tr("Not in reach here, trying another side"))
+        NV.goal = { x = spot.x, y = spot.y, z = spot.z, cat = "spot", key = NV.goal and NV.goal.key,
+            face = { x = a.x, y = a.y }, person = { addr = a.addr, name = a.name, z = a.z, spots = a.spots } }
+        NV.retries, NV.bestgoal, NV.noimprove = 0, nil, 0
+        nav_route_begin("walk", spot.x, spot.y, spot.z)
+    else
+        speak(a.name and trf("%s is not within reach", a.name) or tr("Not within reach"))
+    end
 end
 
 -- STUCK: free ourselves instead of asking the player to step aside (user 2026-11-14).
@@ -11855,6 +11946,7 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
         elseif a.tries >= 4 then
             log(string.format("NAVWALK talk range not reached (pick %X, target %X)", M.talk_pick or 0, a.addr))
             NV.approach = nil
+            NV.approach_fail(a)
         else
             a.tries = a.tries + 1        -- odd tries step sideways (NV.face_goal)
             a.next = os.clock() + 0.7

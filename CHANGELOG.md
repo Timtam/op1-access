@@ -101,7 +101,11 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
 - A walker: Backspace walks to the target over a computed route, also up and down narrow
   stairs and around people, opens doors on the way and frees itself when stuck. When
   someone blocks the only way, it says who ("Armer is in the way"). At a chest or a hidden
-  item it waits for the game's prompt and tries another side when none comes. A shop
+  item it waits for the game's prompt and tries another side when none comes. A person it
+  can't get close enough to talk to (Mercedes behind the counter of Atlasdamm's library)
+  gets the same: up to two other sides, each square in front of them, then "Mercedes ist
+  nicht in Reichweite"; it used to stop without a word, and J then offered the follower's
+  menu. When the game already offers the person as you arrive, no last step spoils it. A shop
   that opens at its entrance (no keeper) counts as reached only when its prompt shows;
   the route there follows the character's own collision, so it finds side stairs the
   other traces miss. Otherwise the walker says the entrance wasn't reached and how many
