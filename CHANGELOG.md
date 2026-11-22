@@ -100,7 +100,11 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   scene). Your selected target stays selected when another marker goes.
 - A walker: Backspace walks to the target over a computed route, also up and down narrow
   stairs and around people, opens doors on the way and frees itself when stuck. When
-  someone blocks the only way, it says who ("Armer is in the way"). At a chest or a hidden
+  someone blocks the only way, it says who ("Armer is in the way"). Someone walking about
+  who steps into the way, like the guards on patrol in Sonnschatt, is waited for ("Warte
+  auf Tunichtgut"), up to three times, before the walk looks for another way; it used to
+  plan a new way at once, which the guard walked into again, and a new way could even
+  start right behind the person next to you. At a chest or a hidden
   item it waits for the game's prompt and tries another side when none comes. A person it
   can't get close enough to talk to (Mercedes behind the counter of Atlasdamm's library)
   gets the same: up to two other sides, each square in front of them, then "Mercedes ist

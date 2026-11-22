@@ -8769,6 +8769,7 @@ local function nav_walk_begin_path(pts, label)
     NV.unwedged = false
     NV.unstuck = false
     NV.unwedge = nil
+    NV.pwait, NV.pwait_n, NV.pwait_static = nil, 0, false
     local total = 0
     for i = 2, #pts do
         total = total + math.sqrt((pts[i].x - pts[i - 1].x) ^ 2 + (pts[i].y - pts[i - 1].y) ^ 2)
@@ -9622,7 +9623,14 @@ NV.route_shift = function(R, why)
             pcall(function() if type(ohf.Distance) == "number" then dist = ohf.Distance end end)
             local az = dist and (base.z + 160 - dist) or base.z
             local okl, hitl = line_blocked(ksl, p, base.x, base.y, base.z + 55, ax, ay, az + 55)
-            if math.abs(az - base.z) <= 100 and okl and not hitl then
+            -- (the walk goes from you to that start first: not through a person -- the
+            -- traces don't see people, and a start 65 beyond a guard in a narrow street
+            -- bumped into him four times, 2026-11-22)
+            local who = R.people and NV.person_on(R.people, base.x, base.y, base.z, ax, ay)
+            if who then
+                log(string.format("ROUTE shifted start #%d (%d,%d) past a person: skipped", i, d[1] * h, d[2] * h))
+            end
+            if math.abs(az - base.z) <= 100 and okl and not hitl and not who then
                 local W = NV.route_job(R.mode, R.ox, R.oy, R.oz, ax, ay, az, R.pad, R.wbox)
                 W.shifted, W.shift_i, W.whole = base, i, R.whole
                 W.people, W.nopeople, W.blame, W.ppl_hit = R.people, R.nopeople, R.blame, R.ppl_hit
@@ -10937,7 +10945,7 @@ NV.learn_wall = function(p, px, py, pz)
         for _, q in ipairs(people) do
             if math.abs(q.z - pz) < 250 and (q.x - cx) ^ 2 + (q.y - cy) ^ 2 < 120 * 120 then
                 log(string.format("NAVWALK stuck at a person near (%.0f,%.0f): no wall learned", cx, cy))
-                return false
+                return false, q   -- (the person: nav_walk_watch waits for them to walk on)
             end
         end
     end
@@ -11451,6 +11459,7 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
             NV.path = nil
             NV.route = nil
             NV.unwedge = nil
+            NV.pwait = nil
             NV.face = nil
             NV.held = nil
             pcall(function() shim.HoldKeys(false, false, false, false) end)
@@ -11489,6 +11498,8 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
     local now = os.clock()
     if now - NV.drive_t < 0.012 then return end
     NV.drive_t = now
+    -- waiting for a person in the way to walk on (NV.pwait, nav_walk_watch): no keys
+    if NV.pwait then return end
     -- unwedge sidestep phase: hold the perpendicular key briefly, then re-route
     if NV.unwedge then
         if now < NV.unwedge.till then
@@ -11712,6 +11723,24 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
     end
     local p = get_player_obj(); if not p then return end
     local px, py, pz = read_actor_pos(p); if not px then return end
+    -- waiting for a person in the way to walk on (NV.pwait, the stuck check below): when
+    -- the time is up, on along the same route if they moved; one who stood still is
+    -- static, and the stuck check goes on as before (sidestep, re-route)
+    local pw = NV.pwait
+    if pw then
+        if now < pw.till then return end
+        NV.pwait = nil
+        local qx, qy
+        pcall(function() qx, qy = read_actor_pos(pw.q.actor) end)
+        local moved = qx and math.sqrt((qx - pw.qx) ^ 2 + (qy - pw.qy) ^ 2) or 0
+        log(string.format("NAVWALK %s moved %.0f while we waited", tostring(pw.name), moved))
+        NV.prog = { t = now, x = px, y = py }
+        if moved <= 40 then
+            NV.pwait_static = true
+            NV.prog.t = now - 1.3   -- (the stuck check right away: sidestep, re-route)
+        end
+        return
+    end
     -- arrival forgiveness: within interaction range of the GOAL counts as
     -- arrived, even when the exact spot is blocked (counters, furniture) --
     -- chasing the unreachable final meters caused endless circling
@@ -11825,7 +11854,25 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
         end
         -- an invisible wall the route took for open (or "soft"): learn it, so the
         -- re-route below goes round it (NV.walls)
-        pcall(NV.learn_wall, p, px, py, pz)
+        local okl, _, q = pcall(NV.learn_wall, p, px, py, pz)
+        -- A PERSON WHO WALKS ABOUT in the way (2026-11-22, Sonnschatt: two patrolling
+        -- guards, "Lakai des Meisters" and "Tunichtgut", stepped into the route again and
+        -- again; four re-routes, each stuck within half a second, then the user stopped
+        -- it): keys up and wait 1.5 s for them to walk on, then on along the same route.
+        -- Up to 3 times on a route; someone who doesn't move gets the sidestep and the
+        -- re-route as before (NV.pwait_static).
+        if okl and q and q.actor and not NV.pwait_static and (NV.pwait_n or 0) < 3 and NV.path then
+            NV.pwait_n = (NV.pwait_n or 0) + 1
+            local nm = NV.person_name(q)
+            NV.pwait = { till = now + 1.5, q = q, qx = q.x, qy = q.y, name = nm }
+            NV.held = nil
+            pcall(function() shim.HoldKeys(false, false, false, false) end)
+            log(string.format("NAVWALK waits for %s at (%.0f,%.0f) (#%d)", tostring(nm), q.x, q.y, NV.pwait_n))
+            if NV.pwait_n == 1 then
+                speak(nm and trf("Waiting for %s", nm) or tr("Waiting for someone to walk on"))
+            end
+            return
+        end
         if not NV.unwedged and NV.path then
             -- one automatic SIDESTEP perpendicular to travel (the manual recovery
             -- that worked on the stairs), then re-route from the freed spot
