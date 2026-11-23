@@ -9296,6 +9296,20 @@ local function nav_route_finish(goalnode)
             NV.route = W
             return
         end
+        -- NO CELL WITH A CLEAR LAST LEG (2026-11-23, the Aashöhlen, chest TrsrBx_Cliff_D12_06:
+        -- the search came within 160-250 of it from every side, and each leg from there hit
+        -- something the capsule's trace sees, while the user could reach the chest): "not
+        -- reachable" was wrong. The refused cell nearest the target is the goal after all;
+        -- at a chest the item approach then looks for its prompt and tries its sides
+        -- (NV.iapproach), at a door the push to it does. (Before the trail's retries: the
+        -- search did get there.)
+        if R.legbest and R.legchk ~= "spot" then
+            log(string.format("ROUTE no clear last leg from any cell: to the nearest one, %.0f from the %s",
+                R.legbest_d or -1, R.legchk == "door" and "door" or "target"))
+            NV.route = R
+            nav_route_finish(R.legbest)
+            return
+        end
         -- from your own trail, 250 and then 700 back (NV.trail_retry): the walk goes back
         -- there first
         if R.mode == "walk" and not R.capped then
@@ -10183,6 +10197,9 @@ NV.goal_leg_ok = function(R, ksl, p, best)
     end
     if blocked then
         R.nleg = (R.nleg or 0) + 1
+        -- (the refused cell nearest the target: the goal after all when no cell has a clear
+        -- leg -- see nav_route_finish; never for another side, a free spot)
+        if not spot and (not R.legbest_d or d < R.legbest_d) then R.legbest, R.legbest_d = best, d end
         if not R.goallog then
             R.goallog = true
             log(string.format("ROUTE last leg blocked from cell %d,%d (floor %.0f) to the %s (floor %.0f, %.0f away): %s, searching on",
@@ -11170,7 +11187,11 @@ NV.bg_step = function()      -- nav_tick, only while no walk or route runs
             return
         end
         local door = (res == "found") and NV.route_first_door(job.R, why) or nil
-        NV.bg_record(job, res == "found", (job.R.whole and "whole area" or (job.R.pad > 9 and "wide route" or "route"))
+        -- (no cell with a clear last leg, but the search got near: reachable, as the walk
+        -- goes there -- nav_route_finish)
+        local nearleg = res == "fail" and job.R.legbest ~= nil and job.R.legchk ~= "spot"
+        NV.bg_record(job, res == "found" or nearleg, (nearleg and "no clear last leg, " or "")
+            .. (job.R.whole and "whole area" or (job.R.pad > 9 and "wide route" or "route"))
             .. (job.R.shifted and ", shifted grid" or "")
             .. (job.R.trailpre and string.format(", from your trail %d back", NV.TRAIL_BACK[job.R.trail_n] or 0) or "")
             .. (door and (", door " .. tostring(door.name)) or ""), door ~= nil)
