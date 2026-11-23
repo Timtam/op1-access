@@ -124,7 +124,12 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   can't get close enough to talk to (Mercedes behind the counter of Atlasdamm's library)
   gets the same: up to two other sides, each square in front of them, then "Mercedes ist
   nicht in Reichweite"; it used to stop without a word, and J then offered the follower's
-  menu. When the game already offers the person as you arrive, no last step spoils it. A shop
+  menu. The way to another side is checked to its end: in Flammhuld's cathedral the side
+  chosen for the former Ardante knight lay beyond the pew you stood at, the walk took the
+  spot you stood on for that side and ran into the pew, "Neue Route" five times. A side
+  that can't be reached is said ("Diese Seite ist nicht erreichbar, versuche eine
+  andere") and the next one tried; it no longer marks the person or the chest as not
+  reachable. When the game already offers the person as you arrive, no last step spoils it. A shop
   that opens at its entrance (no keeper) counts as reached only when its prompt shows;
   the route there follows the character's own collision, so it finds side stairs the
   other traces miss. Otherwise the walker says the entrance wasn't reached and how many

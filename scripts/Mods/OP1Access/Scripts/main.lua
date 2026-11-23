@@ -9095,6 +9095,13 @@ local function nav_route_finish(goalnode)
         log(string.format("ROUTE fail traces=%d pops=%d slides=%d people-blocked=%d no-room=%d capsule-floors=%d too-narrow=%d ledges=%d %.1fs",
             R.traces, R.pops, R.slides or 0, R.ppl_hit or 0, R.nroom or 0, R.npawn or 0, R.ntight or 0, R.nledge or 0,
             os.clock() - R.started))
+        -- another side of a person or a chest: the next side (NV.spot_failed) -- not the
+        -- search without people (the person you want to talk to stands beside the spot,
+        -- it would name them "in the way"), never "not reachable" for the target itself
+        if R.mode == "walk" and NV.goal and NV.goal.cat == "spot" and NV.spot_failed then
+            NV.spot_failed(NV.goal)
+            return
+        end
         -- people stood in the way of some steps: was it them? The same search without
         -- people; if that finds a way, the person on it is named (below, R.blame)
         if R.people and (R.ppl_hit or 0) > 0 and not R.nopeople and not R.capped then
@@ -9969,15 +9976,23 @@ end
 -- hit, unless at a person, means: not the goal, search on. Level from the node when the
 -- target is lower (the ground falls away under the line), rising to the target's floor
 -- when it is higher. Under 100 to go: the walk's own last steps, nothing traced.
+-- ANOTHER SIDE of a person or a chest ("spot", a free point to stand on; 2026-11-23, the
+-- cathedral in Flammhuld): the side chosen for the former Ardante knight, sitting between
+-- two pews, lay beyond the pew you stood at, 192 away, so the spot you stood on was the
+-- goal ("0 cells"), the walk ran into the pew and re-routed five times. Its leg runs to 20
+-- short of the spot (nothing of its own to hit there), and is traced from 30 on; a person
+-- on it blocks like a wall -- also the one you want to talk to, beside the spot.
 NV.goal_leg_ok = function(R, ksl, p, best)
+    local spot = (R.legchk == "spot")
     local wx = R.px + best.x * NV.STEP + (best.ox or 0)
     local wy = R.py + best.y * NV.STEP + (best.oy or 0)
     local nf = best.z
     if best.k == R.startk then nf = R.shifted and R.pz or (R.pz - (M.pfoot or 82)) end
     local dx, dy = R.ox - wx, R.oy - wy
     local d = math.sqrt(dx * dx + dy * dy)
-    if d <= 100 then return true end
-    local ex, ey = R.ox - dx / d * 80, R.oy - dy / d * 80
+    if d <= (spot and 30 or 100) then return true end
+    local back = spot and 20 or 80
+    local ex, ey = R.ox - dx / d * back, R.oy - dy / d * back
     local tf = (R.ofl and math.abs(R.ofl - R.oz) < 200) and R.ofl or R.oz
     local sz, ez = nf + 55, math.max(nf, tf) + 55
     R.traces = R.traces + 2
@@ -9985,16 +10000,21 @@ NV.goal_leg_ok = function(R, ksl, p, best)
     local okp, hitp, oh = line_blocked(ksl, p, wx, wy, sz, ex, ey, ez, NV_TRACE)
     local blocked = ok0 and hit0
     if not blocked and okp and hitp then
-        local q = NV.leg_person(R, wx, wy, sz, ex, ey, ez, oh, nf)
-        if q and R.people then R.ppl_hit = (R.ppl_hit or 0) + 1; R.goal_ppl = true; return false end
-        blocked = not q
+        if spot then
+            blocked = true
+        else
+            local q = NV.leg_person(R, wx, wy, sz, ex, ey, ez, oh, nf)
+            if q and R.people then R.ppl_hit = (R.ppl_hit or 0) + 1; R.goal_ppl = true; return false end
+            blocked = not q
+        end
     end
     if blocked then
         R.nleg = (R.nleg or 0) + 1
         if not R.goallog then
             R.goallog = true
             log(string.format("ROUTE last leg blocked from cell %d,%d (floor %.0f) to the %s (floor %.0f, %.0f away): %s, searching on",
-                best.x, best.y, nf, R.legchk == "door" and "door" or "target", tf, d, hit0 and "a wall" or "an invisible wall"))
+                best.x, best.y, nf, R.legchk == "door" and "door" or (spot and "spot" or "target"), tf, d,
+                hit0 and "a wall" or "an invisible wall or a person"))
         end
         return false
     end
@@ -10746,7 +10766,8 @@ local function nav_route_begin(mode, ox, oy, oz)
         if mode == "walk" then
             local g = NV.goal
             if g and g.x == ox and g.y == oy then
-                leg = g.chest or ((g.cat == "door" or g.cat == "building") and "door") or nil
+                leg = g.chest or ((g.cat == "door" or g.cat == "building") and "door")
+                    or (g.cat == "spot" and "spot") or nil
             end
         else
             local t = nav_target()
@@ -11345,21 +11366,22 @@ end
 -- to two, as for a chest -- only right after the steps, where they ended (not after a
 -- menu in between, nor once you walked off: no walk you didn't ask for). Else say so;
 -- it used to end without a word.
-NV.approach_fail = function(a)
+NV.approach_fail = function(a, noroute)
     local p = get_player_obj()
     local px, py
     if p then px, py = read_actor_pos(p) end
-    local fresh = os.clock() - (a.t0 or -99) < 6 and px and a.px
-        and math.sqrt((px - a.px) ^ 2 + (py - a.py) ^ 2) < 120
+    local fresh = px and (noroute or (os.clock() - (a.t0 or -99) < 6 and a.px
+        and math.sqrt((px - a.px) ^ 2 + (py - a.py) ^ 2) < 120))
     local spot
-    if fresh and #(a.spots or {}) < 2 then
+    a.spots = a.spots or {}
+    if fresh and #a.spots < 2 then
         local oks, s = pcall(NV.person_spot, a, p, px, py)
         if oks then spot = s else log("NAVWALK person spot error: " .. tostring(s)) end
     end
     if spot then
         a.spots[#a.spots + 1] = spot
         log(string.format("NAVWALK person: no pick at (%.0f,%.0f), trying (%.0f,%.0f)", px, py, spot.x, spot.y))
-        speak(tr("Not in reach here, trying another side"))
+        speak(noroute and tr("That side can't be reached, trying another side") or tr("Not in reach here, trying another side"))
         NV.goal = { x = spot.x, y = spot.y, z = spot.z, cat = "spot", key = NV.goal and NV.goal.key,
             face = { x = a.x, y = a.y }, person = { addr = a.addr, name = a.name, z = a.z, spots = a.spots } }
         NV.retries, NV.bestgoal, NV.noimprove = 0, nil, 0
@@ -11367,6 +11389,29 @@ NV.approach_fail = function(a)
     else
         speak(a.name and trf("%s is not within reach", a.name) or tr("Not within reach"))
     end
+end
+-- A route to another side found no way, or the walk there got stuck for good: the next
+-- side -- a person's (NV.approach_fail, up to two in all) or a chest's (nav_tick's item
+-- approach goes on from where you stand now). Never "not reachable" for the target: its
+-- other sides may well be (2026-11-23, the cathedral: the side chosen for the former
+-- Ardante knight lay between two pews, the aisle on his other side was free).
+NV.spot_failed = function(g)
+    local p = get_player_obj()
+    local px, py
+    if p then px, py = read_actor_pos(p) end
+    log(string.format("NAVWALK side (%.0f,%.0f) not reachable", g.x, g.y))
+    local gp = g.person
+    if gp and g.face then
+        NV.approach_fail({ addr = gp.addr, name = gp.name, z = gp.z, spots = gp.spots, x = g.face.x, y = g.face.y,
+            t0 = os.clock(), px = px, py = py }, true)
+        return
+    end
+    local ia = NV.iapproach
+    if ia and px then
+        ia.px, ia.py, ia.noroute, ia.next = px, py, true, os.clock() + 0.3
+        return
+    end
+    speak(tr("That side can't be reached"))
 end
 
 -- STUCK: free ourselves instead of asking the player to step aside (user 2026-11-14).
@@ -12138,6 +12183,8 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
             NV.retries = (NV.retries or 0) + 1
             speak(tr("Rerouting"))
             nav_route_begin("walk", NV.goal.x, NV.goal.y, NV.goal.z)
+        elseif gc == "spot" then
+            NV.spot_failed(NV.goal)                    -- another side of a person / chest: the next
         else
             speak(trf("Can't reach, closest %d", math.floor((NV.bestgoal or gd) + 0.5)))
         end
@@ -12249,7 +12296,10 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
                 ia.next = os.clock() + 1.0
                 log(string.format("NAVWALK item: no prompt at (%.0f,%.0f), trying (%.0f,%.0f)%s", px, py, spot.x, spot.y,
                     relaxed and " (every side has the person ahead: the one most off the line)" or ""))
-                speak(who and trf("Here E goes to %s, trying another side", who) or tr("No prompt here, trying another side"))
+                -- (after a side no route reached, NV.spot_failed: that, not "no prompt here")
+                speak((ia.noroute and tr("That side can't be reached, trying another side"))
+                    or (who and trf("Here E goes to %s, trying another side", who)) or tr("No prompt here, trying another side"))
+                ia.noroute = nil
                 NV.goal = { x = spot.x, y = spot.y, z = spot.z, cat = "spot", key = NV.goal and NV.goal.key,
                     face = { x = ia.x, y = ia.y } }
                 NV.retries, NV.bestgoal, NV.noimprove = 0, nil, 0
@@ -12262,12 +12312,14 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
                         tostring(why)))
                 end
                 speak((ia.swoon and M.swoon_text(ia.tname or tr("Someone"), ia.swoon))
+                    or (ia.noroute and tr("That side can't be reached, and no other side found"))
                     or (who and trf("Here E goes to %s, and no other side found", who))
                     or tr("No prompt here, and no other side found"))
                 NV.iapproach = nil
             end
         else
             speak((ia.swoon and M.swoon_text(ia.tname or tr("Someone"), ia.swoon))
+                or (ia.noroute and tr("That side can't be reached, and no other side found"))
                 or (who and trf("Here E goes to %s, not to the item", who)) or tr("No prompt at this item"))
             NV.iapproach = nil
         end
