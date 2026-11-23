@@ -4780,15 +4780,50 @@ M.bt_living = function()   -- the enemies still in the fight (keys 1-5)
     end
     return out
 end
+-- WHO REALLY FIGHTS (user 2026-11-23): in a duel (Challenge, Provoke) only one traveler is
+-- in the battle, yet keys 6-9 read the whole party ("H'aanit, HP 500 von 500 ..." on 7),
+-- and the result screen said "Therion erreicht Stufe 11" again although nobody had gained
+-- a level. The unused party panels (BattleSelectPlayerStatus_C) and result panels
+-- (BattleResultPlayerWidget_C) keep what the last full battle put in them. The battle
+-- manager's BattlePlayer (@0x3B0, object dump) lists the battle's own travelers; a panel
+-- counts only when its character -- Owner (@0x388) / TergetCharacter (@0x258) -- is one of
+-- them. -> a set of addresses, or nil (the manager unreadable: every panel, as before).
+M.BT_PLAYERS = 0x3B0
+M.bt_player_set = function()
+    local mgr = M.kept(M.bt and M.bt.mgr_h)
+    local ma = mgr and M.addr_of(mgr)
+    if not ma then return nil end
+    local set, n = {}, 0
+    for _, a in ipairs(M.bt_array(ma, M.BT_PLAYERS)) do set[a] = true; n = n + 1 end
+    return n > 0 and set or nil
+end
+-- panels (each { ..., ch = its character }) without those of travelers not in this battle;
+-- all of them when none matches (a layout not seen yet: logged once)
+M.bt_in_battle = function(list, what)
+    local inb = M.bt_player_set()
+    if not inb then return list end
+    local out = {}
+    for _, e in ipairs(list) do if e.ch and inb[e.ch] then out[#out + 1] = e end end
+    if #out == 0 and #list > 0 then
+        M.bt.inb_logged = M.bt.inb_logged or {}
+        if not M.bt.inb_logged[what] then
+            M.bt.inb_logged[what] = true
+            log(string.format("BT %s: no panel's character is among the battle's travelers, taking all %d", what, #list))
+        end
+        return list
+    end
+    return out
+end
 M.bt_party = function()
     local out = {}
     for _, w in ipairs(M.bt_list("BattleSelectPlayerStatus_C")) do
         local name = M.wtext(w.CharaName)
         if not M.placeholder(name) then
-            out[#out + 1] = { w = w, addr = M.peekp(w, 0x388), name = name }   -- Owner
+            local owner = M.peekp(w, 0x388)   -- Owner
+            out[#out + 1] = { w = w, addr = owner, name = name, ch = owner }
         end
     end
-    return out
+    return M.bt_in_battle(out, "party")
 end
 -- FOLLOWERS (user 2026-11-20): a person Ophilia guides or Primrose allures, called with
 -- "Rufen", fights for a few turns: a BattleSupporterBP_C (object dump) with its own icon
@@ -5432,7 +5467,14 @@ M.poll_battle_result = function(w)
     bt.lv_log = bt.lv_log or {}     -- widget address -> what the log said last
     bt.ups = bt.ups or {}           -- level-ups not said yet
     local counting = false
+    -- (only the panels of travelers in this battle: in a duel the other three still showed
+    -- the last full battle's party, one with its level-up flag on -- M.bt_in_battle)
+    local panels = {}
     for _, pw in ipairs(M.bt_list("BattleResultPlayerWidget_C")) do
+        panels[#panels + 1] = { w = pw, ch = M.peekp(pw, 0x258) }   -- TergetCharacter
+    end
+    for _, pe in ipairs(M.bt_in_battle(panels, "result")) do
+        local pw = pe.w
         local name = M.wtext(pw.CharaName)
         local lv, up, cu, a = nil, false, nil, 0
         pcall(function() lv, up = pw.PlayerLevel, pw.PlayLevelUp end)
