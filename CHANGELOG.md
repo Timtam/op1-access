@@ -134,7 +134,10 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   for a target you have just picked. Routes keep out of water and other places only
   invisible walls close off, and take invisible floors such as the bridge on the path to
   the Maiya caves. A chest beyond a fence or a railing is no longer walked at through
-  it: the route takes the way round. Exits are walked to the line where they really
+  it: the route takes the way round. The same for a door: the prison's door in
+  Flammhuld stands on a landing that an invisible wall closes off from the street; the
+  walk ran into that wall again and again ("Neue Route" every two seconds) and now goes
+  round its end and up to the door. Exits are walked to the line where they really
   take you on, not to a point that can stand behind an invisible wall (from the Östliche
   to the Südliche Sonnschatt-Sandwüste the walk got stuck just short of it).
   Whether a person or a chest is inside a building now comes from the game itself:

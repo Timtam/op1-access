@@ -9900,12 +9900,20 @@ end
 -- Targets whose last leg is traced (NV.goal_leg_ok): chests (hidden items and markers on
 -- them too) -- you walk right up to them. Not people: a shopkeeper or a barkeep stands
 -- behind a counter and is talked to across it, which the leg would take for a wall (a
--- fence before a person is learned on the first bump instead, NV.learn_wall). Not doors,
--- buildings or exits (their own collision or the map's edge lies on the leg), a story
--- event's spot (stepped in) or another side of a chest (a free spot).
+-- fence before a person is learned on the first bump instead, NV.learn_wall). Not exits
+-- (the map's edge lies on the leg), a story event's spot (stepped in) or another side of
+-- a chest (a free spot).
+-- A DOOR (a building, a house's door on the way in or out) too, as "door" (2026-11-23,
+-- Flammhuld's prison, user: "another object the walker can't reach"): the door stands on
+-- a landing 90 above the street, closed off on the street side by an invisible wall 115
+-- before the door (BlockingVolume26, x -1731..-1720, y -1255..-983); the way up is round
+-- its south end. The street cell opposite the door was within one cell, so it was the
+-- goal; the walk ran into the wall, learned it, and "Neue Route" every 2 s took the
+-- spot it stood on for the goal again. The leg ends 80 short of the door actor, so the
+-- door's own collision (10 from it) is never hit.
 NV.leg_target = function(t, cat)
-    if cat == "spot" or cat == "door" or cat == "building" or cat == "exit" or cat == "through"
-        or cat == "event" then return false end
+    if cat == "door" or cat == "building" then return "door" end
+    if cat == "spot" or cat == "exit" or cat == "through" or cat == "event" then return false end
     return (t and t.actor and class_name_of(t.actor) == "TreasureBoxBP_C") and true or false
 end
 -- The person (from the search's list, or a scan once per search) standing where a leg's
@@ -9963,8 +9971,8 @@ NV.goal_leg_ok = function(R, ksl, p, best)
         R.nleg = (R.nleg or 0) + 1
         if not R.goallog then
             R.goallog = true
-            log(string.format("ROUTE last leg blocked from cell %d,%d (floor %.0f) to the target (floor %.0f, %.0f away): %s, searching on",
-                best.x, best.y, nf, tf, d, hit0 and "a wall" or "an invisible wall"))
+            log(string.format("ROUTE last leg blocked from cell %d,%d (floor %.0f) to the %s (floor %.0f, %.0f away): %s, searching on",
+                best.x, best.y, nf, R.legchk == "door" and "door" or "target", tf, d, hit0 and "a wall" or "an invisible wall"))
         end
         return false
     end
@@ -10711,15 +10719,18 @@ local function nav_route_begin(mode, ox, oy, oz)
     NV.route = NV.route_job(mode, ox, oy, oz, px, py, pz)
     NV.route.people = people
     NV.route.stepin = stepin
-    do   -- the last leg to a chest is traced (NV.goal_leg_ok); a walk decided at its start
-        local chest
+    do   -- the last leg to a chest or a door is traced (NV.goal_leg_ok); a walk decided at its start
+        local leg
         if mode == "walk" then
-            chest = NV.goal and NV.goal.chest and NV.goal.x == ox and NV.goal.y == oy
+            local g = NV.goal
+            if g and g.x == ox and g.y == oy then
+                leg = g.chest or ((g.cat == "door" or g.cat == "building") and "door") or nil
+            end
         else
             local t = nav_target()
-            chest = t and NV.leg_target(t, t.walkcat or t.cat)
+            leg = t and NV.leg_target(t, t.walkcat or t.cat)
         end
-        NV.route.legchk = (not stepin and chest) and true or false
+        NV.route.legchk = (not stepin and leg) or false
     end
     if stepin then
         NV.route.groundch = NV_TRACE
