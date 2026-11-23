@@ -38,8 +38,8 @@ use headphones: its sounds come from the direction of what they stand for.
    which OP1 Access doesn't need. On updates, sounds you put into `Assets`
    stay.
 5. Start the game with your screen reader running. You hear
-   **“OP1 Access loaded”**. From then on the mod speaks the game's text language
-   (“OP1 Access geladen” when the game is set to German).
+   **“OP1 Access loaded”**, in the game's text language, which the mod follows from
+   then on.
 
 The installer is a plain Windows dialog that works with screen readers:
 progress is announced, and questions and results come as message boxes. It adds
@@ -80,8 +80,8 @@ one request to the GitHub API and nothing else.
 Press **F1 twice** in the game. A window opens beside the game, which keeps
 running: describe what happened, add your e-mail address if you want an answer,
 and choose what to attach. The same window opens from the installer (*Report a
-problem*) and from the Start menu entry *OP1 Access – Problem melden* (*OP1 Access -
-Report a problem*), for when the game does not start at all. It is a normal Windows
+problem*) and from the Start menu entry *OP1 Access - Report a problem* (named in the
+language of Windows), for when the game does not start at all. It is a normal Windows
 window that screen readers read on their own; Tab moves through it.
 
 What can go along:
@@ -113,9 +113,10 @@ By hand: in `Octopath_Traveler\Binaries\Win64`, delete the folder
 
 ## Keys
 
-The game's own keys stay as they are: arrow keys to move, **Enter** to confirm and to
-talk, **E** to open doors and chests and to examine, **J** for the path-action menu,
-**Escape** for the main menu, **Backspace** to go back in menus. The mod adds these:
+The game's own keys stay as they are: arrow keys to move, **Enter** to confirm, to talk,
+to open doors and chests and to examine (the game shows **E** for the last three, which
+does the same; the mod names Enter), **J** for the path-action menu, **Escape** for the
+main menu, **Backspace** to go back in menus. The mod adds these:
 
 ### Everywhere
 
@@ -123,7 +124,7 @@ talk, **E** to open doors and chests and to examine, **J** for the path-action m
 |-----|--------|
 | **Comma / Period** | Speech history: back / forward through the last 100 lines, dialogue included; the first Comma repeats the newest line |
 | **Shift + Comma / Shift + Period** | Speech history: the first / the last line |
-| **Q** | The current objective (not in battle, where Q lowers the boost) |
+| **Q** | The current objective, in the field and in the main menu's category list (elsewhere Q stays the game's own key; in battle it lowers the boost) |
 | **Ctrl + F10** | Say the screen you are on |
 | **Ctrl + F7** | Sound test, press repeatedly: a tone on your right, left, in front and behind you, the same placed on the map around your character, the wall bump, then off — to check your headphones |
 | **F5** | Check for an update; press twice to install it |
@@ -146,9 +147,9 @@ talk, **E** to open doors and chests and to examine, **J** for the path-action m
 |-----|--------|
 | **1 to 5** | Enemy 1 to 5: name, shield, weaknesses, status effects |
 | **6 to 9** | Party member 1 to 4: HP, SP, BP, status effects |
-| **0** | The turn order: this round and the next |
+| **0** | The turn order from the current turn on, this round and the next, each enemy with its position (the number key that reads it), so two of the same name can be told apart |
 
-### On the world map (main menu, *Weltkarte*)
+### On the world map (main menu, *World Map*)
 
 | Key | Action |
 |-----|--------|
@@ -183,9 +184,9 @@ talk, **E** to open doors and chests and to examine, **J** for the path-action m
 - The mod's own words follow the game's text language, also when you change it in the
   game's options: German and English for now. More languages are one text file each,
   see [docs/translations.md](docs/translations.md).
-- Money is said as a word in the game's language (“50 Blätter”, “50 leaves”); the game
-  itself only shows a ⑳ sign, which screen readers can't read. Keys the tutorials show
-  as circled letters (“Drückt die Ⓞ-Taste”) are said as plain letters (“O-Taste”).
+- Money is said as a word in the game's language (“50 leaves”); the game itself only
+  shows a ⑳ sign, which screen readers can't read. Keys the tutorials and the menus'
+  footers show as key caps (“Press Ⓞ”) are said by name (“Press O”).
 - Dialogue is read with the speaker's name, story scenes and tutorials too.
 
 ### Exploring
@@ -197,20 +198,21 @@ talk, **E** to open doors and chests and to examine, **J** for the path-action m
   wall radar sounds the walls ahead and to the sides, a thud plays when you walk into
   one, and a chirp when you pass through a door. You can put your own sounds in
   `Mods\OP1Access\Assets` (see the `README.md` there).
-- **On arrival** you hear the area, its region and how dangerous it is (“Nördliche
-  Atlasdamm-Ebenen, Flachland, Gefahrenstufe 1”) and how many objects the radar found.
-  Door and action prompts are said as they come up (“Öffnen, E”).
+- **On arrival** you hear the area, its region and how dangerous it is (“North
+  Atlasdam Flats, Flatlands, danger level 1”) and how many objects the radar found.
+  Door and action prompts are said as they come up, with Enter as the key (“Open,
+  Enter”); a person's own prompt names them.
 - **The navigator** lists what is around you by category, nearest first, with direction
-  and distance (“Ausgang 1 von 3: nach Nördliche Atlasdamm-Ebenen, Gefahrenstufe 1,
-  oben, 1486”). It says which chests are opened or purple, which targets can't be
-  reached, which are inside a building, where exits lead and how dangerous the area
-  behind them is, and what kind of shop a shop is.
+  and distance (“exit 1 of 3: to North Atlasdam Flats, danger level 1, up, 1486”). It
+  says which chests are opened or purple, which targets can't be reached, which are
+  inside a building, where exits lead and how dangerous the area behind them is, what
+  kind of shop a shop is, and which people lie knocked out after a fight.
 - **Markers** are the minimap's icons: side stories with the person's name, hidden
   items, the objective, the exit toward it, save points, travelers to recruit. A new
-  one is said when it comes up (“Neue Markierung: verborgenes Objekt, rechts, 3872”).
+  one is said when it comes up (“New marker: hidden item, right, 3872”).
 - **The walker** takes you to the target over a computed route: around walls and
   people, up and down narrow stairs, and through doors, which it opens itself. When
-  someone blocks the only way it says who (“Armer is in the way”), and at a chest or a
+  someone blocks the only way it says who (“Guard is in the way”), and at a chest or a
   hidden item it waits for the game's prompt and tries another side when none comes.
 
 ### Path actions
@@ -233,7 +235,8 @@ out.
   change, the tutorials and
   the Miscellaneous submenu. Coming back from a list, the options or a dialog, the menu
   says where you are again.
-- The objective is read when the menu opens, and with Q at any time.
+- The objective is read when the menu opens, and with Q in the field and in the menu's
+  category list.
 - The world map: the place under the cursor (town, path or dungeon, region, danger
   level, whether you have been there) and the chapters recommended there. See the world
   map keys above.
@@ -247,7 +250,7 @@ out.
 The commands, skills and items with their costs, the targets, the boost level, who does
 what, damage and healing, breaks, knock-outs, status effects and the results with drops.
 Weaknesses come in the game's own tile order, with the unknown ones in place (“weak to
-2 unknown, Dunkelheit”), so you can tell what an unknown one can still be.
+2 unknown, Dark”), so you can tell what an unknown one can still be.
 
 ## Character select (“Choose your character”)
 
@@ -301,7 +304,8 @@ use this.
 - All policy — *what* to speak and *when* — lives in Lua at
   `scripts/Mods/OP1Access/Scripts/main.lua`. It finds the focused screen through the
   game's UI manager (its active stack), reads the widgets' fields, and hooks a few
-  game functions (`KSUIManager:Open`, the battle's damage numbers and action banner).
+  Blueprint functions (talking to a person, the battle's damage numbers and action
+  banner, the character select's cursor).
   Its screen polls run every 50 ms; everything that calls into the game runs on the
   game's own thread.
 - **`OP1AccessShim.dll`** is a small Lua C extension with **Prism** (MPL-2.0) linked
@@ -398,7 +402,9 @@ needs permission to push to it.
   (`M.in_gt`).
 - `build-shim.cmd` links a `luac.exe` (`build\shim\luac.exe`) from UE4SS's
   Lua sources and checks `main.lua` with it; run it again by hand after editing
-  (`build\shim\luac.exe -p scripts\Mods\OP1Access\Scripts\main.lua`).
+  (`build\shim\luac.exe -p scripts\Mods\OP1Access\Scripts\main.lua`). It also links a
+  `lua.exe` and runs the unit tests in `tests\lua`; `build-release.ps1` runs the
+  installer's tests (`installer\OP1AccessInstaller.Tests`).
 
 ## Repo layout
 
@@ -407,7 +413,8 @@ docs/         known issues, translations, build and release, install state, inve
 src/          C++ shim source (Lua 5.4 and Prism linked in; Speech.cpp, SpatialAudio.cpp)
 scripts/      the mod (Mods/OP1Access/: Scripts/main.lua, worldlinks.lua, lang/, Assets/),
               build-shim.cmd, the release scripts, i18n.py and level-links.py
-installer/    OP1AccessInstaller (.NET Framework 4.8, WinForms)
+installer/    OP1AccessInstaller (.NET Framework 4.8, WinForms) and its tests
+tests/        unit tests of main.lua's parts (tests/lua, run by build-shim.cmd)
 packaging/    README and third-party notices of the release ZIP
 .github/      CI and release workflows
 tools/        build dependencies from fetch-deps.ps1 (gitignored)
