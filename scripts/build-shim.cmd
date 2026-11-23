@@ -161,6 +161,14 @@ if errorlevel 1 (
     popd
     exit /b 1
 )
+:: and lua.exe, for the mod's unit tests in tests\lua
+cl /nologo /MD /O2 /I"%LUAINC%" /I"%LUASRC%" "%LUASRC%\lua.c" %LUAOBJS% /Fe:"%BUILD%\lua.exe" >"%BUILD%\lua-build.log" 2>&1
+if errorlevel 1 (
+    type "%BUILD%\lua-build.log"
+    echo [build] lua build failed.
+    popd
+    exit /b 1
+)
 popd
 "%BUILD%\luac.exe" -p "%REPO%\scripts\Mods\OP1Access\Scripts\main.lua"
 if errorlevel 1 (
@@ -168,6 +176,19 @@ if errorlevel 1 (
     exit /b 1
 )
 echo [build] main.lua compiles.
+set LUATEST_DIR=%TEMP%\op1access-luatest-%RANDOM%%RANDOM%
+mkdir "%LUATEST_DIR%"
+"%BUILD%\lua.exe" "%REPO%\tests\lua\session_log_test.lua" "%REPO%\scripts\Mods\OP1Access\Scripts\main.lua" "%LUATEST_DIR%" >"%BUILD%\luatest.log" 2>&1
+set LUATEST_FAILED=%ERRORLEVEL%
+"%BUILD%\lua.exe" "%REPO%\tests\lua\report_key_test.lua" "%REPO%\scripts\Mods\OP1Access\Scripts\main.lua" >>"%BUILD%\luatest.log" 2>&1
+if errorlevel 1 set LUATEST_FAILED=1
+rmdir /s /q "%LUATEST_DIR%"
+if not "%LUATEST_FAILED%"=="0" (
+    type "%BUILD%\luatest.log"
+    echo [build] The Lua unit tests failed.
+    exit /b 1
+)
+echo [build] Lua unit tests passed.
 if defined NO_DEPLOY (
     echo [build] Done ^(--no-deploy^).
     exit /b 0

@@ -67,6 +67,67 @@ end)()
 M.TRAVELER = { Ophilia = true, Cyrus = true, Tressa = true, Olberic = true, Primrose = true,
                Alfyn = true, Therion = true, ["H'aanit"] = true, ["H\u{2019}aanit"] = true }
 
+-- ===== Session logs (2026-11-23) =====
+-- UE4SS empties UE4SS.log at every start, so after a crash the crashed session's log is
+-- gone as soon as the game starts again. So every log() line also goes to
+-- logs\session-1.log in the mod folder, written through at once (a crash loses nothing
+-- written before it), and the last three sessions stay: at each start session-2 becomes
+-- session-3 and session-1 session-2. The problem report window (F1 twice, or the
+-- installer) attaches them. A session log that reaches M.slog.max starts over with its
+-- first lines (versions, speech, language) and a note, so a runaway log can't fill the
+-- disk. The logs folder comes with the mod (release ZIP, installer); without it there are
+-- no session logs.
+M.slog = { max = 32 * 1024 * 1024, head_max = 200, head = {}, size = 0 }
+M.slog_line = function(msg)
+    return string.format("[%s %.3f] %s\n", os.date("%H:%M:%S"), os.clock(), tostring(msg))
+end
+M.slog_open = function(dir)
+    local S = M.slog
+    os.remove(dir .. "session-3.log")
+    os.rename(dir .. "session-2.log", dir .. "session-3.log")
+    os.rename(dir .. "session-1.log", dir .. "session-2.log")
+    local f = io.open(dir .. "session-1.log", "wb")
+    if not f then return false end
+    S.f, S.path, S.size, S.head = f, dir .. "session-1.log", 0, {}
+    M.slog_write(string.format("OP1 Access session log, started %s", os.date("%Y-%m-%d %H:%M:%S")))
+    return true
+end
+M.slog_write = function(msg)
+    local S = M.slog
+    if not S.f then return end
+    local line = M.slog_line(msg)
+    if #S.head < S.head_max then S.head[#S.head + 1] = line end
+    if S.size + #line > S.max then
+        -- start over: the first lines again, a note, then on
+        S.f:close()
+        S.f = io.open(S.path, "wb")
+        if not S.f then return end
+        S.size = 0
+        local note = M.slog_line(string.format(
+            "(the session log reached %d MB: the lines after the first %d were dropped here)",
+            S.max // (1024 * 1024), #S.head))
+        for _, l in ipairs(S.head) do S.f:write(l); S.size = S.size + #l end
+        S.f:write(note)
+        S.size = S.size + #note
+    end
+    S.f:write(line)
+    S.f:flush()
+    S.size = S.size + #line
+end
+
+local function log(msg)
+    print(string.format("[OP1Access] %s\n", tostring(msg)))
+    if M.slog.f then pcall(M.slog_write, msg) end
+end
+-- (not in the unit tests, which load the block above on its own)
+if not OP1_SLOG_TEST then
+    local ok, opened = pcall(M.slog_open, M.MOD_DIR .. "logs\\")
+    if not (ok and opened) then
+        print(string.format("[OP1Access] no session log (no logs folder in the mod folder?) %s\n", ok and "" or tostring(opened)))
+    end
+end
+-- ===== end of session logs =====
+
 -- ---------------------------------------------------------------------------
 -- Shim load
 -- ---------------------------------------------------------------------------
@@ -82,11 +143,7 @@ local shim = nil
 do
     local ok, mod = pcall(require, "OP1AccessShim")
     if ok then shim = mod
-    else print(string.format("[OP1Access] shim load failed: %s\n", tostring(mod))) end
-end
-
-local function log(msg)
-    print(string.format("[OP1Access] %s\n", tostring(msg)))
+    else log("shim load failed: " .. tostring(mod)) end
 end
 
 -- The game's Win64 folder (absolute, UTF-8) and the mod's folder as an absolute path
@@ -5856,6 +5913,41 @@ M.update_install = function()
 end
 pcall(RegisterKeyBind, Key.F5, function() pcall(M.update_key) end)
 if M.has_update_source() then pcall(M.update_check, false) end
+
+-- ===== Problem reports (2026-11-23) =====
+-- F1 twice opens the installer's "Report a problem" window beside the game, which keeps
+-- running: OP1AccessInstaller.exe --report --game <game folder>. The window takes a
+-- description and an e-mail address for questions and attaches the session logs
+-- (logs\session-1..3.log), UE4SS.log and, if wanted, the game's crash dumps; it sends
+-- them to the developer through Static Forms. A release built without the form key has
+-- report = false in buildinfo.lua, and F1 says so instead.
+M.report = { confirm_until = -1 }
+M.report_key = function()
+    if M.build.report == false then
+        speak(tr("Problem reports are not available in this build"), true)
+        return
+    end
+    if os.clock() > M.report.confirm_until then
+        M.report.confirm_until = os.clock() + 10
+        speak(tr("Report a problem: press F1 again. A window opens beside the game, the game keeps running."), true)
+        return
+    end
+    M.report.confirm_until = -1
+    local bin = M.bin_dir()
+    local game = bin and bin:match("^(.*)\\[^\\]+\\[^\\]+\\[^\\]+$")
+    local ok, err = false, "no game folder"
+    if game and shim and shim.StartProcess then
+        ok, err = shim.StartProcess(M.mod_dir_abs() .. "OP1AccessInstaller.exe", '--report --game "' .. game .. '"')
+    end
+    if not ok then
+        log("REPORT could not start the installer: " .. tostring(err))
+        speak(tr("Could not open the problem report window"), true)
+        return
+    end
+    log("REPORT window started")
+    speak(tr("Opening the problem report window"), true)
+end
+pcall(RegisterKeyBind, Key.F1, function() pcall(M.report_key) end)
 
 M.fast_steps = {
     { "prune", function() M.sw_prune() end },   -- freed screen widgets out, before any reader
