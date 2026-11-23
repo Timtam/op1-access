@@ -112,7 +112,10 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   start right behind the person next to you. At a chest or a hidden
   item it waits for the game's prompt and tries another side when none comes; only the
   item's own prompt counts -- a villager lying before a chest, with his own "Untersuchen,
-  E", used to end the walk at him. A person it
+  E", used to end the walk at him -- and only where E reaches the item: with the save
+  point's book or a person picked as well, E talks to them first, so the walk tries a
+  side where they aren't in front of you ("Hier spricht E Speicherpunkt an, versuche eine
+  andere Seite"). A person it
   can't get close enough to talk to (Mercedes behind the counter of Atlasdamm's library)
   gets the same: up to two other sides, each square in front of them, then "Mercedes ist
   nicht in Reichweite"; it used to stop without a word, and J then offered the follower's

@@ -11119,6 +11119,16 @@ NV.item_spot = function(ia, p, px, py)
             for _, s in ipairs(ia.spots) do
                 if math.sqrt((cx - s.x) ^ 2 + (cy - s.y) ^ 2) < 60 then fresh = false end
             end
+            -- (not where E would reach a person instead -- ia.avoid, the one the game picked
+            -- at the item: facing the item from here, they would stand within 30 degrees in
+            -- front of you, closer than 220 -- the game picks a person only nearly square in
+            -- front (Mercedes: 26 to the side at 161 yes, 48 no) -- nor right beside them)
+            if fresh and ia.avoid then
+                local fx, fy = ia.x - cx, ia.y - cy
+                local nx, ny = ia.avoid.x - cx, ia.avoid.y - cy
+                local fl, nl = math.sqrt(fx * fx + fy * fy), math.sqrt(nx * nx + ny * ny)
+                if nl < 90 or (nl < 220 and fl > 1 and (fx * nx + fy * ny) / (fl * nl) > 0.87) then fresh = false end
+            end
             if fresh and d < bestd then
                 local ok, hit, oh = line_blocked(ksl, p, cx, cy, ia.z + 160, cx, cy, ia.z - 200)
                 local gz
@@ -12046,6 +12056,24 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
             log("NAVWALK item: the prompt is not the item's: " .. tostring(M.popup_said) .. " "
                 .. tostring(M.popup_target_cls))
         end
+        -- ...and E must reach it: with a person picked as well (M.talk_pick: the save
+        -- point's book, the villager lying by a hidden item), E talks to them first -- the
+        -- save menu or "U-ugh..." each time (user 2026-11-23). Then another side, one
+        -- where they aren't in front of you as you face the item (NV.item_spot, ia.avoid).
+        local talker = (M.talk_pick or 0) ~= 0 and M.talk_pick or nil
+        if mine and talker then
+            mine = false
+            if ia.talker ~= talker then
+                ia.talker = talker
+                ia.tname = M.talk_pick_name()
+                local tx, ty
+                if M.talk_pick_obj then tx, ty = read_actor_pos(M.talk_pick_obj) end
+                if tx then ia.avoid = { x = tx, y = ty } end
+                log(string.format("NAVWALK item: its prompt shows, but E would go to %s (%X)", tostring(ia.tname), talker))
+            end
+            if ia.tries == 0 then ia.tries = 1 end   -- (a step closer won't help: other sides)
+        end
+        local who = ia.talker and (ia.tname or tr("someone else"))
         if mine then
             log("NAVWALK item prompt: " .. tostring(M.popup_said))
             NV.iapproach = nil
@@ -12061,18 +12089,19 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
                 ia.spots[#ia.spots + 1] = spot
                 ia.next = os.clock() + 1.0
                 log(string.format("NAVWALK item: no prompt at (%.0f,%.0f), trying (%.0f,%.0f)", px, py, spot.x, spot.y))
-                speak(tr("No prompt here, trying another side"))
+                speak(who and trf("Here E goes to %s, trying another side", who) or tr("No prompt here, trying another side"))
                 NV.goal = { x = spot.x, y = spot.y, z = spot.z, cat = "spot", key = NV.goal and NV.goal.key,
                     face = { x = ia.x, y = ia.y } }
                 NV.retries, NV.bestgoal, NV.noimprove = 0, nil, 0
                 nav_route_begin("walk", spot.x, spot.y, spot.z)
             else
                 if not oks then log("NAVWALK item spot error: " .. tostring(spot)) end
-                speak(tr("No prompt here, and no other side found"))
+                speak(who and trf("Here E goes to %s, and no other side found", who)
+                    or tr("No prompt here, and no other side found"))
                 NV.iapproach = nil
             end
         else
-            speak(tr("No prompt at this item"))
+            speak(who and trf("Here E goes to %s, not to the item", who) or tr("No prompt at this item"))
             NV.iapproach = nil
         end
     end
@@ -12782,6 +12811,21 @@ M.interact_poll = function()
         if oka and acts then s = s .. ": " .. acts end
     end
     speak(s, false)
+end
+
+-- Whom E would talk to now (M.talk_pick): the person's name, "Save point" for the save
+-- point's book, else nil (the walker's item approach says it).
+M.talk_pick_name = function()
+    local a, o = M.talk_pick, M.talk_pick_obj
+    if not a or a == 0 then return nil end
+    local nm
+    pcall(function() nm = shim.NpcName(a) end)
+    if nm and nm ~= "" and nm ~= "???" then return nm end
+    if o and M.marker_kind_of then
+        local okk, kind = pcall(M.marker_kind_of, o)
+        if okk and kind == "save point" then return tr("Save point") end
+    end
+    return nil
 end
 
 -- PATH ACTION IN PROGRESS: the field-command manager's own state, polled by the radar
