@@ -60,7 +60,8 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
 
 ### Story and exploration
 
-- Dialogue with speaker names, area names, door and action prompts.
+- Dialogue with speaker names, area names, door and action prompts. A prompt that belongs
+  to a person names them ("Dörfler: Untersuchen, E"), so it isn't taken for a chest's.
 - The game's notifications at the screen's edge are read. Above all the reputation: a
   failed Scrutinize, Steal, Allure or Provoke says how many more failures the town takes
   ("Scheitert noch 4 Mal, und Euer Ruf in der Stadt wird leiden."), then that it is ruined
@@ -105,7 +106,9 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   auf Tunichtgut"), up to three times, before the walk looks for another way; it used to
   plan a new way at once, which the guard walked into again, and a new way could even
   start right behind the person next to you. At a chest or a hidden
-  item it waits for the game's prompt and tries another side when none comes. A person it
+  item it waits for the game's prompt and tries another side when none comes; only the
+  item's own prompt counts -- a villager lying before a chest, with his own "Untersuchen,
+  E", used to end the walk at him. A person it
   can't get close enough to talk to (Mercedes behind the counter of Atlasdamm's library)
   gets the same: up to two other sides, each square in front of them, then "Mercedes ist
   nicht in Reichweite"; it used to stop without a word, and J then offered the follower's

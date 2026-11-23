@@ -11070,6 +11070,18 @@ NV.face_goal = function(retry)
         held = { UP_ARROW = u or nil, DOWN_ARROW = d or nil, LEFT_ARROW = l or nil, RIGHT_ARROW = r or nil } }
 end
 
+-- The prompt on screen is the chest's / hidden item's own (M.poll_action_popup keeps its
+-- TargetActor)? Not a person's: a villager lying before a chest ("Untersuchen, E", "U-ugh")
+-- was taken for the chest's prompt and the walk ended at him (user 2026-11-23); nor a
+-- door's. The item itself, or anything else (a hidden item's access point): yes; no
+-- target readable: yes, as before.
+NV.prompt_is_item = function(ia)
+    local cls, a = M.popup_target_cls, M.popup_target_addr
+    if not cls then return true end
+    if ia and a == ia.addr then return true end
+    return not (cls == "KSFieldNPCCharacter_C" or cls == "HouseEnterTriggerBP_C" or cls == "LevelTrigger_C")
+end
+
 -- Another side of a chest / hidden item to stand at (NV.iapproach): of 16 spots around
 -- it (8 directions, 90 and 130 away) one with ground at about the item's height and a
 -- clear line from there to just short of it at waist height (the capsule's own trace,
@@ -12009,7 +12021,13 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
         local px, py
         if p then px, py = read_actor_pos(p) end
         local okc, opened = pcall(M.chest_state, { addr = ia.addr })
-        if M.popup_said then
+        local mine = M.popup_said and NV.prompt_is_item(ia)
+        if M.popup_said and not mine and ia.other ~= M.popup_said then
+            ia.other = M.popup_said
+            log("NAVWALK item: the prompt is not the item's: " .. tostring(M.popup_said) .. " "
+                .. tostring(M.popup_target_cls))
+        end
+        if mine then
             log("NAVWALK item prompt: " .. tostring(M.popup_said))
             NV.iapproach = nil
         elseif (okc and opened) or not px or math.sqrt((px - ia.px) ^ 2 + (py - ia.py) ^ 2) > 80 then
@@ -12467,7 +12485,7 @@ M.poll_action_popup = function()
     M.popup_widget = w   -- (for the walker's prompt target: read with M.kept(M.popup_widget_h))
     local shown = false
     pcall(function() shown = (w.isEnable == true) and (w.Visibility == 0) end)
-    if not shown then M.popup_said = nil; return end
+    if not shown then M.popup_said, M.popup_target_cls, M.popup_target_addr = nil, nil, nil; return end
     local keyglyph, action = nil, nil
     pcall(function() keyglyph = w.Image_Text.Text:ToString() end)
     pcall(function()
@@ -12487,12 +12505,27 @@ M.poll_action_popup = function()
         if cp >= 0x24B6 and cp <= 0x24CF then key = string.char(cp - 0x24B6 + 65)
         elseif cp >= 0x2460 and cp <= 0x2468 then key = tostring(cp - 0x2460 + 1) end
     end)
-    local sig = action .. "|" .. (key or "")
+    -- whose prompt it is (TargetActor, +0x268): a person's own -- "Untersuchen" at a
+    -- villager lying on the ground -- gets the name in front; next to a chest it was taken
+    -- for the chest's (user 2026-11-23). The walker checks it too (NV.prompt_is_item).
+    local tcls, taddr, tname
+    pcall(function()
+        local ta = w.TargetActor
+        if ta and ta:IsValid() then tcls = class_name_of(ta); taddr = ta:GetAddress() end
+    end)
+    if tcls == "KSFieldNPCCharacter_C" and taddr and shim and shim.NpcName then
+        pcall(function() tname = shim.NpcName(taddr) end)
+        if tname == "" or tname == "???" then tname = nil end
+    end
+    M.popup_target_cls, M.popup_target_addr = tcls, taddr
+    local sig = action .. "|" .. (key or "") .. (taddr and string.format("|%X", taddr) or "")
     if sig == M.popup_said then return end
     M.popup_said = sig
-    M.popup_text = key and (action .. ", " .. key) or action   -- as spoken ("Still shut. ...")
-    log("PROMPT: " .. sig)
-    speak(key and (action .. ", " .. key) or action, false)
+    local text = key and (action .. ", " .. key) or action
+    if tname then text = trf("%s: %s", tname, text) end
+    M.popup_text = text   -- as spoken ("Still shut. ...")
+    log("PROMPT: " .. sig .. (tcls and (" " .. tcls) or ""))
+    speak(text, false)
 end
 
 -- SKIP HINT (user 2026-11-18): a scene the game lets you skip says so once as it starts
