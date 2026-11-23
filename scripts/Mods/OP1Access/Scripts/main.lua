@@ -7502,13 +7502,33 @@ end
 -- obj = the person's actor -> nil (unknown), false, or { idx, bid, row, levels } (levels
 -- only with want_levels)
 M.NPC_UNQ_INDEX, M.SG_NPC_EVENTS, M.NPC_EVENT_SIZE = 0xA18, 0x1B8, 0x38
+-- The class object of the people (KSFieldNPCCharacter_C), its address, found once (nil
+-- while not loaded: asked again after 30 s). An object is one of them when its class
+-- pointer (+0x10) is that address -- a raw read through the shim: UE4SS's GetClass on
+-- an object freed with the last map reads garbage, past any pcall (see M.nearest_npc).
+M.npc_class_addr = function()
+    if M.npc_cls_a then return M.npc_cls_a end
+    local now = os.clock()
+    if now - (M.npc_cls_t or -99) < 30 then return nil end
+    M.npc_cls_t = now
+    pcall(function()
+        local c = StaticFindObject("/Game/Character/BP/Type/KSFieldNPCCharacter.KSFieldNPCCharacter_C")
+        if c and c:IsValid() then M.npc_cls_a = c:GetAddress() end
+    end)
+    return M.npc_cls_a
+end
 M.npc_swoon = function(obj, want_levels)
-    if not (obj and shim and shim.Peek) or class_name_of(obj) ~= "KSFieldNPCCharacter_C" then return nil end
+    if not (obj and shim and shim.Peek) then return nil end
     local addr, sga
     pcall(function() addr = obj:GetAddress() end)
+    local ca = M.npc_class_addr()
+    if not (addr and addr ~= 0 and ca) then return nil end
+    -- a person, alive: its class pointer and flags (not being destroyed), raw reads only
+    local cls, fl = shim.Peek(addr + 0x10, "ptr"), shim.Peek(addr + 8, "i32")
+    if cls ~= ca or not fl or (math.floor(fl) & 0x18000) ~= 0 then return nil end
     local sg = M.save_game()
     if sg then pcall(function() sga = sg:GetAddress() end) end
-    if not (addr and addr ~= 0 and sga and sga ~= 0) then return nil end
+    if not (sga and sga ~= 0) then return nil end
     local idx = shim.Peek(addr + M.NPC_UNQ_INDEX, "i32")
     local arr, cnt = shim.Peek(sga + M.SG_NPC_EVENTS, "ptr"), shim.Peek(sga + M.SG_NPC_EVENTS + 8, "i32")
     if not M.swoon_logged then
@@ -7726,7 +7746,9 @@ local function beacon_rescan()
                         log("NPC " .. (keep and "keep" or "omit") .. ": " .. why .. (nm and (" name=" .. nm) or ""))
                     end
                     if keep then
-                        beacon_objs[#beacon_objs + 1] = { actor = o, cat = c.name }
+                        -- (h: the shim's check that this memory still holds the object,
+                        -- for anything that touches it later besides its position)
+                        beacon_objs[#beacon_objs + 1] = { actor = o, cat = c.name, h = M.handle(o) }
                     end
                 end
             end
@@ -12528,12 +12550,20 @@ end
 
 -- Nearest kept (talkable) NPC to the player within maxd units, same level. Exploring
 -- only (reads actor positions).
+-- NOT while the radar's rescan is pending, and only entries whose memory still holds
+-- that object (M.handle_ok): CRASH 2026-11-23, walking out of the cathedral in
+-- Flammhuld. In the first pump in the new area the hint (M.interact_poll, path actions
+-- listed, nobody picked) asked for the nearest person; beacon_objs still held the
+-- cathedral's people, freed with it, and one's old position lay within 250 of where you
+-- came out. Its NPCLabel was read (M.npc_wiring -> M.npc_rec): access violation in UE4SS's
+-- FindProperty (the object's class pointer was 0x0000000c00000000), past any pcall.
 M.nearest_npc = function(maxd)
+    if beacon_rescan_at then return nil end
     local p = get_player_obj(); if not p then return nil end
     local px, py, pz = read_actor_pos(p); if not px then return nil end
     local best, bd = nil, maxd or 250
     for _, b in ipairs(beacon_objs) do
-        if b.cat == "npc" then
+        if b.cat == "npc" and M.handle_ok(b.h) then
             local ox, oy, oz = read_actor_pos(b.actor)
             if ox and math.abs((oz or pz) - pz) <= LEVEL_THRESH then
                 local d = math.sqrt((ox - px) ^ 2 + (oy - py) ^ 2)

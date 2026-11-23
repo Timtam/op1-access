@@ -191,3 +191,7 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   closing it) or let the radar and menus go silent: the mod's speech and sound part
   upset UE4SS's Lua lock, and UE4SS ran parts of the mod on two threads at once. With
   UE4SS 4.0.0 the mod does all its work on the game's main thread.
+- A crash right after walking through an exit (out of Flammhuld's cathedral) is fixed:
+  in the first moment in the new area, the path-action hint looked for the nearest
+  person in the radar's list of the area just left, whose people the game had already
+  removed. That list is no longer touched until the radar has taken in the new area.
