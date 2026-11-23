@@ -7112,6 +7112,16 @@ M.level_id = function()
     return id
 end
 
+-- Which map you are on, for what is remembered per place (unreachable targets, the
+-- background checks, a route cut short): the level AND the area banner. The banner alone
+-- outlived a fast travel (no banner came, 2026-11-23). In a fade (no level read) the last
+-- level known: a route cut short by a battle's transition still walks on after it.
+M.map_id = function()
+    local lv = M.level_id()
+    if lv then M.map_lv = lv else lv = M.map_lv end
+    return tostring(lv or "?") .. "|" .. tostring(M.area_said)
+end
+
 -- Every FindAllOf walks all objects: 45-80 ms on the game thread. A category press did
 -- one or two (its class, and the house doors for "inside a building"), the marker
 -- category three or four (people, chests, exits, events), and the radar's rescan after
@@ -8285,10 +8295,18 @@ end
 -- the trigger on its floor within 1500 (an event param naming the shop label wins).
 -- Hidden ones count: a house's people are hidden until you go in. One FindAllOf per
 -- area (keepers are cached; their positions are read fresh).
+-- STALE KEEPERS (user 2026-11-23: the walk to the Wirtshaus in Pflastersten ended at the
+-- captain of the guard). The list was kept per area banner, and after a fast travel no
+-- banner came: the keepers of the town before were used -- Atlasdam's barkeep
+-- (SC_SYS_BA0_PLL000), whose actor the game had freed and whose memory now held the
+-- captain. Now the list goes with the people list it was made from (M.find_all searches
+-- that again for a new level, after a scene or a transition, and as soon as one of its
+-- objects is gone), and each keeper keeps a handle, checked before it is used.
 NV.keepers = function()
-    if NV.kp_area == M.area_said and NV.kp_list then return NV.kp_list end
+    local people = M.find_all("KSFieldNPCCharacter_C", 600)
+    if NV.kp_src == people and NV.kp_list then return NV.kp_list end
     local out = {}
-    for _, o in ipairs(M.find_all("KSFieldNPCCharacter_C", 600)) do
+    for _, o in ipairs(people) do
         local okv = false
         pcall(function() okv = o:IsValid() end)
         if okv then
@@ -8309,11 +8327,11 @@ NV.keepers = function()
                     end
                 end
             end)
-            if kind then out[#out + 1] = { actor = o, kind = kind, params = params } end
+            if kind then out[#out + 1] = { actor = o, kind = kind, params = params, h = M.handle(o) } end
         end
     end
-    log(string.format("SHOPKEEPERS %d in %s", #out, tostring(M.area_said)))
-    NV.kp_list, NV.kp_area = out, M.area_said
+    log(string.format("SHOPKEEPERS %d in %s (level %s)", #out, tostring(M.area_said), tostring(M.level_id())))
+    NV.kp_list, NV.kp_src = out, people
     return out
 end
 NV.shop_keeper = function(trig)
@@ -8328,8 +8346,8 @@ NV.shop_keeper = function(trig)
     local want = (okt and stype == 4) and "^SC_SYS_BA" or "^SC_SYS_SH"
     local best, bd = nil, 1500
     for _, k in ipairs(NV.keepers()) do
-        local okv = false
-        pcall(function() okv = k.actor:IsValid() end)
+        local okv = M.handle_ok(k.h)   -- (the shim's check first: IsValid on freed memory faults)
+        if okv then pcall(function() okv = k.actor:IsValid() end) end
         if okv and k.kind:find(want) then
             local x, y, z = read_actor_pos(k.actor)
             if x and math.abs((z or tz) - tz) < 300 then
@@ -8519,7 +8537,7 @@ end
 -- first", the player) must also be on the inner side of the doorway plane, when that
 -- plane is clear (box offset >= 3 from the door actor).
 -- Returns door, how -- or nil. Room boxes are cached per door until the area changes.
-M.house_cache, M.plane_cache, M.house_cache_area = {}, {}, nil
+M.house_cache, M.plane_cache, M.house_cache_src = {}, {}, nil
 -- The room box of a door: its Actor_Room actor positions (min/max and mean), or false
 -- (cached per door).
 M.house_box = function(door, daddr, dx, dy)
@@ -8702,11 +8720,14 @@ end
 -- room box alone decides which: an L-shaped house reaches past its doorway plane), nil =
 -- unknown (the box and the plane as before).
 M.house_door_for = function(tx, ty, tz, px, py, pz, dolog, allow_plane, tin)
-    if M.house_cache_area ~= M.area_said then
-        M.house_cache, M.plane_cache, M.house_cache_area = {}, {}, M.area_said
-    end
     local list = M.find_all("HouseEnterTriggerBP_C", 600)
     if not list then return nil end
+    -- (the room boxes and doorway planes, cached per door address, go with the door list
+    -- they were read from: kept per area banner they outlived a fast travel, 2026-11-23 --
+    -- doors of the next town at the same addresses got the old ones' rooms)
+    if M.house_cache_src ~= list then
+        M.house_cache, M.plane_cache, M.house_cache_src = {}, {}, list
+    end
     local cands = {}                    -- the houses that may hold the target
     local mine, mined = nil, 1e9        -- the house the PLAYER is in (nearest such door)
     for _, door in pairs(list) do
@@ -8811,7 +8832,7 @@ NV.noroute = {}
 NV.is_noroute = function(key, px, py)
     local r = key and NV.noroute[key]
     if not r then return false end
-    if r.area ~= M.area_said then return false end
+    if r.area ~= M.map_id() then return false end
     return math.sqrt((px - r.x) ^ 2 + (py - r.y) ^ 2) < 600
 end
 
@@ -9365,7 +9386,7 @@ local function nav_route_finish(goalnode)
                         okd, door = pcall(M.house_door_for, g.x, g.y, g.z, R.px, R.py, R.pz, true, true, g.tin)
                     end
                     if okd and door then dx, dy, dz = read_actor_pos(door) end
-                    NV.noroute[g.key] = { x = R.px, y = R.py, area = M.area_said, door = dx and door or nil }
+                    NV.noroute[g.key] = { x = R.px, y = R.py, area = M.map_id(), door = dx and door or nil }
                     if dx and math.sqrt((dx - R.px) ^ 2 + (dy - R.py) ^ 2) > NV.ATDOOR and NV.route_begin then
                         NV.goal = { x = dx, y = dy, z = dz or R.pz, cat = "door", key = g.key }
                         speak(tr("Probably inside a building. Routing to its door"))
@@ -9501,13 +9522,13 @@ end
 -- a readable doorway plane. A shut door is a wall to the traces, so rooms behind rooms
 -- (the academy's upper doors) were "not reachable" (2026-11-14). Cached per area.
 M.door_list = function()
-    if M.house_cache_area ~= M.area_said then
-        M.house_cache, M.plane_cache, M.house_cache_area = {}, {}, M.area_said
+    local list = M.find_all("HouseEnterTriggerBP_C", 600)
+    if M.house_cache_src ~= list then
+        M.house_cache, M.plane_cache, M.house_cache_src = {}, {}, list
     end
-    if M.door_list_area == M.area_said and M.door_list_cache then return M.door_list_cache end
+    if M.door_list_src == list and M.door_list_cache then return M.door_list_cache end
     local out = {}
     pcall(function()
-        local list = M.find_all("HouseEnterTriggerBP_C", 600)
         if not list then return end
         for _, door in pairs(list) do
             local okv = false
@@ -9527,7 +9548,7 @@ M.door_list = function()
             end
         end
     end)
-    M.door_list_cache, M.door_list_area = out, M.area_said
+    M.door_list_cache, M.door_list_src = out, list
     return out
 end
 
@@ -10960,7 +10981,7 @@ NV.route_begin = nav_route_begin   -- for nav_route_finish (defined above it)
 NV.reach, NV.bgq, NV.bg = {}, {}, nil
 NV.bg_valid = function(key, px, py)
     local r = key and NV.reach[key]
-    if not r or r.area ~= M.area_said then return nil end
+    if not r or r.area ~= M.map_id() then return nil end
     if math.sqrt((px - r.x) ^ 2 + (py - r.y) ^ 2) >= 600 then return nil end
     return r.ok
 end
@@ -11039,7 +11060,7 @@ NV.bg_new = function(t, p, px, py, pz)
     local key = NV.tkey(t)
     if not key or NV.bg_valid(key, px, py) ~= nil or NV.is_noroute(key, px, py) then return nil end
     local job = { key = key, cat = t.cat, name = t.name, tx = tx, ty = ty, tz = tz,
-                  px = px, py = py, pz = pz, area = M.area_said, t = t }
+                  px = px, py = py, pz = pz, area = M.map_id(), t = t }
     if t.cat ~= "building" then
         -- behind a door: the walk leads there via the door. Standing just outside the
         -- target's door, its shut door failed the search: Russell "not reachable" at the
@@ -11082,7 +11103,7 @@ end
 NV.bg_step = function()      -- nav_tick, only while no walk or route runs
     if nav_walking or NV.route or world_susp or M.explore_now == false or M.menu_now then return end
     local job = NV.bg
-    if job and job.area ~= M.area_said then NV.bg, NV.bgq, job = nil, {}, nil end   -- area changed
+    if job and job.area ~= M.map_id() then NV.bg, NV.bgq, job = nil, {}, nil end   -- area changed
     if not job then
         if #NV.bgq == 0 then return end
         local p = get_player_obj(); if not p then return end
@@ -11701,7 +11722,7 @@ NV.resume_index = function(path, wp, px, py)
 end
 NV.resume_paused = function(pr, key, cat, ox, oy, px, py)
     local g = pr.goal
-    if not (g and key and g.key == key) or pr.area ~= M.area_said or os.clock() - pr.t > 900 then return false end
+    if not (g and key and g.key == key) or pr.area ~= M.map_id() or os.clock() - pr.t > 900 then return false end
     -- the target itself was the goal (not a door on the way): still where it was?
     if g.cat == cat and math.sqrt((g.x - ox) ^ 2 + (g.y - oy) ^ 2) > 100 then return false end
     local i, d = NV.resume_index(pr.path, pr.wp, px, py)
@@ -11862,7 +11883,7 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
             -- Backspace (NV.resume_paused). Only values here -- no actor reads while the
             -- battle's transition may be tearing the field down.
             if waswalking and path and wp and NV.goal and not (into_exit or into_event) then
-                NV.paused = { path = path, wp = wp, goal = NV.goal, area = M.area_said, t = os.clock() }
+                NV.paused = { path = path, wp = wp, goal = NV.goal, area = M.map_id(), t = os.clock() }
             end
             if waswalking and not (into_exit or into_event) then speak(tr("Walk stopped")) end
             if into_exit then log("NAVWALK through exit") end
