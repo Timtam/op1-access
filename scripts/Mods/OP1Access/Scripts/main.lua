@@ -11106,10 +11106,19 @@ end
 -- clear line from there to just short of it at waist height (the capsule's own trace,
 -- so ledges and invisible walls count), nearest to you, not where you stand and not
 -- tried before. nil: none.
+-- With a person picked at the item (ia.avoid: E went to them, not to the item), not where
+-- they would stand nearly square in front of you as you face the item -- within 20
+-- degrees, closer than 220: the game picks a person only then (Mercedes: 26 to the side
+-- at 161 picked, 48 at 166 -- 16 degrees -- not) -- nor right beside them. When every
+-- side has them in front (a villager lying right by a hidden item, 2026-11-23: "no other
+-- side found" each time), the side where they stand farthest off your line of sight
+-- (second value true). Third value, with none at all: why, for the log.
 NV.item_spot = function(ia, p, px, py)
     local ksl = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
     if not (ksl and p and px) then return nil end
     local best, bestd = nil, 1e9
+    local alt, altc = nil, 2
+    local nn = { tried = 0, near = 0, ground = 0, line = 0 }
     for k = 0, 7 do
         local ang = k * math.pi / 4
         for _, r in ipairs({ 90, 130 }) do
@@ -11119,17 +11128,21 @@ NV.item_spot = function(ia, p, px, py)
             for _, s in ipairs(ia.spots) do
                 if math.sqrt((cx - s.x) ^ 2 + (cy - s.y) ^ 2) < 60 then fresh = false end
             end
-            -- (not where E would reach a person instead -- ia.avoid, the one the game picked
-            -- at the item: facing the item from here, they would stand within 30 degrees in
-            -- front of you, closer than 220 -- the game picks a person only nearly square in
-            -- front (Mercedes: 26 to the side at 161 yes, 48 no) -- nor right beside them)
+            if not fresh then nn.tried = nn.tried + 1 end
+            local fc   -- (the person nearly square in front here: the cosine)
             if fresh and ia.avoid then
                 local fx, fy = ia.x - cx, ia.y - cy
                 local nx, ny = ia.avoid.x - cx, ia.avoid.y - cy
                 local fl, nl = math.sqrt(fx * fx + fy * fy), math.sqrt(nx * nx + ny * ny)
-                if nl < 90 or (nl < 220 and fl > 1 and (fx * nx + fy * ny) / (fl * nl) > 0.87) then fresh = false end
+                if nl < 70 then
+                    fresh = false
+                    nn.near = nn.near + 1
+                elseif nl < 220 and fl > 1 then
+                    local c = (fx * nx + fy * ny) / (fl * nl)
+                    if c > 0.94 then fc = c end
+                end
             end
-            if fresh and d < bestd then
+            if fresh and (fc or d < bestd) then
                 local ok, hit, oh = line_blocked(ksl, p, cx, cy, ia.z + 160, cx, cy, ia.z - 200)
                 local gz
                 if ok and hit then
@@ -11140,12 +11153,26 @@ NV.item_spot = function(ia, p, px, py)
                 if gz and math.abs(gz - ia.z) < 120 then
                     local ex, ey = ia.x + (cx - ia.x) / r * 30, ia.y + (cy - ia.y) / r * 30
                     local ok2, hit2 = line_blocked(ksl, p, cx, cy, gz + 50, ex, ey, gz + 50, NV_TRACE)
-                    if ok2 and not hit2 then best, bestd = { x = cx, y = cy, z = gz + 90 }, d end
+                    if ok2 and not hit2 then
+                        local spot = { x = cx, y = cy, z = gz + 90 }
+                        if fc then
+                            if fc < altc then alt, altc = spot, fc end
+                        else
+                            best, bestd = spot, d
+                        end
+                    else
+                        nn.line = nn.line + 1
+                    end
+                else
+                    nn.ground = nn.ground + 1
                 end
             end
         end
     end
-    return best
+    if best then return best, false end
+    if alt then return alt, true end
+    return nil, false, string.format("tried %d, by the person %d, no ground %d, line blocked %d",
+        nn.tried, nn.near, nn.ground, nn.line)
 end
 
 -- Another spot to talk to a person from (NV.approach, after the steps there got no pick;
@@ -12084,11 +12111,12 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
             pcall(NV.face_goal, 2)            -- one more step toward it
         elseif ia.tries <= 3 then
             ia.tries = ia.tries + 1
-            local oks, spot = pcall(NV.item_spot, ia, p, px, py)
+            local oks, spot, relaxed, why = pcall(NV.item_spot, ia, p, px, py)
             if oks and spot then
                 ia.spots[#ia.spots + 1] = spot
                 ia.next = os.clock() + 1.0
-                log(string.format("NAVWALK item: no prompt at (%.0f,%.0f), trying (%.0f,%.0f)", px, py, spot.x, spot.y))
+                log(string.format("NAVWALK item: no prompt at (%.0f,%.0f), trying (%.0f,%.0f)%s", px, py, spot.x, spot.y,
+                    relaxed and " (every side has the person ahead: the one most off the line)" or ""))
                 speak(who and trf("Here E goes to %s, trying another side", who) or tr("No prompt here, trying another side"))
                 NV.goal = { x = spot.x, y = spot.y, z = spot.z, cat = "spot", key = NV.goal and NV.goal.key,
                     face = { x = ia.x, y = ia.y } }
@@ -12096,6 +12124,11 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
                 nav_route_begin("walk", spot.x, spot.y, spot.z)
             else
                 if not oks then log("NAVWALK item spot error: " .. tostring(spot)) end
+                if oks then
+                    log(string.format("NAVWALK item: no side at item (%.0f,%.0f)%s: %s", ia.x, ia.y,
+                        ia.avoid and string.format(", person at (%.0f,%.0f)", ia.avoid.x, ia.avoid.y) or "",
+                        tostring(why)))
+                end
                 speak(who and trf("Here E goes to %s, and no other side found", who)
                     or tr("No prompt here, and no other side found"))
                 NV.iapproach = nil
