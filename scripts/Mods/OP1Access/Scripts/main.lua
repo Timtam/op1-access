@@ -9292,7 +9292,7 @@ local function nav_route_finish(goalnode)
                 local g = NV.goal
                 if g and g.samehouse then
                     -- at (or in) the target's house: the shut door blocked the search
-                    speak(tr("The door is shut. Open it with E, then backspace again"))
+                    speak(tr("The door is shut. Open it with Enter, then backspace again"))
                     return
                 end
                 if (NV.retries or 0) > 0 or boxed then
@@ -11613,7 +11613,7 @@ NV.door_auto_step = function()
             if d.tries >= 2 then
                 log("DOORAUTO no luck")
                 NV.door_auto = nil
-                speak(tr("The door doesn't open. Press E yourself, then backspace again"))
+                speak(tr("The door doesn't open. Press Enter yourself, then backspace again"))
             else
                 d.phase = "press"
             end
@@ -11986,7 +11986,7 @@ nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arro
                 nav_walk_stop()   -- silent: the prompt speech says what to do
                 if NV.door_auto_start() then return end   -- the walker opens it itself
                 -- a prompt that was up before the walk wasn't spoken now: say it again
-                if NV.prompt_at_start then speak(trf("Still shut. %s, then backspace again", M.popup_text or tr("press E")))
+                if NV.prompt_at_start then speak(trf("Still shut. %s, then backspace again", M.popup_text or tr("press Enter")))
                 elseif gcat == "door" then speak(tr("then backspace again"), false) end
                 return
             end
@@ -12122,7 +12122,7 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
                 -- ...unless the prompt was up already when the walk began: the door is
                 -- still shut (an E press that didn't take) -- the walk ended without a
                 -- word after "Walking, total 161" (2026-11-14). Say the prompt again.
-                if NV.prompt_at_start then speak(trf("Still shut. %s", M.popup_text or tr("press E"))) end
+                if NV.prompt_at_start then speak(trf("Still shut. %s", M.popup_text or tr("press Enter"))) end
                 return
             end
         elseif NV.goal.cat == "through" then
@@ -12143,7 +12143,7 @@ local function nav_walk_watch()   -- cancel/stuck/door supervision while walking
                 nav_walk_stop()
                 if NV.door_auto_start() then return end   -- the walker opens it itself
                 if NV.prompt_at_start then
-                    speak(trf("Still shut. %s, then backspace again", M.popup_text or tr("press E")))
+                    speak(trf("Still shut. %s, then backspace again", M.popup_text or tr("press Enter")))
                 else
                     speak(tr("then backspace again"), false)
                 end
@@ -12408,7 +12408,7 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
                     relaxed and " (every side has the person ahead: the one most off the line)" or ""))
                 -- (after a side no route reached, NV.spot_failed: that, not "no prompt here")
                 speak((ia.noroute and tr("That side can't be reached, trying another side"))
-                    or (who and trf("Here E goes to %s, trying another side", who)) or tr("No prompt here, trying another side"))
+                    or (who and trf("Here Enter goes to %s, trying another side", who)) or tr("No prompt here, trying another side"))
                 ia.noroute = nil
                 NV.goal = { x = spot.x, y = spot.y, z = spot.z, cat = "spot", key = NV.goal and NV.goal.key,
                     face = { x = ia.x, y = ia.y } }
@@ -12423,14 +12423,14 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
                 end
                 speak((ia.swoon and M.swoon_text(ia.tname or tr("Someone"), ia.swoon))
                     or (ia.noroute and tr("That side can't be reached, and no other side found"))
-                    or (who and trf("Here E goes to %s, and no other side found", who))
+                    or (who and trf("Here Enter goes to %s, and no other side found", who))
                     or tr("No prompt here, and no other side found"))
                 NV.iapproach = nil
             end
         else
             speak((ia.swoon and M.swoon_text(ia.tname or tr("Someone"), ia.swoon))
                 or (ia.noroute and tr("That side can't be reached, and no other side found"))
-                or (who and trf("Here E goes to %s, not to the item", who)) or tr("No prompt at this item"))
+                or (who and trf("Here Enter goes to %s, not to the item", who)) or tr("No prompt at this item"))
             NV.iapproach = nil
         end
     end
@@ -12906,7 +12906,10 @@ M.poll_action_popup = function()
     local sig = action .. "|" .. (key or "") .. (taddr and string.format("|%X", taddr) or "")
     if sig == M.popup_said then return end
     M.popup_said = sig
-    local text = key and (action .. ", " .. key) or action
+    -- ENTER, not E (user 2026-11-23): Enter does the same as the game's E -- open, talk,
+    -- examine -- and is the key screen reader users reach for: "Öffnen, Eingabe". Another
+    -- key the prompt may show is said as it is.
+    local text = key and (action .. ", " .. ((key == "E") and tr("Enter") or key)) or action
     if tname then text = trf("%s: %s", tname, text) end
     M.popup_text = text   -- as spoken ("Still shut. ...")
     log("PROMPT: " .. sig .. (tcls and (" " .. tcls) or ""))
