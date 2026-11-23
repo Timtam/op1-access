@@ -37,6 +37,22 @@ a worktree.
 `BuildInfo` class with `Version` and `RepositorySlug` for the installer. The CI passes
 `-p:RepositorySlug=<owner/name>`; local builds have none.
 
+The installer's Static Forms key for problem reports comes from the environment variable
+`OP1_STATICFORMS_KEY` at build time, never from a file of the repository: set it on your own
+computer (user environment variables) to build with it; the release workflow sets it from the
+repository secret `STATICFORMS_KEY`. `OP1AccessInstaller.csproj` writes it, scrambled, into
+`obj\...\ReportKey.g.cs` (ignored by git, like any `ReportKey.g.cs`); the build log only says
+"Problem reports: form key built in" or "no form key". Without it the report function is off:
+the installer's button is greyed out with a line saying why, `--report` says so in a message box,
+and `package.ps1` writes `report = false` into `buildinfo.lua`, so the mod's F1 says so too.
+
+Tests: `build-shim.cmd` also links a `lua.exe` and runs `tests\lua\*.lua` (parts of `main.lua`
+loaded on their own with stubs); `build-release.ps1` builds and runs
+`installer\OP1AccessInstaller.Tests` (a console program: the ALTCHA solver, the Static Forms
+client against a stand-in server on 127.0.0.1, cleaning and packing of the attachments). Run in
+the same environment as the build, its key test checks that the built-in key matches
+`OP1_STATICFORMS_KEY` and is not readable as plain text in the EXE (it never prints the key).
+
 ## Game data the mod ships
 
 `Scripts/worldlinks.lua` holds which area leads where, for the world map's route finder:
@@ -126,6 +142,40 @@ game has ended (the *Close game* button helps), installs, and starts the game wi
 `steam://rungameid/921570`. If something fails, it asks whether to start the game anyway. Without
 the installer, the mod opens the release page.
 
+Problem reports: `--report` (F1 twice in the game; the installer's *Report a problem* button; the
+Start menu entry, written on installation by builds with the key) opens `ReportForm`: a
+description, an optional e-mail address (sent as `replyTo`), a checked list of attachments, a
+note on privacy, the system information that goes along (versions, Windows, languages, the speech
+backend from the session log) and *Send*. Standard controls; progress in a live region.
+
+- Attachments (`ProblemReport.Collect`): `ue4ss\UE4SS.log` (readable while the game runs:
+  `FileShare.ReadWrite`), the mod's `logs\session-1..3.log`, `%TEMP%\OP1AccessInstaller.log` (a
+  report run adds to it instead of starting it over), and the game's crash reports
+  (`Documents\My Games\Octopath_Traveler\Crashes\UE4CC-Windows-*\UE4Minidump.dmp` with
+  `CrashContext.runtime-xml`) newer than `logs\last-report.txt` (else of the last 14 days), the
+  newest three, not checked at first. UE4SS's own `Win64\crash_*.dmp` (about 25 MB) are left out.
+- Cleaning (`Scrubber`): profile paths `X:\Users\<name>` in every spelling, the user name and the
+  computer name as words, Steam IDs (17 digits starting with 7656119) and the crash context's
+  `MachineId`, `LoginId`, `EpicAccountId` and `UserName`. Dumps can't be cleaned.
+- Packing (`ProblemReport.Build`): `report.txt` (everything of the report) and the attachments in
+  one ZIP of at most 4,000,000 bytes (Static Forms takes 4.5 MB per submission). A long log keeps
+  its first 128 KB and as much of its end as fits (from 6 MB down to 160 KB, with a note where
+  lines are missing); then the oldest attachments are left out, and the report says which.
+- Sending (`StaticFormsClient`): the challenge from
+  `https://www.staticforms.dev/api/altcha/challenge?apiKey=<key>` (10 a minute per key), solved by
+  `Altcha` (classic ALTCHA, as the ALTCHA widget 2.x on Static Forms' page: the number n up to
+  `maxnumber` with hex(SHA-256(salt + n)) = `challenge`, on all cores, about half a second for a
+  million), then `multipart/form-data` to `https://api.staticforms.dev/submit` with `apiKey`,
+  `subject`, `message`, `replyTo`, `system`, `attachments`, `altchaToken` (base64 of
+  `{"algorithm","challenge","number","salt","signature","took"}`) and the ZIP as `report`, with
+  `Accept: application/json`. Errors come as `{"error": ...}`: 400 refused, 401 wrong key, 403
+  spam protection or domain restriction (keep the form's domain restriction off: a desktop
+  program sends no Origin), 413 too large, 429 too many (20 a minute, 100 an hour on the Pro
+  plan). A form without ALTCHA gets the report without a token. Newer ALTCHA challenges (key
+  derivation, `parameters`) are refused with a clear message.
+- After sending, `logs\last-report.txt` holds the time, so the next report offers only newer
+  crashes. The installer keeps the `logs` folder on updates.
+
 Command line:
 
 | Option | Meaning |
@@ -134,6 +184,7 @@ Command line:
 | `--zip <file>` | Install this package instead of the release download |
 | `--lang de\|en` | Language of the installer (default: Windows display language) |
 | `--update [--restart]` | Update window as started by the mod; `--restart` starts the game afterwards |
+| `--report` | The *Report a problem* window (the mod starts it with F1 twice, the Start menu entry too) |
 | `--uninstall` | Uninstall with two questions (mod, UE4SS), used by Installed apps |
 | `--silent --install` / `--uninstall` / `--detect` / `--check` | Without a window, output on stdout |
 | `--remove-ue4ss`, `--replace-ue4ss` | Answers for `--silent` |
@@ -149,6 +200,10 @@ Testing without the game: make a folder with an empty `Octopath_Traveler.exe` an
 `--silent --install --game <folder> --zip dist\OP1Access-<version>.zip --no-registry`, then
 `--detect`, `--uninstall` and `--uninstall --remove-ue4ss`. The window itself (focus, live region
 announcements, message boxes) needs a person with a screen reader to test it.
+
+A real report needs the key and lands in the developer's mailbox: send one only on purpose. The
+tests cover the client without it; the window itself (focus, live region, message boxes) needs a
+person with a screen reader.
 
 The mod's side of the update can be tested without the game, too: build a `lua.exe` from the LuaRaw
 sources, load the shim with `package.loadlib` and run the `Updates` section of `main.lua` with stub

@@ -116,13 +116,28 @@ New-Item -ItemType Directory -Force -Path (Join-Path $mod 'Scripts\lang') | Out-
 Copy-Item -Path (Join-Path $source 'Scripts\lang\*.po'), (Join-Path $source 'Scripts\lang\*.pot') -Destination (Join-Path $mod 'Scripts\lang')
 Copy-Item -LiteralPath $shim -Destination (Join-Path $mod 'Scripts')
 Copy-Item -LiteralPath (Join-Path $source 'Assets') -Destination (Join-Path $mod 'Assets') -Recurse
+# Problem reports (F1 twice) need the installer built with the Static Forms key; build-release.ps1
+# builds it in this same environment. Without it, the mod's F1 says reports are not available.
+$report = if ($env:OP1_STATICFORMS_KEY) { 'true' } else { 'false' }
+Write-Host "Problem reports: $(if ($env:OP1_STATICFORMS_KEY) { 'on (form key set)' } else { 'off (OP1_STATICFORMS_KEY not set)' })"
 $buildInfo = @"
 -- Written by scripts/package.ps1 for a release. Development copies have no such file and so
 -- check for no updates.
-return { version = "$version", repo = "$RepositorySlug", ue4ss = "$ue4ssVersion" }
+return { version = "$version", repo = "$RepositorySlug", ue4ss = "$ue4ssVersion", report = $report }
 "@
 [System.IO.File]::WriteAllText((Join-Path $mod 'Scripts\buildinfo.lua'), $buildInfo.Replace("`r`n", "`n") + "`n", $utf8)
 Copy-Item -LiteralPath $installer -Destination $mod
+
+# The mod writes its session logs into logs\ (Lua can't make folders, so the folder comes along).
+New-Item -ItemType Directory -Force -Path (Join-Path $mod 'logs') | Out-Null
+$logsReadme = @"
+OP1 Access keeps the logs of the last three game sessions here: session-1.log is the newest
+(the running or the last session), session-3.log the oldest. They stay on your computer. They
+are only sent when you send a problem report (F1 twice in the game, or "Report a problem" in
+the installer), and then without your Windows user name, computer name and Steam ID.
+last-report.txt says when the last report was sent.
+"@
+[System.IO.File]::WriteAllText((Join-Path $mod 'logs\README.txt'), ($logsReadme -replace "`r?`n", "`r`n") + "`r`n", $utf8)
 
 # Licenses.
 $licenses = Join-Path $mod 'licenses'

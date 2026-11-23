@@ -31,7 +31,16 @@ $env:OP1_TOOLS = $Tools
 & cmd /c "`"$(Join-Path $PSScriptRoot 'build-shim.cmd')`" --no-deploy"
 if ($LASTEXITCODE -ne 0) { throw 'Building the shim failed' }
 
+# The installer gets the Static Forms key for problem reports from OP1_STATICFORMS_KEY (the release
+# workflow sets it from the repository secret STATICFORMS_KEY); without it, reports are off.
 dotnet build (Join-Path $root 'installer\OP1AccessInstaller\OP1AccessInstaller.csproj') -c $Configuration -nologo "-p:RepositorySlug=$RepositorySlug"
 if ($LASTEXITCODE -ne 0) { throw 'Building the installer failed' }
+
+# The installer's tests: the ALTCHA solver, the Static Forms client against a local stand-in,
+# cleaning and packing of the report's attachments.
+dotnet build (Join-Path $root 'installer\OP1AccessInstaller.Tests\OP1AccessInstaller.Tests.csproj') -c $Configuration -nologo "-p:RepositorySlug=$RepositorySlug"
+if ($LASTEXITCODE -ne 0) { throw 'Building the installer tests failed' }
+& (Join-Path $root "installer\OP1AccessInstaller.Tests\bin\$Configuration\net48\OP1AccessInstaller.Tests.exe")
+if ($LASTEXITCODE -ne 0) { throw 'The installer tests failed' }
 
 & (Join-Path $PSScriptRoot 'package.ps1') -Configuration $Configuration -RepositorySlug $RepositorySlug -Tools $Tools

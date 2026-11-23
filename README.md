@@ -75,6 +75,32 @@ the ZIP put it; without it, F5 opens the download page instead. You can also run
 the installer again at any time; it updates the mod and itself. The check sends
 one request to the GitHub API and nothing else.
 
+## Reporting a problem
+
+Press **F1 twice** in the game. A window opens beside the game, which keeps
+running: describe what happened, add your e-mail address if you want an answer,
+and choose what to attach. The same window opens from the installer (*Report a
+problem*) and from the Start menu entry *OP1 Access – Problem melden* (*OP1 Access -
+Report a problem*), for when the game does not start at all. It is a normal Windows
+window that screen readers read on their own; Tab moves through it.
+
+What can go along:
+
+- the mod's logs of the last three game sessions. The mod keeps them in
+  `ue4ss\Mods\OP1Access\logs` (`session-1.log` is the newest), because UE4SS empties
+  its own log at every start, so after a crash the crashed session's log would be
+  gone;
+- `UE4SS.log` of the current or last session, and the installer's log;
+- the game's crash dumps (from `Documents\My Games\Octopath_Traveler\Crashes`), the
+  ones since the last report. They are not chosen at first: a dump holds part of the
+  game's memory and can't be cleaned.
+
+Before sending, your Windows user name, computer name and Steam ID are replaced in
+the logs. Everything goes into one ZIP of at most 4 MB (long logs keep their start and
+end), and the report goes by e-mail to the developer through the form service
+[Static Forms](https://www.staticforms.dev), protected against spam by ALTCHA (the
+window solves its puzzle on its own). Nothing is sent unless you press *Send*.
+
 ## Uninstalling
 
 Open *Installed apps* in the Windows settings and uninstall *OP1 Access*, or
@@ -101,6 +127,7 @@ talk, **E** to open doors and chests and to examine, **J** for the path-action m
 | **Ctrl + F10** | Say the screen you are on |
 | **Ctrl + F7** | Sound test, press repeatedly: a tone on your right, left, in front and behind you, the same placed on the map around your character, the wall bump, then off — to check your headphones |
 | **F5** | Check for an update; press twice to install it |
+| **F1** | Report a problem: press twice to open the report window beside the game |
 
 ### Exploring
 

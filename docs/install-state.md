@@ -26,8 +26,14 @@ ue4ss/
       Scripts/OP1AccessShim.dll        ← speech (Prism), Steam Audio radar, native hooks
       Scripts/lang/*.po, op1access.pot ← the mod's own texts in other languages
       Assets/                          ← radar sounds (your own ones stay on updates)
+      logs/                            ← session-1..3.log (the last three game sessions),
+                                         last-report.txt; kept on updates
       OP1AccessInstaller.exe, README.txt, LICENSE.txt, THIRD-PARTY-NOTICES.txt, licenses/
 ```
+
+With a build that has the Static Forms key, the installer also writes the Start menu entry
+*OP1 Access – Problem melden* (*OP1 Access - Report a problem*), in the user's own Start menu
+programs folder; uninstalling removes it.
 
 The mod finds its own folder from `main.lua`'s path (`M.MOD_DIR`). It needs UE4SS 4.0.0 or
 newer (its game-thread timers); with an older UE4SS it logs that and doesn't start.
@@ -39,6 +45,8 @@ scripts/Mods/OP1Access/        the mod (Scripts/main.lua, worldlinks.lua, lang/,
 src/                           the shim (Shim.cpp, Speech.cpp, SpatialAudio.cpp)
 installer/OP1AccessInstaller/  the installer (.NET Framework 4.8, WinForms)
 scripts/                       build, package and data scripts
+tests/lua/                     unit tests of main.lua parts (build-shim.cmd runs them)
+installer/OP1AccessInstaller.Tests/  the installer's tests (build-release.ps1 runs them)
 tools/                         pinned dependencies (gitignored; scripts/fetch-deps.ps1)
 ```
 

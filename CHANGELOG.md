@@ -196,6 +196,22 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   off; OP1 Access doesn't need them. On updates, sounds you put into `Assets` stay.
 - Update notices in the game; F5 twice installs an update.
 
+### Problem reports
+
+- F1 twice opens a window to report a problem, beside the game, which keeps running; the
+  installer has a *Report a problem* button and the Start menu an entry *OP1 Access – Problem
+  melden*, for when the game does not start at all. A normal Windows window that screen readers
+  read on their own: what happened, an e-mail address for questions (optional), and the files
+  to attach.
+- It attaches the mod's logs of the last three game sessions, UE4SS.log and the installer's
+  log, and on request the game's crash dumps since the last report. The mod keeps its own
+  session logs now (`ue4ss\Mods\OP1Access\logs`), written line by line so a crash loses
+  nothing, because UE4SS empties its log at every start; updates keep them.
+- Your Windows user name, computer name and Steam ID are replaced in the logs before sending;
+  crash dumps can't be cleaned and only go along when you check them. Everything goes in one
+  ZIP of at most 4 MB (long logs keep their start and end) by e-mail through Static Forms,
+  with its ALTCHA spam protection solved by the window itself.
+
 ### Stability
 
 - Two faults are fixed that could crash or freeze the game now and then (also when

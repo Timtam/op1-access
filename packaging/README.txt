@@ -13,7 +13,8 @@ Files in this folder
 - Assets: the radar sounds. You can put your own there, see Assets\README.md; the installer keeps
   them on updates.
 - OP1AccessInstaller.exe: installs, updates and removes the mod. The mod starts it when you press
-  F5 twice to install an update.
+  F5 twice to install an update, and when you press F1 twice to report a problem.
+- logs: the mod's logs of the last three game sessions, for problem reports (see logs\README.txt).
 - LICENSE.txt: the license of OP1 Access (MIT).
 - THIRD-PARTY-NOTICES.txt and the licenses folder: licenses of the software that comes with the
   mod.
@@ -38,6 +39,14 @@ geladen" when the game's text language is German).
 Updates
 The mod tells you when a new version is out. Press F5 twice to install it: the game closes, the
 installer updates the mod and starts the game again.
+
+Reporting a problem
+Press F1 twice in the game, or choose "Report a problem" in the installer or "OP1 Access - Report
+a problem" in the Start menu. Describe what happened and choose what to attach: the mod's session
+logs, UE4SS.log and, if you want, the game's crash dumps. Your Windows user name, computer name
+and Steam ID are removed from the logs first; crash dumps can't be cleaned, so they only go along
+when you check them. The report goes by e-mail to the developer through the form service Static
+Forms (staticforms.dev).
 
 Uninstalling
 Use "OP1 Access" in Installed apps, or start OP1AccessInstaller.exe and choose Uninstall. By hand:
