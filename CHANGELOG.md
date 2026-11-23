@@ -39,7 +39,8 @@ The first release. OP1 Access makes Octopath Traveler (Steam) playable with a sc
 - A 3D audio radar (Steam Audio) for chests, exits, people, buildings and shops, with a wall
   radar and bump sounds.
 - A navigator: what is around you by category, nearest first, with direction and distance,
-  opened chests, unreachable targets, where exits lead, and the minimap's markers.
+  opened chests, unreachable targets, where exits lead, the minimap's markers and where
+  optional bosses wait.
 - A walker: Backspace walks to the selected target over a computed route, through doors and
   around people, and says when a target can't be reached.
 
