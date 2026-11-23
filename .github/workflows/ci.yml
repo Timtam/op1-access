@@ -32,10 +32,14 @@ jobs:
           path: tools
           key: deps-${{ hashFiles('scripts/fetch-deps.ps1') }}
 
+      # The Static Forms key for problem reports, as in the release workflow: from the repository
+      # secret STATICFORMS_KEY, so the installer of a CI run can report problems too. (Pull
+      # requests from forks get no secrets: their builds have reports off.)
       - name: Build and package
         shell: pwsh
         env:
           REPOSITORY: ${{ github.repository }}
+          OP1_STATICFORMS_KEY: ${{ secrets.STATICFORMS_KEY }}
         run: ./scripts/build-release.ps1 -RepositorySlug $env:REPOSITORY
 
       - name: Upload the ZIP

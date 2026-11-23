@@ -39,8 +39,9 @@ a worktree.
 
 The installer's Static Forms key for problem reports comes from the environment variable
 `OP1_STATICFORMS_KEY` at build time, never from a file of the repository: set it on your own
-computer (user environment variables) to build with it; the release workflow sets it from the
-repository secret `STATICFORMS_KEY`. `OP1AccessInstaller.csproj` writes it, scrambled, into
+computer (user environment variables) to build with it; the release and CI workflows set it
+from the repository secret `STATICFORMS_KEY` (pull requests from forks get no secrets, so their
+builds have reports off). `OP1AccessInstaller.csproj` writes it, scrambled, into
 `obj\...\ReportKey.g.cs` (ignored by git, like any `ReportKey.g.cs`); the build log only says
 "Problem reports: form key built in" or "no form key". Without it the report function is off:
 the installer's button is greyed out with a line saying why, `--report` says so in a message box,
