@@ -55,6 +55,9 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   many you have, the amount to buy or sell with the total, and for weapons and armor what
   they would change for each traveler. After buying a weapon or armor and choosing to
   equip it right away, the traveler you pick it for and what it changes for them.
+  Choosing an item to buy no longer says the item above it: as the amount opened, the
+  goods list named the row over the chosen one ("Spitzer Hut" for "Runder Schild"). It
+  keeps quiet now while you pick the amount and says the item again when you go back.
 - The tavern: the keeper's menu, the equipment screen, changing the party and choosing whose
   story to continue.
 

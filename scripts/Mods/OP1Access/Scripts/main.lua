@@ -4355,6 +4355,21 @@ M.poll_menu_list = function()
             if okp and sp then extra = sp end
         end
     else
+        -- THE SHOP'S AMOUNT PICKER over its goods (user 2026-11-23: choosing an item to
+        -- buy, the item above it was said -- "Spitzer Hut" for "Runder Schild", while the
+        -- picker priced the right one). The goods list stays active under the picker
+        -- (M.poll_shop reads the picker), and as Enter opens it the goods row loses its
+        -- cursor icon: the fallback below named the row above. So the goods keep quiet
+        -- while the picker shows, and say their row again once it is gone ("W": not the
+        -- first line of a screen, M.ml_speak).
+        if scr == "shop" then
+            local pv
+            pcall(function() pv = M.wvis(owner.SelectItemNum) end)
+            if pv == 0 or pv == 3 or pv == 4 then
+                if st.said then st.said = "W" end
+                return
+            end
+        end
         local row, idx, nrow = nil, nil, 0
         pcall(function()
             w.ItemWidgetList_ActiveItems:ForEach(function(_, e)
@@ -4365,6 +4380,9 @@ M.poll_menu_list = function()
                 if not row and (v == 0 or v == 3 or v == 4) then row = r end
             end)
         end)
+        -- (not in the shop: a goods row without its cursor icon is the moment Enter opens
+        -- the picker, before the picker shows -- nothing to say then)
+        if not row and scr == "shop" then return end
         if not row then
             pcall(function()
                 w.ItemWidgetList_ActiveItems:ForEach(function(k, e) if k == cur + 1 then row = e:get() end end)
