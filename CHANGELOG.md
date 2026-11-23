@@ -5,6 +5,8 @@ turns that section into the next version and uses it as the release notes.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-23
+
 The first release. OP1 Access makes Octopath Traveler (Steam) playable with a screen reader.
 
 ### Speech
