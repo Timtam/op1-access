@@ -77,7 +77,11 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   (Challenge, Provoke, Guide, Allure, also when you swap followers), H'aanit's monsters,
   and what Scrutinize and Inquire find out.
 - A 3D radar (Steam Audio) for chests, exits, people, buildings and shops, a wall radar and
-  bump sounds. Like the game, it goes silent while another window is in front. A save
+  bump sounds. Objects are heard from three times as far as before (1500 units, about 11
+  of the walker's grid steps), quieter and pinging slower the farther they are, 6 dB
+  quieter with each doubling of the distance; walls up to 450 units, from loud right next
+  to one down to quiet, instead of only loud or very loud within 175. With more objects
+  in range than the radar's 28 voices, the nearest ones sound. Like the game, it goes silent while another window is in front. A save
   point's book is no person, also after you saved there: it is in the marker list. After
   a dialogue, a scene or a battle the radar comes back as soon as the game gives you the
   controls again, more than a second sooner than before.

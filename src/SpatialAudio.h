@@ -18,6 +18,11 @@ void SA_Shutdown(void);
 // Set the listener (player) world position. Cheap; call every frame.
 void SA_SetListener(float x, float y, float z);
 
+// Audible ranges in world units: objects fade from loud to silent over objRange, walls
+// (cueType 5) over wallRange, and the ping rate spans the same distances. Defaults 1500
+// and 450; values out of bounds are ignored.
+void SA_SetRanges(float objRange, float wallRange);
+
 // Set/update beacon source `id` (0..SA_MaxSources-1). active=0 silences it.
 // (x,y,z) is a world position; direction + distance are derived vs the listener.
 // cueType selects the per-category ping frequency (0=chest, 1=exit, 2=npc).

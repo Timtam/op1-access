@@ -7329,6 +7329,7 @@ local function audio_test_cycle()
         log("AudioInit: " .. tostring(ok) .. " status=" .. tostring(st))
         if not audio_inited then speak(trf("Audio init failed: %s", tostring(st))); return end
         if M.load_cues then M.load_cues() end   -- (declared further down)
+        if M.audio_set_ranges then M.audio_set_ranges() end
     end
     audio_test_phase = (audio_test_phase % (#AUDIO_TESTS + 1)) + 1
     pcall(function() shim.AudioTest(4) end)                          -- engine test off
@@ -7369,7 +7370,9 @@ local beacon_slotof = {}   -- stable beacon_objs index -> shim slot (declick: on
 -- shrank with crowding could hide a nearby object just because the area was busy,
 -- which breaks the distance estimation blind players rely on. HARDCAP is only a
 -- slot-safety limit (the shim has 32 source slots).
-local BEACON_RANGE   = 500      -- fixed audible radius (world units; ~500 each direction)
+-- (1500 since 2026-11-23, was 500: objects were heard only 4-5 steps away, which made
+-- finding your way hard. The shim fades them out over the same range, M.audio_set_ranges.)
+local BEACON_RANGE   = 1500     -- fixed audible radius (world units, each direction)
 local BEACON_HARDCAP = 28       -- object beacons use slots 0..27; 28..31 reserved for wall radar
 local CAT_CUE = { chest = 0, exit = 1, npc = 2, building = 3, shop = 4 }  -- category -> shim cue/freq
 
@@ -7687,7 +7690,7 @@ local function beacon_step()   -- driven by radar_pump while beacon_on
         -- Crossing stairs changes pz, so the audible set re-filters itself live.
         -- Ctrl+F8 still reports off-level objects explicitly ("below"/"above").
         local r2 = BEACON_RANGE * BEACON_RANGE
-        local inrange = {}
+        local near = {}
         for idx, o in ipairs(beacon_objs) do
             -- NO o.actor:IsValid() here: on a cached actor that the game freed/streamed
             -- out (e.g. on focus-loss) that call faults at UObjectBase::IsA, which pcall
@@ -7696,11 +7699,16 @@ local function beacon_step()   -- driven by radar_pump while beacon_on
             local ox, oy, oz = read_actor_pos(o.actor)
             if ox then
                 local dx, dy = ox - px, oy - py
-                if dx * dx + dy * dy <= r2 and math.abs((oz or pz) - pz) <= LEVEL_THRESH then
-                    inrange[idx] = { x = ox, y = oy, z = oz, cat = o.cat }
+                local d2 = dx * dx + dy * dy
+                if d2 <= r2 and math.abs((oz or pz) - pz) <= LEVEL_THRESH then
+                    near[#near + 1] = { idx = idx, d2 = d2, x = ox, y = oy, z = oz, cat = o.cat }
                 end
             end
         end
+        -- more in range than slots (the range grew to 1500): the nearest ones sound
+        table.sort(near, function(a, b) return a.d2 < b.d2 end)
+        local inrange = {}
+        for k = 1, math.min(#near, BEACON_HARDCAP) do inrange[near[k].idx] = near[k] end
         -- free slots whose object left range; remember which slots stay used
         local used = {}
         for idx, slot in pairs(beacon_slotof) do
@@ -7885,7 +7893,18 @@ local wall_on   = false
 local wall_ticks = 0
 local WALL_SLOT = { 28, 29, 30, 31 }   -- one shim source per WALL_DIRS entry
 local WALL_CUE  = 5
-local WALL_LEN  = 175   -- only detect walls within ~a few steps (avoid panorama clutter)
+-- Walls are heard within WALL_LEN, fading from loud (pressed against one) to silent at
+-- the edge; objects reach farther (BEACON_RANGE), so walls don't ping all around you.
+-- (450 since 2026-11-23, was 175: a wall was then always loud or very loud, never quiet.)
+-- The bump check still counts a direction as blocked only within 175 (WALL_BUMP_LEN): a
+-- far wall must not make arrow presses in a menu thud.
+local WALL_LEN  = 450
+local WALL_BUMP_LEN = 175
+-- The shim's fade-outs and ping rates span the same ranges (shim.AudioSetRanges); set
+-- after the audio module starts.
+M.audio_set_ranges = function()
+    if shim and shim.AudioSetRanges then pcall(shim.AudioSetRanges, BEACON_RANGE, WALL_LEN) end
+end
 local function wall_step()   -- driven by radar_pump while wall_on
     wall_ticks = wall_ticks + 1
     -- function-local (avoids the chunk's 200-local cap). One knee-height ray per
@@ -7913,10 +7932,10 @@ local function wall_step()   -- driven by radar_pump while wall_on
             local slot = WALL_SLOT[i]
             if ok and hit then
                 nblk = nblk + 1
-                wall_blocked[d.name] = true        -- shared with bump detection
                 local hd = 120
                 if type(oh) == "table" then pcall(function() if type(oh.Distance) == "number" and oh.Distance >= 1 then hd = oh.Distance end end) end
                 if hd < 30 then hd = 30 elseif hd > WALL_LEN then hd = WALL_LEN end
+                wall_blocked[d.name] = (hd <= WALL_BUMP_LEN) or nil   -- shared with bump detection
                 pcall(function() shim.AudioSetSource(slot, true, px + d.dx * hd, py + d.dy * hd, pz, WALL_CUE) end)
                 dbg[#dbg + 1] = string.format("%s%.0f", d.name:sub(1, 1), hd)
             else
@@ -14404,7 +14423,7 @@ radar_pump = function(src)
             local okA = false
             pcall(function() okA = shim.AudioInit() end)
             audio_inited = okA and true or false
-            if audio_inited then pcall(load_cues) end
+            if audio_inited then pcall(load_cues); pcall(M.audio_set_ranges) end
             log("Audio auto-init: " .. tostring(okA))
         end
         if audio_inited then

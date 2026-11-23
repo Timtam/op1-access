@@ -50,8 +50,8 @@ constexpr int    ATTACK    = (int)(0.012 * SR);  // ping attack ramp
 constexpr int    PING_FAST = (int)(0.22 * SR);   // cycle length when near (fast pings)
 constexpr int    PING_SLOW = (int)(1.50 * SR);   // cycle length when far (slow pings)
 constexpr int    CUE_MAX   = (int)(0.13 * SR);   // max ping (cue) duration
-constexpr float  PING_NEAR = 100.0f;             // distance (units) at/below which rate is fastest
-constexpr float  PING_FAR  = 2500.0f;            // distance at/above which rate is slowest
+constexpr float  PING_NEAR = 100.0f;             // distance (units) at/below which an object pings fastest
+                                                 // (slowest at the edge of its range, g_objRange)
 constexpr int    PING_STAGGER = 4000;            // per-slot phase offset so pings don't all align
 constexpr int    PING_MINGAP  = (int)(0.05 * SR); // min silence after a loaded cue before it repeats
 
@@ -157,11 +157,30 @@ IPLVector3 world_delta_to_sa(float ddx, float ddy, float ddz) {
     return normalize_or_front(ddy * WIDEN, ddz, -ddx);
 }
 
-float dist_attenuation(float dist) {
-    constexpr float FALLOFF = 550.0f;   // volume reaches ~0 here (keep ~= the radar range)
-    float a = 1.0f - dist / FALLOFF;
-    if (a < 0.0f) a = 0.0f;
-    return a * std::sqrt(a);             // ^1.5 rolloff: louder through the mid-range, still ~0 at FALLOFF
+// Audible ranges (world units; SA_SetRanges): objects fade out over g_objRange, walls
+// over g_wallRange, and the ping rate spans the same distances (fast near, slow at the
+// edge). Written on the game thread under g_mtx, read once per block.
+float g_objRange  = 1500.0f;
+float g_wallRange = 450.0f;
+
+// VOLUME OVER DISTANCE (2026-11-23, user: walls were only loud or very loud, never quiet,
+// and objects could be heard only 4-5 steps away). It was (1 - d/550)^1.5 for objects
+// (silent past ~450) and 120/d capped to 0.25..1.6 for walls traced only to 175, so a wall
+// was always 0.69..1.6. Now inverse distance -- each doubling of the distance 6 dB
+// quieter, which the ear reads as distance -- from a reference distance on (full volume
+// closer in; a wall you are pressed against up to +4 dB), and a linear fade to silence
+// over the last 30 % (objects) / 40 % (walls) of the range:
+//   objects (ref 150, range 1500): 150 0 dB, 300 -6, 600 -12, 1000 -16, 1200 -22, 1400 -32
+//   walls   (ref 80,  range 450):  50 +4 dB, 80 0, 160 -6, 270 -11, 320 -15, 400 -25
+float dist_attenuation(float dist, bool wall, float range) {
+    if (dist >= range) return 0.0f;
+    const float ref = wall ? 80.0f : 150.0f;
+    const float cap = wall ? 1.6f : 1.0f;
+    float g = ref / (dist > 1.0f ? dist : 1.0f);
+    if (g > cap) g = cap;
+    const float fadeFrom = (wall ? 0.6f : 0.7f) * range;
+    if (dist > fadeFrom) g *= 1.0f - (dist - fadeFrom) / (range - fadeFrom);
+    return g;
 }
 
 // --- light Freeverb-style stereo reverb: room ambience to externalize the cues
@@ -241,6 +260,11 @@ void render_block() {
     std::memset(revSendR, 0, sizeof(revSendR));
 
     if (g_running && g_ctx && g_hrtf) {
+        float objRange, wallRange;
+        {
+            std::lock_guard<std::mutex> lk(g_mtx);
+            objRange = g_objRange; wallRange = g_wallRange;
+        }
         for (int i = 0; i < MAX_SOURCES; ++i) {
             bool active, lspace, ping; int cueType; float sx, sy, sz, gain, lx, ly, lz;
             const float* cueBuf = nullptr; int cueBufLen = 0;
@@ -261,6 +285,7 @@ void render_block() {
             // direction + distance FIRST: distance drives both attenuation and the
             // ping rate (closer = faster pings).
             float ddx = 0.0f, ddy = 0.0f, ddz = 0.0f, dist = 0.0f, atten = 1.0f;
+            const bool wall = (cueType == 5);
             IPLVector3 dir;
             if (lspace) {
                 dir = normalize_or_front(sx, sy, sz);
@@ -268,13 +293,7 @@ void render_block() {
                 ddx = sx - lx; ddy = sy - ly; ddz = sz - lz;
                 dist = std::sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
                 dir = world_delta_to_sa(ddx, ddy, ddz);
-                atten = dist_attenuation(dist);
-                if (cueType == 5) {
-                    // walls: steeper rolloff so they get clearly louder up close
-                    float wa = 120.0f / (dist > 1.0f ? dist : 1.0f);
-                    if (wa > 1.6f) wa = 1.6f; else if (wa < 0.25f) wa = 0.25f;
-                    atten = wa;
-                }
+                atten = dist_attenuation(dist, wall, wall ? wallRange : objRange);
             }
 
             // mono cue: a ping whose RATE encodes distance (near=fast, far=slow);
@@ -283,7 +302,11 @@ void render_block() {
             double ph  = g_src[i].phase;
             double inc = TWO_PI * (double)cue_freq(cueType) / (double)SR;
             if (ping) {
-                float t = (dist - PING_NEAR) / (PING_FAR - PING_NEAR);
+                // (the rate spans the cue's own range: walls 40..wallRange, objects
+                // PING_NEAR..objRange -- within the old 500 the objects always pinged fast)
+                const float pNear = wall ? 40.0f : PING_NEAR;
+                const float pFar  = wall ? wallRange : objRange;
+                float t = (pFar > pNear) ? (dist - pNear) / (pFar - pNear) : 0.0f;
                 if (t < 0.0f) t = 0.0f; else if (t > 1.0f) t = 1.0f;
                 int cycleLen = PING_FAST + (int)(t * (float)(PING_SLOW - PING_FAST));
                 if (cycleLen < 2) cycleLen = 2;
@@ -515,6 +538,12 @@ void SA_Shutdown(void) {
 void SA_SetListener(float x, float y, float z) {
     std::lock_guard<std::mutex> lk(g_mtx);
     g_lx = x; g_ly = y; g_lz = z;
+}
+
+void SA_SetRanges(float objRange, float wallRange) {
+    std::lock_guard<std::mutex> lk(g_mtx);
+    if (objRange >= 100.0f && objRange <= 20000.0f) g_objRange = objRange;
+    if (wallRange >= 50.0f && wallRange <= 5000.0f) g_wallRange = wallRange;
 }
 
 void SA_SetSource(int id, int active, float x, float y, float z, int cueType) {

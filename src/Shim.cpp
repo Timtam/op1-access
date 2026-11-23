@@ -847,6 +847,11 @@ int l_audio_set_listener(lua_State* L) {
     SA_SetListener((float)arg_num(L, 1), (float)arg_num(L, 2), (float)arg_num(L, 3));
     return 0;
 }
+// AudioSetRanges(objRange, wallRange): the audible ranges (world units), see SA_SetRanges
+int l_audio_set_ranges(lua_State* L) {
+    SA_SetRanges((float)arg_num(L, 1), (float)arg_num(L, 2));
+    return 0;
+}
 int l_audio_set_source(lua_State* L) {
     SA_SetSource((int)arg_int(L, 1), lua_toboolean(L, 2),
                  (float)arg_num(L, 3), (float)arg_num(L, 4), (float)arg_num(L, 5),
@@ -1645,6 +1650,7 @@ const luaL_Reg op1access_funcs[] = {
     {"AudioStatus",          l_audio_status},
     {"AudioTest",            l_audio_test},
     {"AudioSetListener",     l_audio_set_listener},
+    {"AudioSetRanges",       l_audio_set_ranges},
     {"AudioSetSource",       l_audio_set_source},
     {"AudioLoadCue",         l_audio_load_cue},
     {"AudioPlayCue",         l_audio_play_cue},
