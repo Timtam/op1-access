@@ -78,6 +78,15 @@ struct Source {
     double phase = 0.0;            // oscillator phase (audio-thread only)
     float  env = 0.0f;            // smoothed on/off gain (declick fade; audio-thread only)
     float  lpL = 0.0f, lpR = 0.0f; // rear-darkening LPF state (audio-thread only)
+    // smoothing and the ping clock (audio-thread only; see render_block)
+    long long cyclePos = -1;       // position in its ping cycle (-1: not started)
+    int    pingLen = 0;            // the ping playing now: its length and cue, latched at its start
+    int    pingCue = -1;
+    float  rateDist = 0.0f;        // the distance the ping rate follows, smoothed
+    float  dryS = 0.0f, sendS = 0.0f;               // smoothed gains
+    float  dryPrev = 0.0f, sendPrev = 0.0f, dkPrev = 0.0f;   // the last block's, ramped from
+    float  dirX = 0.0f, dirY = 0.0f, dirZ = -1.0f;  // smoothed direction
+    bool   warm = false;           // the smoothers hold values (cleared once fully silent)
     IPLBinauralEffect effect = nullptr;
 };
 
@@ -266,21 +275,29 @@ void render_block() {
             objRange = g_objRange; wallRange = g_wallRange;
         }
         for (int i = 0; i < MAX_SOURCES; ++i) {
+            Source& S = g_src[i];   // (its audio-thread-only fields are read and written freely)
             bool active, lspace, ping; int cueType; float sx, sy, sz, gain, lx, ly, lz;
-            const float* cueBuf = nullptr; int cueBufLen = 0;
+            const float* cueBuf = nullptr; int cueBufLen = 0;     // the source's cue now
+            const float* pBuf = nullptr; int pBufLen = 0;         // the cue of the ping playing
             {
                 std::lock_guard<std::mutex> lk(g_mtx);
-                active  = g_src[i].active;
-                lspace  = g_src[i].listenerSpace;
-                ping    = g_src[i].ping;
-                cueType = g_src[i].cueType;
-                sx = g_src[i].x; sy = g_src[i].y; sz = g_src[i].z;
-                gain = g_src[i].gain;
+                active  = S.active;
+                lspace  = S.listenerSpace;
+                ping    = S.ping;
+                cueType = S.cueType;
+                sx = S.x; sy = S.y; sz = S.z;
+                gain = S.gain;
                 lx = g_lx; ly = g_ly; lz = g_lz;
                 if (cueType >= 0 && cueType < NUM_CUES) { cueBuf = g_cueBuf[cueType]; cueBufLen = g_cueLen[cueType]; }
+                if (S.pingCue >= 0 && S.pingCue < NUM_CUES) { pBuf = g_cueBuf[S.pingCue]; pBufLen = g_cueLen[S.pingCue]; }
             }
-            if (!g_src[i].effect) continue;
-            if (!active && g_src[i].env <= 0.0005f) continue;   // fully faded out -> silent
+            if (!S.effect) continue;
+            if (!active && S.env <= 0.0005f) {
+                // fully faded out: silent, and the next activation starts afresh
+                S.warm = false; S.cyclePos = -1; S.pingLen = 0; S.pingCue = -1;
+                S.dryPrev = 0.0f; S.sendPrev = 0.0f;
+                continue;
+            }
 
             // direction + distance FIRST: distance drives both attenuation and the
             // ping rate (closer = faster pings).
@@ -296,61 +313,100 @@ void render_block() {
                 atten = dist_attenuation(dist, wall, wall ? wallRange : objRange);
             }
 
+            // SMOOTHED (2026-11-23, user: the walls crackled while walking, fine standing).
+            // Gain, direction and the distance the ping rate follows used to change in
+            // steps, once per block (21 ms) -- and a wall's point jumps where its trace
+            // meets another surface. Now each follows its target smoothly (one-pole, per
+            // block), and the gains are ramped sample by sample within the block.
+            const float dryT  = gain * atten;               // direct sound: drops with distance
+            const float sendT = gain * send_factor(dist);   // reverb send: rises with distance
+            if (!S.warm) {
+                S.rateDist = dist; S.dryS = dryT; S.sendS = sendT;
+                S.dirX = dir.x; S.dirY = dir.y; S.dirZ = dir.z;
+                S.warm = true;
+            } else {
+                constexpr float K_RATE = 0.13f;   // ~150 ms: the rhythm eases into a new distance
+                constexpr float K_GAIN = 0.35f;   // ~50 ms
+                constexpr float K_DIR  = 0.41f;   // ~40 ms
+                S.rateDist += (dist - S.rateDist) * K_RATE;
+                S.dryS     += (dryT - S.dryS) * K_GAIN;
+                S.sendS    += (sendT - S.sendS) * K_GAIN;
+                S.dirX += (dir.x - S.dirX) * K_DIR;
+                S.dirY += (dir.y - S.dirY) * K_DIR;
+                S.dirZ += (dir.z - S.dirZ) * K_DIR;
+                dir = normalize_or_front(S.dirX, S.dirY, S.dirZ);
+            }
+
             // mono cue: a ping whose RATE encodes distance (near=fast, far=slow);
             // pitch encodes category (cue_freq). Or a continuous tone (test). The
             // envelope keeps pings click-free though the oscillator runs continuously.
-            double ph  = g_src[i].phase;
+            double ph  = S.phase;
             double inc = TWO_PI * (double)cue_freq(cueType) / (double)SR;
             if (ping) {
                 // (the rate spans the cue's own range: walls 40..wallRange, objects
                 // PING_NEAR..objRange -- within the old 500 the objects always pinged fast)
                 const float pNear = wall ? 40.0f : PING_NEAR;
                 const float pFar  = wall ? wallRange : objRange;
-                float t = (pFar > pNear) ? (dist - pNear) / (pFar - pNear) : 0.0f;
+                float t = (pFar > pNear) ? (S.rateDist - pNear) / (pFar - pNear) : 0.0f;
                 if (t < 0.0f) t = 0.0f; else if (t > 1.0f) t = 1.0f;
                 int cycleLen = PING_FAST + (int)(t * (float)(PING_SLOW - PING_FAST));
                 if (cycleLen < 2) cycleLen = 2;
                 // never repeat a loaded cue faster than it can fully play -> no clipping
                 // even for long sounds; distance then sets the GAP, not the rate.
                 if (cueBuf && cueBufLen + PING_MINGAP > cycleLen) cycleLen = cueBufLen + PING_MINGAP;
-                long long base = (long long)g_clock + (long long)i * PING_STAGGER;
-                if (cueBuf && cueBufLen > 0) {
-                    // play the LOADED cue sample once per cycle (rate = distance)
-                    for (int n = 0; n < FS; ++n) {
-                        long long cyc = (base + n) % cycleLen;
-                        g_inBuf.data[0][n] = (cyc < (long long)cueBufLen) ? cueBuf[(size_t)cyc] : 0.0f;
-                    }
-                } else {
-                    // generated tone: sine + short envelope (fallback when no asset file)
-                    int cueLen = cycleLen / 2; if (cueLen > CUE_MAX) cueLen = CUE_MAX;
-                    for (int n = 0; n < FS; ++n) {
-                        long long cyc = (base + n) % cycleLen;
-                        float penv = 0.0f;
-                        if (cyc < cueLen) {
-                            if (cyc < ATTACK) penv = (float)cyc / (float)ATTACK;
-                            else              penv = 1.0f - (float)(cyc - ATTACK) / (float)(cueLen - ATTACK);
-                            if (penv < 0.0f) penv = 0.0f;
+                // THE PING CLOCK runs on per source. It was (clock + slot offset) MODULO the
+                // cycle, and walking changes the cycle every block: the remainder jumped,
+                // a ping was cut off mid-way or began in its middle -- the crackle. Now a
+                // ping always plays to its end (its length and cue latched at its start);
+                // the distance only moves when the next one starts. A source starts in the
+                // silent gap at its slot's stagger, so its first ping begins at the start.
+                long long pos = S.cyclePos;
+                if (pos < 0) { pos = ((long long)i * PING_STAGGER) % cycleLen; S.pingLen = 0; }
+                for (int n = 0; n < FS; ++n) {
+                    if (pos >= cycleLen && pos >= S.pingLen) {   // the next ping, from its start
+                        pos = 0;
+                        S.pingCue = cueType;
+                        pBuf = cueBuf; pBufLen = cueBufLen;
+                        if (pBuf && pBufLen > 0) {
+                            S.pingLen = pBufLen;
+                        } else {
+                            int cl = cycleLen / 2; if (cl > CUE_MAX) cl = CUE_MAX;
+                            S.pingLen = cl;
                         }
-                        // harmonics (2f, 3f) so even low cues lateralize -- pure low
-                        // sines carry almost no left/right information to the ear
-                        g_inBuf.data[0][n] = (float)(std::sin(ph) + 0.4 * std::sin(2.0 * ph) + 0.2 * std::sin(3.0 * ph)) * 0.35f * penv;
-                        ph += inc;
                     }
+                    float s = 0.0f;
+                    if (pos < S.pingLen) {
+                        if (pBuf && pBufLen > 0) {
+                            if (pos < pBufLen) s = pBuf[(size_t)pos];   // play the LOADED cue
+                        } else {
+                            // generated tone: sine + short envelope (fallback when no asset file)
+                            const int cl = S.pingLen;
+                            float penv;
+                            if (pos < ATTACK) penv = (float)pos / (float)ATTACK;
+                            else              penv = (cl > ATTACK) ? 1.0f - (float)(pos - ATTACK) / (float)(cl - ATTACK) : 0.0f;
+                            if (penv < 0.0f) penv = 0.0f;
+                            // harmonics (2f, 3f) so even low cues lateralize -- pure low
+                            // sines carry almost no left/right information to the ear
+                            s = (float)(std::sin(ph) + 0.4 * std::sin(2.0 * ph) + 0.2 * std::sin(3.0 * ph)) * 0.35f * penv;
+                        }
+                    }
+                    if (!(pBuf && pBufLen > 0)) ph += inc;
+                    g_inBuf.data[0][n] = s;
+                    ++pos;
                 }
+                S.cyclePos = pos;
             } else {
                 for (int n = 0; n < FS; ++n) {
                     g_inBuf.data[0][n] = (float)(std::sin(ph) + 0.4 * std::sin(2.0 * ph) + 0.2 * std::sin(3.0 * ph)) * 0.35f;
                     ph += inc;
                 }
             }
-            g_src[i].phase = std::fmod(ph, TWO_PI);
+            S.phase = std::fmod(ph, TWO_PI);
 
             // per-source fade env declicks activate/deactivate (~30ms ramp).
-            float env = g_src[i].env;
+            float env = S.env;
             const float target = active ? 1.0f : 0.0f;
             const float step = 1.0f / (0.015f * (float)SR);   // ~15ms declick fade
-            const float dryG  = gain * atten;               // direct sound: drops with distance
-            const float sendG = gain * send_factor(dist);   // reverb send: rises with distance
 
             // HRTF binaural for ALL cues (walls + objects); reverb (below) adds the
             // room ambience, sent more strongly the farther the source is.
@@ -359,29 +415,35 @@ void render_block() {
             p.interpolation = IPL_HRTFINTERPOLATION_BILINEAR;
             p.spatialBlend  = 1.0f;
             p.hrtf          = g_hrtf;
-            iplBinauralEffectApply(g_src[i].effect, &p, &g_inBuf, &g_outBuf);
+            iplBinauralEffectApply(S.effect, &p, &g_inBuf, &g_outBuf);
             // rear darkening: sources BEHIND get low-passed (duller); front stays
             // bright. An exaggerated version of the natural cue, to fight HRTF
             // front/back reversal (ambiguous sources tend to read as "behind").
             float rear = dir.z > 0.0f ? dir.z : 0.0f;   // 0 = front .. 1 = fully behind
             const float dk = rear * 0.75f;
-            float lpL = g_src[i].lpL, lpR = g_src[i].lpR;
+            // ramped over the block from the last block's values (no steps at its edge)
+            const float d0 = S.dryPrev, d1 = S.dryS, s0 = S.sendPrev, s1 = S.sendS;
+            const float k0 = (env > 0.0005f) ? S.dkPrev : dk, k1 = dk;
+            float lpL = S.lpL, lpR = S.lpR;
             for (int n = 0; n < FS; ++n) {
+                const float a = (float)(n + 1) / (float)FS;
+                const float dryG = d0 + (d1 - d0) * a, sendG = s0 + (s1 - s0) * a, dkn = k0 + (k1 - k0) * a;
                 if (env < target)      { env += step; if (env > target) env = target; }
                 else if (env > target) { env -= step; if (env < target) env = target; }
                 float l = g_outBuf.data[0][n] * env;
                 float r = g_outBuf.data[1][n] * env;
                 lpL += 0.12f * (l - lpL);
                 lpR += 0.12f * (r - lpR);
-                l = l * (1.0f - dk) + lpL * dk;
-                r = r * (1.0f - dk) + lpR * dk;
+                l = l * (1.0f - dkn) + lpL * dkn;
+                r = r * (1.0f - dkn) + lpR * dkn;
                 mixL[n]     += l * dryG;
                 mixR[n]     += r * dryG;
                 revSendL[n] += l * sendG;
                 revSendR[n] += r * sendG;
             }
-            g_src[i].env = env;
-            g_src[i].lpL = lpL; g_src[i].lpR = lpR;
+            S.env = env;
+            S.lpL = lpL; S.lpR = lpR;
+            S.dryPrev = d1; S.sendPrev = s1; S.dkPrev = k1;
         }
         // one-shot bump (2D, dry): a brief non-looping cue, or a generated thud fallback
         {
@@ -525,6 +587,8 @@ void SA_Shutdown(void) {
         if (g_src[i].effect) { iplBinauralEffectRelease(&g_src[i].effect); g_src[i].effect = nullptr; }
         g_src[i].active = false;
         g_src[i].env = 0.0f;
+        g_src[i].warm = false; g_src[i].cyclePos = -1; g_src[i].pingLen = 0; g_src[i].pingCue = -1;
+        g_src[i].dryPrev = 0.0f; g_src[i].sendPrev = 0.0f;
     }
     for (int i = 0; i < NUM_CUES; ++i) { delete[] g_cueBuf[i]; g_cueBuf[i] = nullptr; g_cueLen[i] = 0; }
     g_osCue = -1; g_osPos = 0;

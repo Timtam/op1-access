@@ -81,7 +81,10 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   of the walker's grid steps), quieter and pinging slower the farther they are, 6 dB
   quieter with each doubling of the distance; walls up to 450 units, from loud right next
   to one down to quiet, instead of only loud or very loud within 175. With more objects
-  in range than the radar's 28 voices, the nearest ones sound. Like the game, it goes silent while another window is in front. A save
+  in range than the radar's 28 voices, the nearest ones sound. Walking no longer makes
+  the pings crackle, the walls' above all: a ping always plays to its end (a new
+  distance only changes when the next one starts), and volume and direction glide to
+  their new values instead of jumping. Like the game, it goes silent while another window is in front. A save
   point's book is no person, also after you saved there: it is in the marker list. After
   a dialogue, a scene or a battle the radar comes back as soon as the game gives you the
   controls again, more than a second sooner than before.
