@@ -11101,6 +11101,48 @@ NV.prompt_is_item = function(ia)
     return not (cls == "KSFieldNPCCharacter_C" or cls == "HouseEnterTriggerBP_C" or cls == "LevelTrigger_C")
 end
 
+-- Turn so the person picked at an item is no longer in front of you -- a short tap, about no
+-- step: the item's prompt shows without facing it, the game's pick of a person needs you
+-- to face them (2026-11-23, S'warkii: a hidden item in a nook behind a hide rack, the
+-- villager lying in the only way to it, 63 away and 29 degrees off your line; every other
+-- side was walled in). Of the walk's 8 directions those with the person at least 50
+-- degrees off (else 35), the item as far ahead as can be; n = 1, 2: the best, the next.
+-- false: none.
+NV.turn_from = function(px, py, ia, n)
+    local q = ia.avoid
+    if not (q and px) then return false end
+    local ai = math.atan(ia.y - py, ia.x - px)
+    local aq = math.atan(q.y - py, q.x - px)
+    local function off(a, b)
+        local d = math.abs(a - b) % (2 * math.pi)
+        return d > math.pi and 2 * math.pi - d or d
+    end
+    local cands = {}
+    for _, minq in ipairs({ math.rad(50), math.rad(35) }) do
+        for k = 0, 7 do
+            local a = k * math.pi / 4
+            local oq, oi = off(a, aq), off(a, ai)
+            if oq >= minq and oi <= math.pi / 2 + 1e-6 then cands[#cands + 1] = { a = a, oq = oq, oi = oi } end
+        end
+        if #cands >= n then break end
+        cands = {}
+    end
+    table.sort(cands, function(x, y)
+        if math.abs(x.oi - y.oi) > 1e-6 then return x.oi < y.oi end
+        return x.oq > y.oq
+    end)
+    local c = cands[n]
+    if not c then return false end
+    local dx, dy = math.cos(c.a), math.sin(c.a)
+    local u, d, r, l = dx > 0.38, dx < -0.38, dy > 0.38, dy < -0.38
+    log(string.format("NAVWALK item: turning %s%s%s%s, the person %.0f degrees off, the item %.0f",
+        u and "U" or "", d and "D" or "", l and "L" or "", r and "R" or "", math.deg(c.oq), math.deg(c.oi)))
+    M.face_t = os.clock()   -- (bump_step: our tap, no thud)
+    NV.face = { till = os.clock() + 0.07, u = u, d = d, l = l, r = r,
+        held = { UP_ARROW = u or nil, DOWN_ARROW = d or nil, LEFT_ARROW = l or nil, RIGHT_ARROW = r or nil } }
+    return true
+end
+
 -- Another side of a chest / hidden item to stand at (NV.iapproach): of 16 spots around
 -- it (8 directions, 90 and 130 away) one with ground at about the item's height and a
 -- clear line from there to just short of it at waist height (the capsule's own trace,
@@ -12078,6 +12120,7 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
         if p then px, py = read_actor_pos(p) end
         local okc, opened = pcall(M.chest_state, { addr = ia.addr })
         local mine = M.popup_said and NV.prompt_is_item(ia)
+        local itemprompt = mine
         if M.popup_said and not mine and ia.other ~= M.popup_said then
             ia.other = M.popup_said
             log("NAVWALK item: the prompt is not the item's: " .. tostring(M.popup_said) .. " "
@@ -12103,9 +12146,14 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
         local who = ia.talker and (ia.tname or tr("someone else"))
         if mine then
             log("NAVWALK item prompt: " .. tostring(M.popup_said))
+            -- (after turning away from someone: the prompt again, E goes to the item now)
+            if (ia.turns or 0) > 0 then speak(M.popup_text or tr("Arrived")) end
             NV.iapproach = nil
         elseif (okc and opened) or not px or math.sqrt((px - ia.px) ^ 2 + (py - ia.py) ^ 2) > 80 then
             NV.iapproach = nil                -- opened, or you walked off
+        elseif itemprompt and talker and (ia.turns or 0) < 2 and NV.turn_from(px, py, ia, (ia.turns or 0) + 1) then
+            ia.turns = (ia.turns or 0) + 1    -- first: turn away from them, right here
+            ia.next = os.clock() + 0.8
         elseif ia.tries == 0 then
             ia.tries, ia.next = 1, os.clock() + 1.0
             pcall(NV.face_goal, 2)            -- one more step toward it
