@@ -115,7 +115,12 @@ The first release. OP1 Access reads Octopath Traveler (Steam) with your screen r
   E", used to end the walk at him -- and only where E reaches the item: with the save
   point's book or a person picked as well, E talks to them first, so the walk tries a
   side where they aren't in front of you ("Hier spricht E Speicherpunkt an, versuche eine
-  andere Seite"). A person it
+  andere Seite"). When that person lies knocked out after Provoke or Challenge and no
+  side helps, the walk says so and where they get up again: "Dörfler liegt besiegt im
+  Weg und steht wieder auf, sobald man Nördlicher S'warkii-Weg oder ... betritt" (the
+  game wakes them when you enter one of the areas listed for them). Facing such a person
+  and the people list say "besiegt" too, which is why every path action is "not
+  possible" and the talk only "U-ugh...". A person it
   can't get close enough to talk to (Mercedes behind the counter of Atlasdamm's library)
   gets the same: up to two other sides, each square in front of them, then "Mercedes ist
   nicht in Reichweite"; it used to stop without a word, and J then offered the follower's

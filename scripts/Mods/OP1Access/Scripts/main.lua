@@ -7487,6 +7487,93 @@ M.npc_wiring = function(o)
     if type(rec) == "table" then rec.wire = w or false end
     return w
 end
+-- KNOCKED OUT (user 2026-11-23, S'warkii): a person beaten after Provoke or Challenge lies
+-- where they fell -- a villager lay in the only way to a hidden item, E talked to him
+-- ("U-ugh...") from every side, every path action "not possible"; standing again later,
+-- he goes to his door. The game keeps it in the save game: KSSaveGameBP_C.NPCEventList
+-- (@0x1B8, NPCEventData 0x38 each: IsSwoon @0, SwoonBattleID @0x28), at the person's
+-- NPC_UnqIndex (PlacementInfoData @0x18; KSFieldNPCCharacter_C.PlacementData @0xA00), the
+-- index the game's own GetNPCEventData looks up by the person's label. They get up when
+-- you enter a level of the SwoonRecLevel list (TArray<FName> @0x40, level IDs) of
+-- NPCBattleData's SwoonBattleID-th row (LevelManagerBP_C.RecoveryNPC calls
+-- NPCManagerBP_C.SwoonNPCRecover with the new level after every level load; a story
+-- event can also wake one, EventManagerBP_C.StartRecoverSwoon): S'warkii's people at the
+-- three forest paths around it (levels 159-161).
+-- obj = the person's actor -> nil (unknown), false, or { idx, bid, row, levels } (levels
+-- only with want_levels)
+M.NPC_UNQ_INDEX, M.SG_NPC_EVENTS, M.NPC_EVENT_SIZE = 0xA18, 0x1B8, 0x38
+M.npc_swoon = function(obj, want_levels)
+    if not (obj and shim and shim.Peek) or class_name_of(obj) ~= "KSFieldNPCCharacter_C" then return nil end
+    local addr, sga
+    pcall(function() addr = obj:GetAddress() end)
+    local sg = M.save_game()
+    if sg then pcall(function() sga = sg:GetAddress() end) end
+    if not (addr and addr ~= 0 and sga and sga ~= 0) then return nil end
+    local idx = shim.Peek(addr + M.NPC_UNQ_INDEX, "i32")
+    local arr, cnt = shim.Peek(sga + M.SG_NPC_EVENTS, "ptr"), shim.Peek(sga + M.SG_NPC_EVENTS + 8, "i32")
+    if not M.swoon_logged then
+        M.swoon_logged = true
+        log(string.format("SWOON save game %s at %X: %s person entries; first person read: index %s",
+            tostring(class_name_of(sg)), sga, tostring(cnt), tostring(idx)))
+    end
+    if not (idx and arr and arr ~= 0 and cnt and cnt > 0 and cnt < 100000 and idx >= 0 and idx < cnt) then
+        return nil
+    end
+    local e = arr + idx * M.NPC_EVENT_SIZE
+    local sw = shim.Peek(e, "u8")
+    if sw == 0 then return false end
+    if sw ~= 1 then return nil end   -- (not a bool: a bad read)
+    local out = { idx = idx, bid = shim.Peek(e + 0x28, "i32"), levels = {} }
+    if not want_levels then return out end
+    local dt = M.dt_addr and M.dt_addr("/Game/Character/Database/NPCBattleData")
+    local rc, rn, row
+    if dt and out.bid and out.bid >= 0 then rc, rn, row = shim.DtRowAt(dt, out.bid) end
+    if row then
+        out.row = M.fname_str(rc, rn)
+        local la, ln = shim.Peek(row + 0x40, "ptr"), shim.Peek(row + 0x48, "i32")
+        if la and la ~= 0 and ln and ln > 0 and ln < 16 then
+            for i = 0, ln - 1 do
+                local c, n = shim.PeekFName(la + i * 8)
+                local id = c and c > 0 and tonumber(M.fname_str(c, n))
+                if id then out.levels[#out.levels + 1] = id end
+            end
+        end
+    end
+    return out
+end
+-- Where a knocked-out person gets up (M.npc_swoon's levels): the world map's place names,
+-- "Nördlicher S'warkii-Weg or ...", each once; the area you are in as "this area again";
+-- nil when none is known
+M.swoon_places = function(levels)
+    if not (levels and #levels > 0) then return nil end
+    local g = M.wm_graph and M.wm_graph()
+    local here = M.current_level and M.current_level()
+    local here_nd = g and here and g.bylevel[here]
+    local names, seen, again = {}, {}, false
+    for _, id in ipairs(levels) do
+        local nd = g and g.bylevel[id]
+        if id == here or (nd and nd == here_nd) then
+            again = true
+        else
+            local nm = nd and nd.name ~= nd.row and nd.name or nil
+            if not nm and M.level_dest then
+                local d = M.level_dest(id)
+                nm = d and d.name
+            end
+            if nm and not seen[nm] then seen[nm] = true; names[#names + 1] = nm end
+        end
+    end
+    if again then names[#names + 1] = tr("this area again") end
+    if #names == 0 then return nil end
+    if #names == 1 then return names[1] end
+    return trf("%s or %s", table.concat(names, ", ", 1, #names - 1), names[#names])
+end
+-- "Dörfler lies knocked out in the way and gets up again once you enter X or Y"
+M.swoon_text = function(who, sw)
+    local okp, places = pcall(M.swoon_places, sw and sw.levels)
+    if okp and places then return trf("%s lies knocked out in the way and gets up again once you enter %s", who, places) end
+    return trf("%s lies knocked out in the way; the item is out of reach until they get up", who)
+end
 local function npc_interesting(o)
     local addr = nil
     pcall(function() addr = o:GetAddress() end)
@@ -8613,6 +8700,11 @@ local function nav_announce(prefix)
     if t.actor and (t.cat == "exit" or t.walkcat == "exit") then
         local okr, note = pcall(M.route_exit_note, t.actor)
         if okr and note then who = who .. note .. ", " end
+    end
+    -- a person knocked out after Provoke or Challenge (M.npc_swoon) lies where they fell
+    if t.cat == "npc" and t.actor then
+        local okw, sw = pcall(M.npc_swoon, t.actor)
+        if okw and sw then who = who .. tr("knocked out") .. ", " end
     end
     -- a chest says whether it was opened already (emptied: OT chests hold one thing)
     if t.cat == "chest" then
@@ -12096,7 +12188,14 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
                 local tx, ty
                 if M.talk_pick_obj then tx, ty = read_actor_pos(M.talk_pick_obj) end
                 if tx then ia.avoid = { x = tx, y = ty } end
-                log(string.format("NAVWALK item: its prompt shows, but E would go to %s (%X)", tostring(ia.tname), talker))
+                -- lying there knocked out (M.npc_swoon): once no side helps, that is said,
+                -- and where they get up (user 2026-11-23: the villager in S'warkii)
+                local okw, sw = pcall(M.npc_swoon, M.talk_pick_obj, true)
+                ia.swoon = okw and sw or nil
+                log(string.format("NAVWALK item: its prompt shows, but E would go to %s (%X)%s", tostring(ia.tname), talker,
+                    ia.swoon and string.format(", knocked out (index %s, battle row %s, gets up at levels %s)",
+                        tostring(ia.swoon.idx), tostring(ia.swoon.row), table.concat(ia.swoon.levels, ","))
+                    or (okw and sw == false and ", not knocked out" or "")))
             end
             if ia.tries == 0 then ia.tries = 1 end   -- (a step closer won't help: other sides)
         end
@@ -12129,12 +12228,14 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
                         ia.avoid and string.format(", person at (%.0f,%.0f)", ia.avoid.x, ia.avoid.y) or "",
                         tostring(why)))
                 end
-                speak(who and trf("Here E goes to %s, and no other side found", who)
+                speak((ia.swoon and M.swoon_text(ia.tname or tr("Someone"), ia.swoon))
+                    or (who and trf("Here E goes to %s, and no other side found", who))
                     or tr("No prompt here, and no other side found"))
                 NV.iapproach = nil
             end
         else
-            speak(who and trf("Here E goes to %s, not to the item", who) or tr("No prompt at this item"))
+            speak((ia.swoon and M.swoon_text(ia.tname or tr("Someone"), ia.swoon))
+                or (who and trf("Here E goes to %s, not to the item", who)) or tr("No prompt at this item"))
             NV.iapproach = nil
         end
     end
@@ -12837,6 +12938,12 @@ M.interact_poll = function()
     end
     local what = has_path and tr("Path action") or tr("Talk")
     local s = (nm and nm ~= "") and (what .. ", " .. nm) or what
+    -- knocked out (M.npc_swoon): why every path action is "not possible" and the talk is
+    -- only "U-ugh..." -- "Path action, Dörfler, knocked out: ..."
+    do
+        local okw, sw = pcall(M.npc_swoon, (addr == taddr) and tobj or nil)
+        if okw and sw then s = s .. ", " .. tr("knocked out") end
+    end
     -- which ones, and whether they are done or not possible (the balloon's icons):
     -- "Path action, Wachmann: Studieren, done"
     if has_path and M.fc_hint_actions then
