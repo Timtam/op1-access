@@ -6,17 +6,21 @@ namespace OP1AccessInstaller;
 /// <summary>Writes every step to %TEMP%\OP1AccessInstaller.log and tells the window about it.</summary>
 internal static class Log
 {
-    public static string FilePath { get; } = Path.Combine(Path.GetTempPath(), "OP1AccessInstaller.log");
+    public static string FilePath { get; internal set; } = Path.Combine(Path.GetTempPath(), "OP1AccessInstaller.log");
 
     /// <summary>Progress lines meant for the user.</summary>
     public static event Action<string> Progress;
 
-    public static void Start(string[] args)
+    public static void Start(string[] args, bool append = false)
     {
         try
         {
-            File.WriteAllText(FilePath, $"OP1 Access Installer {BuildInfo.Version}, {DateTime.Now:yyyy-MM-dd HH:mm:ss}{Environment.NewLine}" +
-                $"Arguments: {string.Join(" ", args)}{Environment.NewLine}");
+            string start = $"OP1 Access Installer {BuildInfo.Version}, {DateTime.Now:yyyy-MM-dd HH:mm:ss}{Environment.NewLine}" +
+                           $"Arguments: {string.Join(" ", args)}{Environment.NewLine}";
+            if (append)
+                File.AppendAllText(FilePath, Environment.NewLine + start);
+            else
+                File.WriteAllText(FilePath, start);
         }
         catch (IOException)
         {

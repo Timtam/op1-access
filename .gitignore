@@ -47,3 +47,10 @@ scripts/Mods/OP1Access/Scripts/lang/last.txt
 dist/
 installer/**/bin/
 installer/**/obj/
+
+# The installer's built-in Static Forms key (generated from OP1_STATICFORMS_KEY at build time;
+# normally under obj\, listed here too so it can never be committed from anywhere else)
+ReportKey.g.cs
+
+# The mod's session logs in a test copy of the mod folder
+scripts/Mods/OP1Access/logs/

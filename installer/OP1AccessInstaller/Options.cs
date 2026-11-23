@@ -8,14 +8,16 @@ namespace OP1AccessInstaller;
 
 /// <summary>
 /// Command line options. Without any, the installer shows its window. The mod starts it with
-/// "--update --restart --game &lt;folder&gt;", the uninstall entry with "--uninstall --game &lt;folder&gt;".
-/// "--silent" runs without any window (for scripts and tests).
+/// "--update --restart --game &lt;folder&gt;" (F5 twice) or "--report --game &lt;folder&gt;" (F1 twice),
+/// the uninstall entry with "--uninstall --game &lt;folder&gt;". "--silent" runs without any window
+/// (for scripts and tests).
 /// </summary>
 internal sealed class Options
 {
     public const string Usage =
         "OP1AccessInstaller [--game <folder>] [--zip <package>] [--lang de|en]\n" +
         "  --update [--restart]   update while or after the game runs (started by the mod)\n" +
+        "  --report               the window to report a problem (the mod starts it with F1 twice)\n" +
         "  --uninstall            remove the mod, asks about UE4SS\n" +
         "  --silent --install | --uninstall | --detect | --check\n" +
         "     [--remove-ue4ss] [--replace-ue4ss] [--no-registry] [--repo <owner/name>]";
@@ -28,6 +30,7 @@ internal sealed class Options
     public bool Detect { get; private set; }
     public bool Check { get; private set; }
     public bool Update { get; private set; }
+    public bool Report { get; private set; }
     public bool Restart { get; private set; }
     public bool Relaunched { get; private set; }
     public bool NoSelfUpdate { get; private set; }
@@ -57,6 +60,7 @@ internal sealed class Options
                 case "--detect": options.Detect = true; break;
                 case "--check": options.Check = true; break;
                 case "--update": options.Update = true; break;
+                case "--report": options.Report = true; break;
                 case "--restart": options.Restart = true; break;
                 case "--relaunched": options.Relaunched = true; break;
                 case "--no-self-update": options.NoSelfUpdate = true; break;
@@ -99,6 +103,7 @@ internal sealed class Options
         Flag(Detect, "--detect");
         Flag(Check, "--check");
         Flag(Update, "--update");
+        Flag(Report, "--report");
         Flag(Restart, "--restart");
         Flag(NoSelfUpdate, "--no-self-update");
         Flag(RemoveUE4SS, "--remove-ue4ss");

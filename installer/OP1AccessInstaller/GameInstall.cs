@@ -77,6 +77,9 @@ internal static class GameInstall
     /// <summary>Asset files the package put there, with their hashes: a file the user replaced stays on updates.</summary>
     private const string ShippedAssetsFile = "shipped-assets.txt";
 
+    /// <summary>The mod's session logs (logs\session-1.log to -3) and the time of the last problem report.</summary>
+    public const string LogsFolderName = "logs";
+
     public static string BinDir(string gameDir) => Path.Combine(gameDir, "Octopath_Traveler", "Binaries", "Win64");
 
     /// <summary>UE4SS 4's folder: Win64\ue4ss.</summary>
@@ -207,7 +210,11 @@ internal static class GameInstall
             Configure(modsDir);
             CopySelf(modDir);
             if (request.WriteRegistry)
+            {
                 UninstallEntry.Write(game, version, modDir);
+                StartMenu.UpdateReportShortcut(Path.Combine(modDir, Program.ExeName), game);
+            }
+
             return version;
         }
         finally
@@ -227,7 +234,11 @@ internal static class GameInstall
             // The game was moved or removed; only the entry under Installed apps is left.
             Log.Info(Strings.Get("nothing_installed", game));
             if (writeRegistry)
+            {
                 UninstallEntry.Remove();
+                StartMenu.RemoveReportShortcuts();
+            }
+
             return;
         }
 
@@ -257,7 +268,10 @@ internal static class GameInstall
         }
 
         if (writeRegistry)
+        {
             UninstallEntry.Remove();
+            StartMenu.RemoveReportShortcuts();
+        }
     }
 
     /// <summary>Sets the given keys in an INI file and keeps everything else as it is.</summary>
@@ -469,10 +483,32 @@ internal static class GameInstall
             CopyDirectory(assets, keptAssets);
         }
 
+        // The mod's session logs (and when the last problem report went) stay for a report after
+        // the update.
+        string logs = Path.Combine(modDir, LogsFolderName);
+        string keptLogs = null;
+        if (Directory.Exists(logs))
+        {
+            keptLogs = NewTempDir("OP1AccessLogs");
+            CopyDirectory(logs, keptLogs);
+        }
+
         try
         {
             DeleteDirectory(modDir);
             CopyDirectory(packagedMod, modDir);
+            Directory.CreateDirectory(logs);
+            if (keptLogs != null)
+            {
+                foreach (string kept in Directory.GetFiles(keptLogs, "*", SearchOption.AllDirectories))
+                {
+                    string target = Path.Combine(logs, kept.Substring(keptLogs.Length).TrimStart('\\'));
+                    if (File.Exists(target))
+                        continue;
+                    Directory.CreateDirectory(Path.GetDirectoryName(target));
+                    CopyFile(kept, target);
+                }
+            }
 
             var written = new List<string>();
             string packagedAssets = Path.Combine(packagedMod, "Assets");
@@ -519,6 +555,8 @@ internal static class GameInstall
         {
             if (keptAssets != null)
                 TryDeleteDirectory(keptAssets);
+            if (keptLogs != null)
+                TryDeleteDirectory(keptLogs);
         }
     }
 
