@@ -4,7 +4,8 @@ The mod speaks the game's own texts as the game shows them. Its own words ("Arri
 "chest 1 of 5", "weak to ...") are English in the code and translated with gettext
 files: `scripts/Mods/OP1Access/Scripts/lang/<language>.po`. The mod picks the file of
 the game's text language (Options in the game), so German speech comes with the game set
-to German. English needs no file. Shipped: German (`de.po`).
+to German. English needs no file. Shipped: German (`de.po`) and Simplified Chinese
+(`zh_cn.po`).
 
 ## Translating
 
