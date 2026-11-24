@@ -10,6 +10,11 @@ turns that section into the next version and uses it as the release notes.
 - The mod speaks Simplified Chinese too, when the game's text language is Simplified
   Chinese.
 
+### Exploring
+
+- The game's radar key (O) turns the mod's object and wall sounds off and on too. The
+  game keeps the setting in the save game, so it stays after a restart.
+
 ## [0.1.0] - 2026-11-23
 
 The first release. OP1 Access makes Octopath Traveler (Steam) playable with a screen reader.

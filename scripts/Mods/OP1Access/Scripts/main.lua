@@ -7943,7 +7943,10 @@ local function beacon_step()   -- driven by radar_pump while beacon_on
             local far = not (o and x) or math.sqrt((x - o.x) ^ 2 + (y - o.y) ^ 2) > 600
             -- (after a load always: M.load_resay, set when a confirmed load's fade came up)
             if far or #beacon_objs ~= o.n or M.load_resay then
-                speak(trf("%d objects here", #beacon_objs))
+                -- (the player's radar off -- the game's O, M.radar_poll: said along, as
+                -- nothing pings)
+                speak(M.radar_off and trf("%d objects here, radar off", #beacon_objs)
+                    or trf("%d objects here", #beacon_objs))
             end
         end
         beacon_rescan_say = false
@@ -7954,6 +7957,18 @@ local function beacon_step()   -- driven by radar_pump while beacon_on
     if p then px, py, pz = read_actor_pos(p) end
     if px then
         pcall(function() shim.AudioSetListener(px, py, pz) end)
+        -- THE PLAYER'S RADAR OFF (the game's O, M.radar_poll): the objects stay known
+        -- (navigator, walker, the count), only their pings go -- silenced once, then
+        -- nothing to do
+        if M.radar_off then
+            if not M.beacons_hushed then
+                M.beacons_hushed = true
+                for i = 0, BEACON_HARDCAP - 1 do pcall(function() shim.AudioSetSource(i, false, 0, 0, 0, 0) end) end
+                beacon_slotof = {}
+            end
+            return
+        end
+        M.beacons_hushed = nil
         -- which tracked objects are in range right now, keyed by their STABLE index.
         -- SAME LEVEL ONLY: objects a floor above/below are unreachable and their
         -- mostly-vertical direction reads as vague/drifting left-right -- on
@@ -8207,7 +8222,9 @@ local function wall_step()   -- driven by radar_pump while wall_on
                 if type(oh) == "table" then pcall(function() if type(oh.Distance) == "number" and oh.Distance >= 1 then hd = oh.Distance end end) end
                 if hd < 30 then hd = 30 elseif hd > WALL_LEN then hd = WALL_LEN end
                 wall_blocked[d.name] = (hd <= WALL_BUMP_LEN) or nil   -- shared with bump detection
-                pcall(function() shim.AudioSetSource(slot, true, px + d.dx * hd, py + d.dy * hd, pz, WALL_CUE) end)
+                -- (the player's radar off -- the game's O, M.radar_poll: the wall still
+                -- counts for the bumps, its tone is off)
+                pcall(function() shim.AudioSetSource(slot, not M.radar_off, px + d.dx * hd, py + d.dy * hd, pz, WALL_CUE) end)
                 dbg[#dbg + 1] = string.format("%s%.0f", d.name:sub(1, 1), hd)
             else
                 wall_blocked[d.name] = nil
@@ -14511,6 +14528,36 @@ M.exit_dest = function(actor)
     return name, lv
 end
 
+-- THE PLAYER'S RADAR SWITCH (user request 2026-11-24: a key to turn the radar off for
+-- good, kept over restarts). The game has one: O (MenuRB; its tutorial "Press O to turn
+-- the radar on or off") runs RadarMap_C.NextSwitch, which flips the save game's
+-- IsRadarMapVisible (KSSaveGameBP_C) and hides the minimap, and RadarMap_C.
+-- SetRadarMapVisible reads the flag back -- so the game keeps it in every save and brings
+-- it back with each load (cooked bytecode, scripts/bp-disasm.py). The mod's sound radar
+-- follows that flag: off = no object pings, no wall tones; the objects stay known
+-- (navigator, walker, "objects here") and the bumps, door and talk cues go on. Read
+-- every 0.5 s while exploring. A switch right after a read is said at once ("Radar
+-- off"); one found after a pause (a load, a scene, a menu) only by the next "objects
+-- here", which says "radar off" along as long as it is off.
+M.radar_off = false
+M.radar_poll = function(now)
+    if now - (M.radar_poll_t or -99) < 0.5 or now < (M.radar_retry_at or 0) then return end
+    local prev = M.radar_poll_t
+    M.radar_poll_t = now
+    local sg = M.save_game()
+    if not sg then M.radar_retry_at = now + 30; return end   -- (no search every 5 s, ~50 ms each)
+    local ok, vis = pcall(function() return sg.IsRadarMapVisible end)
+    if not ok or type(vis) ~= "boolean" then return end
+    local off = not vis
+    if off == M.radar_off and M.radar_known then return end
+    local first = not M.radar_known
+    M.radar_known = true
+    M.radar_off = off
+    local live = not first and prev ~= nil and now - prev < 1.5
+    log("RADAR the game's radar is " .. (off and "off" or "on") .. (live and " (switched)" or ""))
+    if live then speak(off and tr("Radar off") or tr("Radar on"), true) end
+end
+
 radar_pump = function(src)
     local now = os.clock()
     if now - pump_lastt < PUMP_MIN_DT then return end
@@ -14937,6 +14984,7 @@ radar_pump = function(src)
             if audio_inited then pcall(load_cues); pcall(M.audio_set_ranges) end
             log("Audio auto-init: " .. tostring(okA))
         end
+        pcall(M.radar_poll, now)   -- (the player's radar switch, before the pings)
         if audio_inited then
             pcall(bump_step)
             pcall(beacon_step)

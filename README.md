@@ -139,6 +139,7 @@ main menu, **Backspace** to go back in menus. The mod adds these:
 | **Backspace** | Walk to the target; press again to stop |
 | **Ctrl + Enter** | Walk to the target or stop, like Backspace |
 | **Ctrl + F9** | What you can do in front of you right now: talk, and which path actions |
+| **O** (the game's own radar key) | Radar off / on: the game's minimap and the mod's object and wall sounds together; kept in the save game, like the minimap |
 
 ### In battle
 
@@ -197,6 +198,11 @@ main menu, **Backspace** to go back in menus. The mod adds these:
   wall radar sounds the walls ahead and to the sides, a thud plays when you walk into
   one, and a chirp when you pass through a door. You can put your own sounds in
   `Mods\OP1Access\Assets` (see the `README.md` there).
+- **O**, the game's key for its radar, turns the object and wall sounds off and on with
+  the minimap (“Radar off”). The game keeps this in the save game, so it stays after a
+  restart once the game has saved (an autosave on entering another area is enough).
+  With the radar off, the navigator, the walker, the thud and the door chirp keep
+  working, and the object count on arrival adds “radar off”.
 - **On arrival** you hear the area, its region and how dangerous it is (“North
   Atlasdam Flats, Flatlands, danger level 1”) and how many objects the radar found.
   Door and action prompts are said as they come up, with Enter as the key (“Open,
