@@ -5,6 +5,11 @@ turns that section into the next version and uses it as the release notes.
 
 ## [Unreleased]
 
+### Exploring
+
+- An opened chest is silent on the radar, so a chest you hear is one still to open. The
+  navigator still lists opened chests.
+
 ### Menus
 
 - While the game saves, the mod no longer says a “Yes” that isn't there (“Now saving...

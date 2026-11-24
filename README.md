@@ -194,7 +194,8 @@ main menu, **Backspace** to go back in menus. The mod adds these:
 - **The radar** is on whenever you can walk around, and quiet in menus, scenes and
   battles; like the game, it also goes silent while another window is in front.
   Chests, exits, people, buildings and shops each have their own sound, which comes
-  from where the thing is (Steam Audio, 3D) and repeats faster the closer you get. A
+  from where the thing is (Steam Audio, 3D) and repeats faster the closer you get; an
+  opened chest is silent. A
   wall radar sounds the walls ahead and to the sides, a thud plays when you walk into
   one, and a chirp when you pass through a door. You can put your own sounds in
   `Mods\OP1Access\Assets` (see the `README.md` there).

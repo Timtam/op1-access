@@ -7973,8 +7973,11 @@ local function beacon_rescan()
                     end
                     if keep then
                         -- (h: the shim's check that this memory still holds the object,
-                        -- for anything that touches it later besides its position)
-                        beacon_objs[#beacon_objs + 1] = { actor = o, cat = c.name, h = M.handle(o) }
+                        -- for anything that touches it later besides its position; addr:
+                        -- a chest's, for its opened flag -- read raw, M.chest_state)
+                        local a
+                        if c.name == "chest" then pcall(function() a = o:GetAddress() end) end
+                        beacon_objs[#beacon_objs + 1] = { actor = o, cat = c.name, h = M.handle(o), addr = a }
                     end
                 end
             end
@@ -8047,6 +8050,14 @@ local function beacon_step()   -- driven by radar_pump while beacon_on
             -- CANNOT catch -> it crashes the game. read_actor_pos goes through the shim's
             -- SEH-guarded ActorLoc, so a dead actor just yields nil and we skip it.
             local ox, oy, oz = read_actor_pos(o.actor)
+            -- AN OPENED CHEST IS SILENT (player report 2026-11-24: its sound went on after
+            -- it was opened, so walking past one didn't tell whether it was worth a detour).
+            -- Its IsOpenFlag, read raw each round (it flips as you open it); after the
+            -- position, so only a live chest is read. The navigator still lists it.
+            if ox and o.addr then
+                local opened = M.chest_state({ addr = o.addr })
+                if opened then ox = nil end
+            end
             if ox then
                 local dx, dy = ox - px, oy - py
                 local d2 = dx * dx + dy * dy
