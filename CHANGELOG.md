@@ -10,6 +10,7 @@ turns that section into the next version and uses it as the release notes.
 - A guide: Shift + Backspace plans the route to the selected target like the walker,
   but you walk, following a sound at the route's next point (the target's own sound).
   The other radar sounds pause meanwhile; press again to stop.
+- Chests have a sound of their own on the radar (`chest.flac`) instead of a plain beep.
 - An opened chest is silent on the radar, so a chest you hear is one still to open. The
   navigator still lists opened chests.
 

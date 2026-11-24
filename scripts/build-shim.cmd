@@ -217,5 +217,10 @@ xcopy /E /I /Y /Q "%PRISM_SRC%\LICENSES" "%GAME_MODS%\licenses\prism\LICENSES" >
 :: Assets folder for custom cue sounds: ensure it exists + ship the README (never clobber user files)
 if not exist "%GAME_MODS%\Assets" mkdir "%GAME_MODS%\Assets"
 if exist "%REPO%\scripts\Mods\OP1Access\Assets\README.md" copy /Y "%REPO%\scripts\Mods\OP1Access\Assets\README.md" "%GAME_MODS%\Assets\README.md" >nul
+:: ...and the shipped sounds it doesn't have yet (a new one such as chest.flac); one already
+:: there may be the user's own, so it is never overwritten
+for %%F in ("%REPO%\scripts\Mods\OP1Access\Assets\*.flac" "%REPO%\scripts\Mods\OP1Access\Assets\*.mp3" "%REPO%\scripts\Mods\OP1Access\Assets\*.wav") do (
+    if not exist "%GAME_MODS%\Assets\%%~nxF" copy /Y "%%~F" "%GAME_MODS%\Assets\%%~nxF" >nul
+)
 echo [build] Deployed to: "%GAME_MODS%\Scripts"
 echo [build] Done.
