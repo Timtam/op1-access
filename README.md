@@ -8,8 +8,7 @@ and points to everything around you, and a walker that takes you there.
 
 Speech and braille go through [Prism](https://github.com/ethindp/prism) to NVDA,
 JAWS, ZoomText and other screen readers, or to Windows' own voices (OneCore / SAPI)
-when none is running. The mod speaks English, German or Simplified Chinese and
-follows the game's text language.
+when none is running.
 
 > **Status:** early but playable. `CHANGELOG.md` lists what is there,
 > [docs/known-issues.md](docs/known-issues.md) what is open or not tested yet.
@@ -182,8 +181,8 @@ main menu, **Backspace** to go back in menus. The mod adds these:
 - Every screen is named as it opens, and the focused entry is read as you move.
   Confirm dialogs are read with their question and the selected answer.
 - The mod's own words follow the game's text language, also when you change it in the
-  game's options: English, German and Simplified Chinese for now. More languages are
-  one text file each, see [docs/translations.md](docs/translations.md).
+  game's options; a language without a translation is spoken in English. Which
+  languages there are: [Texts and translations](#texts-and-translations).
 - Money is said as a word in the game's language (“50 leaves”); the game itself only
   shows a ⑳ sign, which screen readers can't read. Keys the tutorials and the menus'
   footers show as key caps (“Press Ⓞ”) are said by name (“Press O”).
@@ -359,14 +358,21 @@ in [docs/build-and-release.md](docs/build-and-release.md).
 
 ### Texts and translations
 
+The mod's own words (everything that isn't the game's own text) are there in:
+
+- English, built in, also for every game language without a translation
+- German: `Scripts/lang/de.po`
+- Simplified Chinese: `Scripts/lang/zh_cn.po`
+
+Another language is one more `.po` file, see [docs/translations.md](docs/translations.md).
+
 Every text the mod says itself goes through `tr()` / `trf()` / `trn()` in
 `main.lua`. After adding or changing one, update the template and the translations:
 ```
 python scripts\i18n.py update
 python scripts\i18n.py check
 ```
-then translate the new entries in `Scripts\lang\de.po`. How to add a language is in
-[docs/translations.md](docs/translations.md).
+then translate the new entries in each `Scripts\lang\<language>.po`.
 
 ## Releasing
 
