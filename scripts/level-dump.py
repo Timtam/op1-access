@@ -33,7 +33,7 @@ BIN = {"Vector": "<3f", "Rotator": "<3f", "Vector2D": "<2f", "Quat": "<4f", "Int
 class Package:
     def __init__(self, umap):
         self.h = open(umap, "rb").read()
-        uexp = umap[:-5] + ".uexp"
+        uexp = os.path.splitext(umap)[0] + ".uexp"   # (a .umap or a .uasset)
         self.e = open(uexp, "rb").read() if os.path.exists(uexp) else b""
         b, self.o = self.h, 0
         assert self.i32() == -1641380927, "not a package"  # 0x9E2A83C1

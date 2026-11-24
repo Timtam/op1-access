@@ -324,6 +324,19 @@ against one Eissentinel in the study dungeon. Weaknesses in the game's tile orde
 
 ## Walker (user report 2026-11-14)
 
+- **The rope bridge in the Mountain Pass — fixed 2026-11-24, checked on the level's
+  rebuilt collision, not yet walked in the game.** A player's report on 0.1.0: in
+  Olberic's chapter 1 every way from Cobbleston up to the Brigands' Den was "not
+  reachable" (F_Mount_1_1; the user had walked it before). Rebuilt from the level's files
+  and searched with the router itself (docs/router-sim.md): the rope bridge's deck is
+  invisible slabs that channel 0 doesn't see, and at its south end the cliff top runs on
+  under it, 200 lower, with just room to stand between them. The deck's first cells took
+  that ground as their floor, and the way over the bridge broke off. Routes before
+  1d2e021 went along the top of the bridge's invisible side rail, which the ledge rule
+  now refuses. Since faefe56 a drop of more than a step on channel 0 asks the capsule's
+  own profile for a floor within a step of yours (nav_ground). On the rebuilt level all 10
+  spots the player tried from reach the exit over the deck's middle (0.1.0: none). Likely
+  also behind the failed searches "before the cave" of 2026-11-18 (next entry).
 - **"Searching the whole area", then no way, by a chest -- the search starts from your trail
   since this change, in a unit test only.** In Olberic's chapter 1 (2026-11-18), twice right
   after the walker had led to a chest and it was opened, every search from there failed:
