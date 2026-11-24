@@ -14,6 +14,8 @@ turns that section into the next version and uses it as the release notes.
 
 - The game's radar key (O) turns the mod's object and wall sounds off and on too. The
   game keeps the setting in the save game, so it stays after a restart.
+- The walker crosses the rope bridge in the Mountain Pass again, on the way to the
+  Brigands' Den in Olberic's chapter 1. In 0.1.0 it said the way up couldn't be reached.
 
 ## [0.1.0] - 2026-11-23
 

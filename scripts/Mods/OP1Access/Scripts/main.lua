@@ -9239,8 +9239,8 @@ end
 
 -- ground height at cell (bx,by) approached from height za (down-trace from
 -- za+160 to za-240; false = void / too big a drop / no room to stand). Cached per cell
--- + band.
-local function nav_ground(R, ksl, p, bx, by, za)
+-- + band. fromstart: za is the start node's, the player's capsule, not a floor.
+local function nav_ground(R, ksl, p, bx, by, za, fromstart)
     local gk = cellkey(bx, by) .. "@" .. math.floor((za - R.pz) / 200 + 0.5)
     local c = R.gcache[gk]
     if c ~= nil then return c, 0 end
@@ -9264,6 +9264,29 @@ local function nav_ground(R, ksl, p, bx, by, za)
         local inside, u = NV.solid_at(R, ksl, p, wx, wy, z)
         used = used + u
         if inside then z = false; R.nroom = (R.nroom or 0) + 1 end
+    end
+    -- AN INVISIBLE FLOOR OVER CHANNEL 0'S (user report 2026-11-24, the Mountain Pass to the
+    -- Brigands' Den, F_Mount_1_1: "not reachable" since 0.1.0, walked fine before). The rope
+    -- bridge's deck is invisible slabs (channel 0 blind, z ~1400), and at its south end the
+    -- cliff top runs on under it, 200 lower, with room to stand in between (the deck's
+    -- underside 8 over a head). So the deck's first cells took that ground as their floor,
+    -- a drop of 190, and the way over the bridge broke off there. The routes before ran
+    -- along the top of the bridge's invisible side rail instead, which the ledge rule
+    -- (NV.rise_ok, 1d2e021) rightly refuses. Where channel 0's floor lies more than a step
+    -- below the floor you come from, the capsule's own profile is asked too: a floor of its
+    -- own within a step of yours, and over channel 0's, with room, is what you walk onto.
+    -- (One trace more, on drops only. Mock on the level's real collision: the scratchpad's
+    -- run_mountpass.lua / test_deck.lua.)
+    if z and not R.groundch then
+        local af = fromstart and (za - (M.pfoot or 82)) or za   -- the floor you come from
+        if z < af - NV.RISE_FREE then
+            local zp, u = NV.pawn_floor(R, ksl, p, wx, wy, af)
+            used = used + u
+            if zp and zp > z + NV.RISE_FREE and math.abs(zp - af) <= NV.RISE_FREE then
+                z = zp
+                R.npawn = (R.npawn or 0) + 1
+            end
+        end
     end
     -- nothing (or no room) on channel 0: an invisible floor? (NV.pawn_floor)
     if not z and not R.groundch then
@@ -10678,7 +10701,7 @@ NV.route_slice = function(R, budget, itercap, deadline)
                         blocked = blocked + 1
                     end
                 elseif inbox then
-                    local zb, used = nav_ground(R, ksl, p, nx, ny, best.z)
+                    local zb, used = nav_ground(R, ksl, p, nx, ny, best.z, best.k == R.startk and not R.shifted)
                     budget = budget - used
                     if zb and math.abs(zb - best.z) <= 200
                         and (not R.stepin or NV.stepin_rise_ok(R, ksl, p, best, nx, ny, zb))
