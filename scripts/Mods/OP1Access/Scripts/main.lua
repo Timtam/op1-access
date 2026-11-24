@@ -12080,6 +12080,23 @@ NV.guide_stop = function(msg)
     pcall(function() shim.AudioSetSource(M.GUIDE_SLOT, false, 0, 0, 0, 0) end)
     if msg then speak(msg) end
 end
+-- ARRIVED as the walker decides it (nav_walk_watch's "arrival forgiveness"), not only at
+-- the last waypoint: that is the target's own middle, and a chest can't be stood on (the
+-- user stood 104 from an opened one and never heard "Arrived", 2026-11-24). Within 170
+-- of the target on its floor; an event's spot only stepped in (45), a chest's other side
+-- (spot) at 35; a door (an exit's too) and a keeperless shop once the game's prompt
+-- shows -- then silently, the prompt's speech says it. -> arrived, silent
+NV.guide_arrived = function(p, px, py, pz)
+    local goal = NV.goal
+    if not goal then return false end
+    local gd = math.sqrt((px - goal.x) ^ 2 + (py - goal.y) ^ 2)
+    local floor_ok = math.abs(pz - (goal.z or pz)) < LEVEL_THRESH
+    if goal.stepin then return NV.stepin_prompt() == true, true end
+    if goal.cat == "exit" or goal.cat == "door" then return (M.popup_said and gd < 450) and true or false, true end
+    if goal.cat == "event" then return gd < 45 and floor_ok, false end
+    if goal.cat == "spot" then return gd < 35 and floor_ok, false end
+    return gd < 170 and floor_ok and NV.goal_level(p, px, py, pz) ~= false, false
+end
 -- the distance from (px, py) to the leg a -> b
 NV.seg_dist = function(px, py, ax, ay, bx, by)
     local dx, dy = bx - ax, by - ay
@@ -12100,6 +12117,12 @@ NV.guide_tick = function()   -- nav_tick, while exploring
     local px, py, pz
     if p then px, py, pz = read_actor_pos(p) end
     if not px then return end
+    local arrived, silent = NV.guide_arrived(p, px, py, pz)
+    if arrived then
+        log("GUIDE arrived")
+        NV.guide_stop((not silent) and tr("Arrived") or nil)
+        return
+    end
     local pts, now = g.pts, os.clock()
     -- reached: this waypoint, or one of the next three (a corner cut)
     for j = math.min(#pts, g.wp + 3), g.wp, -1 do
@@ -12110,9 +12133,18 @@ NV.guide_tick = function()   -- nav_tick, while exploring
         end
     end
     if g.wp > #pts then
-        log("GUIDE arrived")
-        NV.guide_stop(tr("Arrived"))
-        return
+        -- the last point reached: arrived -- unless the target wants more than coming
+        -- close (an event's spot stepped into, a spot, a door's or a shop's prompt, an
+        -- exit's transition): the ping stays there until NV.guide_arrived says so
+        local goal = NV.goal
+        if goal and (goal.stepin or goal.cat == "event" or goal.cat == "spot"
+            or goal.cat == "door" or goal.cat == "exit") then
+            g.wp = #pts
+        else
+            log("GUIDE arrived")
+            NV.guide_stop(tr("Arrived"))
+            return
+        end
     end
     local w, a = pts[g.wp], pts[g.wp - 1]
     -- far off the route for a while: plan again from here
