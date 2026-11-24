@@ -11,6 +11,8 @@ turns that section into the next version and uses it as the release notes.
   Please wait...”); “Save successful” has only its OK.
 - Browsing the journal fast, the mod says the entry the cursor lands on, and then its
   text, also when you come back to an entry.
+- Tutorials say how to go on: the page, and that Backspace shows the next page or closes
+  the tutorial (Enter does nothing there).
 
 ## [0.1.1] - 2026-11-24
 

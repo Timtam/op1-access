@@ -3274,8 +3274,28 @@ do
         end) end)
         if #parts == 0 then return end
         local say = M.join_text(parts)
-        if say ~= last_tut then last_tut = say; speak(say) end
+        if say ~= last_tut then last_tut = say; speak(say .. " " .. M.tutorial_hint(w)) end
     end
+end
+-- HOW TO GO ON (player report 2026-11-24: nothing said how to close a tutorial, though
+-- the screen shows it). The pop-up takes only the cancel key -- Backspace, Escape, B; its
+-- bytecode: OnMenuCancel -> ChangeNextImage, Enter does nothing -- which shows the next
+-- page, or closes it after the last (PageDataList has no page after ShowPageIndex).
+-- Read raw: ShowPageIndex @0x238, PageDataList @0x2B0 (its Num at +8).
+M.TUT_PAGE, M.TUT_PAGES = 0x238, 0x2B0 + 8
+M.tutorial_hint = function(w)
+    local i, n
+    if shim and shim.Peek then
+        local a = 0
+        pcall(function() a = w:GetAddress() end)
+        if a ~= 0 then i, n = shim.Peek(a + M.TUT_PAGE, "i32"), shim.Peek(a + M.TUT_PAGES, "i32") end
+    end
+    if type(i) ~= "number" or type(n) ~= "number" or n < 1 or n > 50 or i < 0 or i >= n then
+        return tr("Go on with Backspace.")
+    end
+    if n == 1 then return tr("Close with Backspace.") end
+    if i + 1 < n then return trf("Page %d of %d. Next page with Backspace.", i + 1, n) end
+    return trf("Page %d of %d. Close with Backspace.", i + 1, n)
 end
 
 -- Field-command (path-action) menu reader. Opened with J near an NPC/object; the focused
