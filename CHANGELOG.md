@@ -10,6 +10,11 @@ turns that section into the next version and uses it as the release notes.
 - An opened chest is silent on the radar, so a chest you hear is one still to open. The
   navigator still lists opened chests.
 
+### Story
+
+- Stories, flashbacks and letters say when the game waits for a key: “Continue with
+  Enter” after a page's last line, “Close with Backspace” for a letter.
+
 ### Menus
 
 - While the game saves, the mod no longer says a “Yes” that isn't there (“Now saving...

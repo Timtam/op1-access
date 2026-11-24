@@ -3298,6 +3298,34 @@ M.tutorial_hint = function(w)
     return trf("Page %d of %d. Close with Backspace.", i + 1, n)
 end
 
+-- WHEN A STORY PAGE WAITS (player report 2026-11-24: in stories and flashbacks the lines
+-- come by themselves, then the game waits for a key, with nothing to tell). Their window,
+-- NarrationWidget_C (cooked bytecode): State (@0x2B8) 2 draws a page's lines one by one
+-- (each is said as it comes, GetTalkText), 7 = all drawn and WAITING -- only Decide
+-- (Enter, E) goes on: the next page, or after the last one the end. A letter or note
+-- (NoteMode @0xCE8, its whole text at once) waits in State 2 for Cancel (Backspace),
+-- which closes it. Said once per wait, queued after the lines; M.narr_waited is cleared
+-- by every other state (and by another event screen, M.poll_event_menus).
+M.NARR_STATE, M.NARR_NOTE, M.NARR_PAGE = 0x2B8, 0xCE8, 0x2D0
+M.poll_narration = function(w)
+    if not (shim and shim.Peek) then return end
+    local a = 0
+    pcall(function() a = w:GetAddress() end)
+    if a == 0 then return end
+    local st, note = shim.Peek(a + M.NARR_STATE, "u8"), shim.Peek(a + M.NARR_NOTE, "u8")
+    local key
+    if note == 0 and st == 7 then
+        key = "page" .. tostring(shim.Peek(a + M.NARR_PAGE, "i32"))
+    elseif note and note ~= 0 and st == 2 then
+        key = "note"
+    end
+    if not key then M.narr_waited = nil; return end
+    if key == M.narr_waited then return end
+    M.narr_waited = key
+    log("NARRATION waits: " .. key)
+    speak(key == "note" and tr("Close with Backspace.") or tr("Continue with Enter."))
+end
+
 -- Field-command (path-action) menu reader. Opened with J near an NPC/object; the focused
 -- screen is FieldCommandMenu_C, CurrentCursor is the selected action, ShowVerticalBox is
 -- the action buttons (FieldCommandMenuItemPanel_C) -- GetChildAt(cursor).Text is the label
@@ -3479,6 +3507,7 @@ M.poll_event_menus = function()
         end
     end
     if cls == "BattleResultPanelWidget_C" and M.poll_battle_result then pcall(M.poll_battle_result, w) end
+    if cls == "NarrationWidget_C" then pcall(M.poll_narration, w) else M.narr_waited = nil end
     M.evm_active = false
 end
 -- From the async loop: at most 10x a second, one call in flight, queue the reader onto
