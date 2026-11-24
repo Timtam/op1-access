@@ -5,6 +5,8 @@ turns that section into the next version and uses it as the release notes.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-24
+
 ### Speech
 
 - The mod speaks Simplified Chinese too, when the game's text language is Simplified
