@@ -4427,14 +4427,17 @@ M.poll_menu_list = function()
                 return
             end
         end
-        local row, idx, nrow = nil, nil, 0
+        local row, idx, nrow, ncur = nil, nil, 0, 0
         pcall(function()
             w.ItemWidgetList_ActiveItems:ForEach(function(_, e)
                 nrow = nrow + 1
                 local r = e:get()
                 local v
                 pcall(function() v = M.wvis(r.RefIcon_Cursor) end)
-                if not row and (v == 0 or v == 3 or v == 4) then row = r end
+                if v == 0 or v == 3 or v == 4 then
+                    ncur = ncur + 1   -- (rows showing the cursor: two while it moves on)
+                    if not row then row = r end
+                end
             end)
         end)
         -- (not in the shop: a goods row without its cursor icon is the moment Enter opens
@@ -4493,6 +4496,18 @@ M.poll_menu_list = function()
         end
         -- (a journal row by its title: its "new" mark may go once the cursor is on it)
         sig = string.format("R%X:%s:%s", addr or 0, tostring(idx), (scr == "journal") and c1 or say)
+        -- THE JOURNAL BROWSED FAST (player report 2026-11-24: the wrong title first, then the
+        -- right one, and then not the entry's text): moving on, the row left keeps its
+        -- cursor a moment and was taken as the first of two. A journal row is said once it
+        -- is the same on a second poll with the cursor on it alone (at the latest after
+        -- 0.5 s); meanwhile the last row's text, now out of date, is dropped.
+        if scr == "journal" and sig ~= st.said then
+            if st.j_wait ~= sig then st.j_wait, st.j_wait_n = sig, 0 else st.j_wait_n = st.j_wait_n + 1 end
+            if not ((st.j_wait_n >= 1 and ncur <= 1) or st.j_wait_n >= 5) then
+                st.help_at = nil
+                return
+            end
+        end
         -- the journal's list: its title first ("Tagebuch von Ophilia") when it opens
         if scr == "journal" and sig ~= st.said then
             local okt, title = pcall(M.journal_list_title, w)
@@ -4537,8 +4552,11 @@ M.ml_speak = function(st, now, sig, say, extra, scr, which, owner, nowait)
         st.extra_say = extra
         -- the support screen's travelers and slots: their help line is said each time,
         -- even when it is the one said before (Ophilia's "...: Keine" after Cyrus's was
-        -- left out; back on a used slot, its description again)
-        if sig:match("^U") then st.help_said = nil end
+        -- left out; back on a used slot, its description again). A journal row too: its
+        -- text belongs to it (browsing fast, a text cut off by the next row was taken as
+        -- said, and never came when the row came back)
+        if sig:match("^U") or scr == "journal" then st.help_said = nil end
+        st.j_retry = 0
     end
     if st.help_at and now >= st.help_at then
         st.help_at = nil
@@ -4562,7 +4580,14 @@ M.ml_speak = function(st, now, sig, say, extra, scr, which, owner, nowait)
             -- the journal: the text beside its list instead of a help box
             if scr == "journal" then
                 local okj, jt = pcall(M.journal_text, owner)
-                if okj and jt then parts[#parts + 1] = jt end
+                if okj and jt then
+                    parts[#parts + 1] = jt
+                elseif (st.j_retry or 0) < 5 then
+                    -- (the text not there yet: again a moment later, up to 0.5 s)
+                    st.j_retry = (st.j_retry or 0) + 1
+                    st.help_at = now + 0.1
+                    return
+                end
             end
             local hh = (scr ~= "journal") and M.ml_help() or nil
             -- a locked skill's help is just "???"

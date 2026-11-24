@@ -9,6 +9,8 @@ turns that section into the next version and uses it as the release notes.
 
 - While the game saves, the mod no longer says a “Yes” that isn't there (“Now saving...
   Please wait...”); “Save successful” has only its OK.
+- Browsing the journal fast, the mod says the entry the cursor lands on, and then its
+  text, also when you come back to an entry.
 
 ## [0.1.1] - 2026-11-24
 
