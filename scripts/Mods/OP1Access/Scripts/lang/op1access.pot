@@ -1,7 +1,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: OP1 Access\n"
-"POT-Creation-Date: 2026-11-24 12:46\n"
+"POT-Creation-Date: 2026-11-24 12:59\n"
 "Language: \n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -16,7 +16,7 @@ msgstr ""
 msgid "Tab"
 msgstr ""
 
-#: main.lua:454 main.lua:13140
+#: main.lua:454 main.lua:13163
 msgid "Enter"
 msgstr ""
 
@@ -285,7 +285,7 @@ msgstr ""
 msgid "Save and load"
 msgstr ""
 
-#: main.lua:730 main.lua:13373
+#: main.lua:730 main.lua:13396
 msgid "Path action"
 msgstr ""
 
@@ -376,7 +376,7 @@ msgstr ""
 msgid "can't be chosen"
 msgstr ""
 
-#: main.lua:1660 main.lua:13141
+#: main.lua:1660 main.lua:13164
 #, lua-format
 msgid "%s: %s"
 msgstr ""
@@ -404,7 +404,7 @@ msgstr ""
 msgid "Category %s"
 msgstr ""
 
-#: main.lua:1864 main.lua:1980 main.lua:13701
+#: main.lua:1864 main.lua:1980 main.lua:13724
 #, lua-format
 msgid "%d of %d"
 msgstr ""
@@ -418,7 +418,7 @@ msgstr ""
 msgid "Weapon"
 msgstr ""
 
-#: main.lua:1973 main.lua:8996
+#: main.lua:1973 main.lua:9019
 msgid "Unknown"
 msgstr ""
 
@@ -455,7 +455,7 @@ msgstr ""
 msgid "Shop"
 msgstr ""
 
-#: main.lua:2425 main.lua:2535 main.lua:4523 main.lua:5452 main.lua:13813
+#: main.lua:2425 main.lua:2535 main.lua:4546 main.lua:5475 main.lua:13836
 #, lua-format
 msgid "%s, unavailable"
 msgstr ""
@@ -538,7 +538,7 @@ msgstr ""
 msgid "danger level %d to %d"
 msgstr ""
 
-#: main.lua:2764 main.lua:3147 main.lua:14513
+#: main.lua:2764 main.lua:3147 main.lua:14536
 #, lua-format
 msgid "danger level %d"
 msgstr ""
@@ -602,7 +602,7 @@ msgstr ""
 msgid "south-west"
 msgstr ""
 
-#: main.lua:2823 main.lua:6329 main.lua:7456
+#: main.lua:2823 main.lua:6352 main.lua:7479
 msgid "here"
 msgstr ""
 
@@ -695,1505 +695,1504 @@ msgstr ""
 msgid "on the way to %s"
 msgstr ""
 
-#: main.lua:3294
+#: main.lua:3283
+#, lua-format
+msgid "Page %d of %d."
+msgstr ""
+
+#: main.lua:3313
 msgid "Go on with Backspace."
 msgstr ""
 
-#: main.lua:3296 main.lua:3326
+#: main.lua:3314
+msgid "Next page with Backspace."
+msgstr ""
+
+#: main.lua:3315 main.lua:3349
 msgid "Close with Backspace."
 msgstr ""
 
-#: main.lua:3297
-#, lua-format
-msgid "Page %d of %d. Next page with Backspace."
-msgstr ""
-
-#: main.lua:3298
-#, lua-format
-msgid "Page %d of %d. Close with Backspace."
-msgstr ""
-
-#: main.lua:3326
+#: main.lua:3349
 msgid "Continue with Enter."
 msgstr ""
 
-#: main.lua:3349
+#: main.lua:3372
 #, lua-format
 msgid "Action %s"
 msgstr ""
 
-#: main.lua:4051
+#: main.lua:4074
 #, lua-format
 msgid "%s %d to %d"
 msgstr ""
 
-#: main.lua:4134
+#: main.lua:4157
 #, lua-format
 msgid "%s %s to %s"
 msgstr ""
 
-#: main.lua:4142
+#: main.lua:4165
 msgid "can't equip"
 msgstr ""
 
-#: main.lua:4201
+#: main.lua:4224
 msgid "Equip it: choose a traveler"
 msgstr ""
 
-#: main.lua:4265
+#: main.lua:4288
 #, lua-format
 msgid "%d free slot"
 msgid_plural "%d free slots"
 msgstr[0] ""
 msgstr[1] ""
 
-#: main.lua:4303 main.lua:4444
+#: main.lua:4326 main.lua:4467
 #, lua-format
 msgid ", tab %d of %d"
 msgstr ""
 
-#: main.lua:4324
+#: main.lua:4347
 msgid "No support skills learned yet"
 msgstr ""
 
-#: main.lua:4326
+#: main.lua:4349
 #, lua-format
 msgid "Slot %d of %d: %s"
 msgstr ""
 
-#: main.lua:4348
+#: main.lua:4371
 #, lua-format
 msgid "%s, level %s"
 msgstr ""
 
-#: main.lua:4350
+#: main.lua:4373
 #, lua-format
 msgid "%s, HP %s of %s"
 msgstr ""
 
-#: main.lua:4351
+#: main.lua:4374
 #, lua-format
 msgid "%s, SP %s of %s"
 msgstr ""
 
-#: main.lua:4444
+#: main.lua:4467
 #, lua-format
 msgid "Tab %d"
 msgstr ""
 
-#: main.lua:4456
+#: main.lua:4479
 #, lua-format
 msgid "%s, next skill %s LBP"
 msgstr ""
 
-#: main.lua:4521 main.lua:13811
+#: main.lua:4544 main.lua:13834
 msgid "on hand"
 msgstr ""
 
-#: main.lua:4527
+#: main.lua:4550
 #, lua-format
 msgid "%s, not usable here"
 msgstr ""
 
-#: main.lua:4538
+#: main.lua:4561
 msgid "Locked skill"
 msgstr ""
 
-#: main.lua:4539
+#: main.lua:4562
 #, lua-format
 msgid "%s, learned"
 msgstr ""
 
-#: main.lua:4544 main.lua:4571
+#: main.lua:4567 main.lua:4594
 #, lua-format
 msgid "%s, equipped"
 msgstr ""
 
-#: main.lua:4544
+#: main.lua:4567
 #, lua-format
 msgid "%s, can't equip"
 msgstr ""
 
-#: main.lua:4576
+#: main.lua:4599
 #, lua-format
 msgid "Slot %d of %d"
 msgstr ""
 
-#: main.lua:4701
+#: main.lua:4724
 msgid "Sword"
 msgstr ""
 
-#: main.lua:4701
+#: main.lua:4724
 msgid "Spear"
 msgstr ""
 
-#: main.lua:4701
+#: main.lua:4724
 msgid "Dagger"
 msgstr ""
 
-#: main.lua:4701
+#: main.lua:4724
 msgid "Axe"
 msgstr ""
 
-#: main.lua:4701
+#: main.lua:4724
 msgid "Bow"
 msgstr ""
 
-#: main.lua:4702
+#: main.lua:4725
 msgid "Staff"
 msgstr ""
 
-#: main.lua:4702 main.lua:4702 main.lua:4702
+#: main.lua:4725 main.lua:4725 main.lua:4725
 msgid "Fire"
 msgstr ""
 
-#: main.lua:4702
+#: main.lua:4725
 msgid "Ice"
 msgstr ""
 
-#: main.lua:4702
+#: main.lua:4725
 msgid "Lightning"
 msgstr ""
 
-#: main.lua:4703
+#: main.lua:4726
 msgid "Wind"
 msgstr ""
 
-#: main.lua:4703
+#: main.lua:4726
 msgid "Light"
 msgstr ""
 
-#: main.lua:4703
+#: main.lua:4726
 msgid "Dark"
 msgstr ""
 
-#: main.lua:4781
+#: main.lua:4804
 #, lua-format
 msgid "%s SP"
 msgstr ""
 
-#: main.lua:4783
+#: main.lua:4806
 #, lua-format
 msgid "%s left"
 msgstr ""
 
-#: main.lua:4924
+#: main.lua:4947
 msgid "Companion"
 msgstr ""
 
-#: main.lua:4977
+#: main.lua:5000
 #, lua-format
 msgid "%d unknown"
 msgstr ""
 
-#: main.lua:4983
+#: main.lua:5006
 #, lua-format
 msgid "%s locked"
 msgstr ""
 
-#: main.lua:4986
+#: main.lua:5009
 msgid "1 unknown locked"
 msgstr ""
 
-#: main.lua:4992
+#: main.lua:5015
 #, lua-format
 msgid "weak to %s, all locked"
 msgstr ""
 
-#: main.lua:4993
+#: main.lua:5016
 #, lua-format
 msgid "weak to %s"
 msgstr ""
 
-#: main.lua:5028
+#: main.lua:5051
 #, lua-format
 msgid "%s: weaknesses locked"
 msgstr ""
 
-#: main.lua:5028
+#: main.lua:5051
 #, lua-format
 msgid "%s: weaknesses free again"
 msgstr ""
 
-#: main.lua:5058 main.lua:5096 main.lua:5120
+#: main.lua:5081 main.lua:5119 main.lua:5143
 msgid "broken"
 msgstr ""
 
-#: main.lua:5059
+#: main.lua:5082
 #, lua-format
 msgid "shield %s"
 msgstr ""
 
-#: main.lua:5111
+#: main.lua:5134
 msgid "abilities hit all"
 msgstr ""
 
-#: main.lua:5111
+#: main.lua:5134
 msgid "attacks hit all"
 msgstr ""
 
-#: main.lua:5111
+#: main.lua:5134
 msgid "evasion up"
 msgstr ""
 
-#: main.lua:5112
+#: main.lua:5135
 msgid "BP boost"
 msgstr ""
 
-#: main.lua:5112
+#: main.lua:5135
 msgid "counter"
 msgstr ""
 
-#: main.lua:5112
+#: main.lua:5135
 msgid "critical up"
 msgstr ""
 
-#: main.lua:5112
+#: main.lua:5135
 msgid "criticals continue"
 msgstr ""
 
-#: main.lua:5113
+#: main.lua:5136
 msgid "dark enchant"
 msgstr ""
 
-#: main.lua:5113
+#: main.lua:5136
 msgid "damage guard"
 msgstr ""
 
-#: main.lua:5113
+#: main.lua:5136
 msgid "elemental evasion up"
 msgstr ""
 
-#: main.lua:5113
+#: main.lua:5136
 msgid "fire enchant"
 msgstr ""
 
-#: main.lua:5114
+#: main.lua:5137
 msgid "health up"
 msgstr ""
 
-#: main.lua:5114
+#: main.lua:5137
 msgid "accuracy up"
 msgstr ""
 
-#: main.lua:5114
+#: main.lua:5137
 msgid "ice enchant"
 msgstr ""
 
-#: main.lua:5114
+#: main.lua:5137
 msgid "invincible"
 msgstr ""
 
-#: main.lua:5115
+#: main.lua:5138
 msgid "items hit all"
 msgstr ""
 
-#: main.lua:5115
+#: main.lua:5138
 msgid "light enchant"
 msgstr ""
 
-#: main.lua:5115
+#: main.lua:5138
 msgid "elemental attack up"
 msgstr ""
 
-#: main.lua:5116
+#: main.lua:5139
 msgid "spells continue"
 msgstr ""
 
-#: main.lua:5116
+#: main.lua:5139
 msgid "spells converge"
 msgstr ""
 
-#: main.lua:5116
+#: main.lua:5139
 msgid "spell criticals"
 msgstr ""
 
-#: main.lua:5117
+#: main.lua:5140
 msgid "elemental defense up"
 msgstr ""
 
-#: main.lua:5117
+#: main.lua:5140
 msgid "physical attack up"
 msgstr ""
 
-#: main.lua:5117
+#: main.lua:5140
 msgid "physical defense up"
 msgstr ""
 
-#: main.lua:5118
+#: main.lua:5141
 msgid "provoke"
 msgstr ""
 
-#: main.lua:5118
+#: main.lua:5141
 msgid "reflect"
 msgstr ""
 
-#: main.lua:5118
+#: main.lua:5141
 msgid "HP regeneration"
 msgstr ""
 
-#: main.lua:5118
+#: main.lua:5141
 msgid "auto revive"
 msgstr ""
 
-#: main.lua:5119
+#: main.lua:5142
 msgid "speed up"
 msgstr ""
 
-#: main.lua:5119
+#: main.lua:5142
 msgid "SP regeneration"
 msgstr ""
 
-#: main.lua:5119
+#: main.lua:5142
 msgid "lightning enchant"
 msgstr ""
 
-#: main.lua:5119
+#: main.lua:5142
 msgid "wind enchant"
 msgstr ""
 
-#: main.lua:5120
+#: main.lua:5143
 msgid "stuck"
 msgstr ""
 
-#: main.lua:5120
+#: main.lua:5143
 msgid "evasion down"
 msgstr ""
 
-#: main.lua:5120
+#: main.lua:5143
 msgid "buffs blocked"
 msgstr ""
 
-#: main.lua:5121
+#: main.lua:5144
 msgid "confused"
 msgstr ""
 
-#: main.lua:5121
+#: main.lua:5144
 msgid "critical down"
 msgstr ""
 
-#: main.lua:5121
+#: main.lua:5144
 msgid "blinded"
 msgstr ""
 
-#: main.lua:5121
+#: main.lua:5144
 msgid "unconscious"
 msgstr ""
 
-#: main.lua:5121
+#: main.lua:5144
 msgid "terrified"
 msgstr ""
 
-#: main.lua:5122
+#: main.lua:5145
 msgid "accuracy down"
 msgstr ""
 
-#: main.lua:5122
+#: main.lua:5145
 msgid "elemental attack down"
 msgstr ""
 
-#: main.lua:5122
+#: main.lua:5145
 msgid "elemental defense down"
 msgstr ""
 
-#: main.lua:5123
+#: main.lua:5146
 msgid "abilities sealed"
 msgstr ""
 
-#: main.lua:5123
+#: main.lua:5146
 msgid "physical attack down"
 msgstr ""
 
-#: main.lua:5123
+#: main.lua:5146
 msgid "physical defense down"
 msgstr ""
 
-#: main.lua:5124
+#: main.lua:5147
 msgid "poisoned"
 msgstr ""
 
-#: main.lua:5124
+#: main.lua:5147
 msgid "silenced"
 msgstr ""
 
-#: main.lua:5124
+#: main.lua:5147
 msgid "asleep"
 msgstr ""
 
-#: main.lua:5124
+#: main.lua:5147
 msgid "speed down"
 msgstr ""
 
-#: main.lua:5124
+#: main.lua:5147
 msgid "badly poisoned"
 msgstr ""
 
-#: main.lua:5137
+#: main.lua:5160
 #, lua-format
 msgid "%s up"
 msgstr ""
 
-#: main.lua:5137
+#: main.lua:5160
 #, lua-format
 msgid "%s down"
 msgstr ""
 
-#: main.lua:5140
+#: main.lua:5163
 #, lua-format
 msgid "%d turn"
 msgid_plural "%d turns"
 msgstr[0] ""
 msgstr[1] ""
 
-#: main.lua:5187
+#: main.lua:5210
 #, lua-format
 msgid "%s, HP %s of %s, SP %s of %s, BP %d"
 msgstr ""
 
-#: main.lua:5190
+#: main.lua:5213
 #, lua-format
 msgid "%s, down"
 msgstr ""
 
-#: main.lua:5199
+#: main.lua:5222
 #, lua-format
 msgid "%s at %d"
 msgstr ""
 
-#: main.lua:5336
+#: main.lua:5359
 #, lua-format
 msgid "%s broken"
 msgstr ""
 
-#: main.lua:5337
+#: main.lua:5360
 #, lua-format
 msgid "%s recovers, shield %s"
 msgstr ""
 
-#: main.lua:5338
+#: main.lua:5361
 #, lua-format
 msgid "%s shield %s"
 msgstr ""
 
-#: main.lua:5352
+#: main.lua:5375
 #, lua-format
 msgid "%s is down"
 msgstr ""
 
-#: main.lua:5352
+#: main.lua:5375
 #, lua-format
 msgid "%s is back up"
 msgstr ""
 
-#: main.lua:5361
+#: main.lua:5384
 #, lua-format
 msgid "%s defeated"
 msgstr ""
 
-#: main.lua:5378
+#: main.lua:5401
 #, lua-format
 msgid "%s, weaknesses locked"
 msgstr ""
 
-#: main.lua:5380
+#: main.lua:5403
 #, lua-format
 msgid "Battle: %s"
 msgstr ""
 
-#: main.lua:5432
+#: main.lua:5455
 msgid "target"
 msgstr ""
 
-#: main.lua:5433
+#: main.lua:5456
 #, lua-format
 msgid "%d targets"
 msgstr ""
 
-#: main.lua:5476
+#: main.lua:5499
 #, lua-format
 msgid "Boost %d"
 msgstr ""
 
-#: main.lua:5476
+#: main.lua:5499
 msgid "No boost"
 msgstr ""
 
-#: main.lua:5487
+#: main.lua:5510
 #, lua-format
 msgid "%s. %s raises, %s lowers"
 msgstr ""
 
-#: main.lua:5573
+#: main.lua:5596
 #, lua-format
 msgid "%s reaches level %s"
 msgstr ""
 
-#: main.lua:5596
+#: main.lua:5619
 #, lua-format
 msgid "Victory. %s %s, %s EXP, %s JP"
 msgstr ""
 
-#: main.lua:5604
+#: main.lua:5627
 #, lua-format
 msgid "Items: %s"
 msgstr ""
 
-#: main.lua:5643
+#: main.lua:5666
 msgid "weak"
 msgstr ""
 
-#: main.lua:5647
+#: main.lua:5670
 msgid "miss"
 msgstr ""
 
-#: main.lua:5647
+#: main.lua:5670
 msgid "break"
 msgstr ""
 
-#: main.lua:5652
+#: main.lua:5675
 msgid "HP"
 msgstr ""
 
-#: main.lua:5652
+#: main.lua:5675
 msgid "SP"
 msgstr ""
 
-#: main.lua:5652
+#: main.lua:5675
 msgid "BP"
 msgstr ""
 
-#: main.lua:5781
+#: main.lua:5804
 #, lua-format
 msgid "Enemy %d of %d: %s"
 msgstr ""
 
-#: main.lua:5782
+#: main.lua:5805
 msgid "The battle is starting"
 msgstr ""
 
-#: main.lua:5783
+#: main.lua:5806
 msgid "No enemies"
 msgstr ""
 
-#: main.lua:5783
+#: main.lua:5806
 #, lua-format
 msgid "Only %d enemy"
 msgid_plural "Only %d enemies"
 msgstr[0] ""
 msgstr[1] ""
 
-#: main.lua:5786
+#: main.lua:5809
 #, lua-format
 msgid "No party member %d"
 msgstr ""
 
-#: main.lua:5835 main.lua:5883
+#: main.lua:5858 main.lua:5906
 #, lua-format
 msgid "%s (broken)"
 msgstr ""
 
-#: main.lua:5843 main.lua:13742
+#: main.lua:5866 main.lua:13765
 #, lua-format
 msgid "Now: %s"
 msgstr ""
 
-#: main.lua:5845
+#: main.lua:5868
 #, lua-format
 msgid "Next round: %s"
 msgstr ""
 
-#: main.lua:5887
+#: main.lua:5910
 msgid "Turn order unknown"
 msgstr ""
 
-#: main.lua:5888
+#: main.lua:5911
 #, lua-format
 msgid "This round: %s"
 msgstr ""
 
-#: main.lua:5888
+#: main.lua:5911
 msgid "none"
 msgstr ""
 
-#: main.lua:5889
+#: main.lua:5912
 #, lua-format
 msgid "%s. Next: %s"
 msgstr ""
 
-#: main.lua:5960
+#: main.lua:5983
 msgid "No release of OP1 Access is published yet"
 msgstr ""
 
-#: main.lua:5965 main.lua:6005
+#: main.lua:5988 main.lua:6028
 msgid "Could not check for updates"
 msgstr ""
 
-#: main.lua:5975
+#: main.lua:5998
 #, lua-format
 msgid "OP1 Access %s is available. Press F5 twice to install it."
 msgstr ""
 
-#: main.lua:5978
+#: main.lua:6001
 #, lua-format
 msgid "OP1 Access is up to date, version %s"
 msgstr ""
 
-#: main.lua:5988
+#: main.lua:6011
 msgid "This copy of OP1 Access has no update source"
 msgstr ""
 
-#: main.lua:5991 main.lua:6004
+#: main.lua:6014 main.lua:6027
 msgid "Checking for updates"
 msgstr ""
 
-#: main.lua:6000
+#: main.lua:6023
 #, lua-format
 msgid "Version %s. Press F5 again to install it. The game closes without saving and starts again."
 msgstr ""
 
-#: main.lua:6019
+#: main.lua:6042
 msgid "Could not start the installer. Opening the download page."
 msgstr ""
 
-#: main.lua:6025
+#: main.lua:6048
 msgid "Installing the update. The game closes now."
 msgstr ""
 
-#: main.lua:6043
+#: main.lua:6066
 msgid "Problem reports are not available in this build"
 msgstr ""
 
-#: main.lua:6048
+#: main.lua:6071
 msgid "Report a problem: press F1 again. A window opens beside the game, the game keeps running."
 msgstr ""
 
-#: main.lua:6060
+#: main.lua:6083
 msgid "Could not open the problem report window"
 msgstr ""
 
-#: main.lua:6064
+#: main.lua:6087
 msgid "Opening the problem report window"
 msgstr ""
 
-#: main.lua:6132
+#: main.lua:6155
 msgid "OP1 Access loaded"
 msgstr ""
 
-#: main.lua:6138
+#: main.lua:6161
 msgid "Dumping headers"
 msgstr ""
 
-#: main.lua:6140
+#: main.lua:6163
 msgid "Dump complete"
 msgstr ""
 
-#: main.lua:6140 main.lua:6145
+#: main.lua:6163 main.lua:6168
 msgid "Dump failed"
 msgstr ""
 
-#: main.lua:6143
+#: main.lua:6166
 msgid "Dumping objects"
 msgstr ""
 
-#: main.lua:6145
+#: main.lua:6168
 msgid "Object dump complete"
 msgstr ""
 
-#: main.lua:6341
+#: main.lua:6364
 msgid "very near"
 msgstr ""
 
-#: main.lua:6342
+#: main.lua:6365
 msgid "near"
 msgstr ""
 
-#: main.lua:6343
+#: main.lua:6366
 msgid "far"
 msgstr ""
 
-#: main.lua:6707 main.lua:6866
+#: main.lua:6730 main.lua:6889
 #, lua-format
 msgid "%d, %d"
 msgstr ""
 
-#: main.lua:6758
+#: main.lua:6781
 msgid "Character cycle is only active on character select"
 msgstr ""
 
-#: main.lua:6767
+#: main.lua:6790
 msgid "Cycle unavailable"
 msgstr ""
 
-#: main.lua:6934
+#: main.lua:6957
 msgid "reversing"
 msgstr ""
 
-#: main.lua:6934
+#: main.lua:6957
 msgid "blocked"
 msgstr ""
 
-#: main.lua:6935
+#: main.lua:6958
 #, lua-format
 msgid "%s, %d, %d"
 msgstr ""
 
-#: main.lua:7014
+#: main.lua:7037
 msgid "No characters mapped yet. Give it a second, then try again."
 msgstr ""
 
-#: main.lua:7023
+#: main.lua:7046
 msgid "Character"
 msgstr ""
 
-#: main.lua:7024
+#: main.lua:7047
 #, lua-format
 msgid "%s, here"
 msgstr ""
 
-#: main.lua:7030
+#: main.lua:7053
 #, lua-format
 msgid "%s, %s. At %d, %d"
 msgstr ""
 
-#: main.lua:7031
+#: main.lua:7054
 msgid " and "
 msgstr ""
 
-#: main.lua:7033
+#: main.lua:7056
 #, lua-format
 msgid "%s, at %d, %d"
 msgstr ""
 
-#: main.lua:7064
+#: main.lua:7087
 msgid "No menu detected"
 msgstr ""
 
-#: main.lua:7114
+#: main.lua:7137
 #, lua-format
 msgid "command %s"
 msgstr ""
 
-#: main.lua:7123
+#: main.lua:7146
 msgid "No interaction here"
 msgstr ""
 
-#: main.lua:7126
+#: main.lua:7149
 msgid "Nothing to interact with"
 msgstr ""
 
-#: main.lua:7454
+#: main.lua:7477
 msgid "up"
 msgstr ""
 
-#: main.lua:7454
+#: main.lua:7477
 msgid "down"
 msgstr ""
 
-#: main.lua:7455
+#: main.lua:7478
 msgid "right"
 msgstr ""
 
-#: main.lua:7455
+#: main.lua:7478
 msgid "left"
 msgstr ""
 
-#: main.lua:7462
+#: main.lua:7485
 msgid "up left"
 msgstr ""
 
-#: main.lua:7462
+#: main.lua:7485
 msgid "up right"
 msgstr ""
 
-#: main.lua:7462
+#: main.lua:7485
 msgid "down left"
 msgstr ""
 
-#: main.lua:7462
+#: main.lua:7485
 msgid "down right"
 msgstr ""
 
-#: main.lua:7462
+#: main.lua:7485
 msgid "chest"
 msgstr ""
 
-#: main.lua:7462
+#: main.lua:7485
 msgid "exit"
 msgstr ""
 
-#: main.lua:7463
+#: main.lua:7486
 msgid "building"
 msgstr ""
 
-#: main.lua:7463
+#: main.lua:7486
 msgid "shop"
 msgstr ""
 
-#: main.lua:7463
+#: main.lua:7486
 msgid "marker"
 msgstr ""
 
-#: main.lua:7466
+#: main.lua:7489
 msgid "person"
 msgstr ""
 
-#: main.lua:7471 main.lua:8258 main.lua:9040 main.lua:9115 main.lua:11923
+#: main.lua:7494 main.lua:8281 main.lua:9063 main.lua:9138 main.lua:11946
 msgid "In battle"
 msgstr ""
 
-#: main.lua:7471 main.lua:8258 main.lua:9040 main.lua:9115
+#: main.lua:7494 main.lua:8281 main.lua:9063 main.lua:9138
 msgid "Scene running"
 msgstr ""
 
-#: main.lua:7473 main.lua:7602
+#: main.lua:7496 main.lua:7625
 msgid "No player position"
 msgstr ""
 
-#: main.lua:7475
+#: main.lua:7498
 msgid "Player position unreadable"
 msgstr ""
 
-#: main.lua:7523
+#: main.lua:7546
 msgid "No objects found"
 msgstr ""
 
-#: main.lua:7526
+#: main.lua:7549
 msgid "above"
 msgstr ""
 
-#: main.lua:7527
+#: main.lua:7550
 msgid "below"
 msgstr ""
 
-#: main.lua:7528
+#: main.lua:7551
 #, lua-format
 msgid "%s%s, %s, distance %d"
 msgstr ""
 
-#: main.lua:7548
+#: main.lua:7571
 msgid "Screenshot saved"
 msgstr ""
 
-#: main.lua:7548
+#: main.lua:7571
 msgid "Screenshot failed"
 msgstr ""
 
-#: main.lua:7567
+#: main.lua:7590
 msgid "engine right"
 msgstr ""
 
-#: main.lua:7568
+#: main.lua:7591
 msgid "engine left"
 msgstr ""
 
-#: main.lua:7569
+#: main.lua:7592
 msgid "engine front"
 msgstr ""
 
-#: main.lua:7570
+#: main.lua:7593
 msgid "engine behind"
 msgstr ""
 
-#: main.lua:7571
+#: main.lua:7594
 msgid "world right, the right arrow side"
 msgstr ""
 
-#: main.lua:7572
+#: main.lua:7595
 msgid "world left, the left arrow side"
 msgstr ""
 
-#: main.lua:7573
+#: main.lua:7596
 msgid "world front, the up arrow side"
 msgstr ""
 
-#: main.lua:7574
+#: main.lua:7597
 msgid "world behind, the down arrow side"
 msgstr ""
 
-#: main.lua:7575
+#: main.lua:7598
 msgid "bump sound"
 msgstr ""
 
-#: main.lua:7578
+#: main.lua:7601
 msgid "Audio module not loaded"
 msgstr ""
 
-#: main.lua:7585
+#: main.lua:7608
 #, lua-format
 msgid "Audio init failed: %s"
 msgstr ""
 
-#: main.lua:7593
+#: main.lua:7616
 msgid "test off"
 msgstr ""
 
-#: main.lua:7841
+#: main.lua:7864
 msgid "this area again"
 msgstr ""
 
-#: main.lua:7844
+#: main.lua:7867
 #, lua-format
 msgid "%s or %s"
 msgstr ""
 
-#: main.lua:7849
+#: main.lua:7872
 #, lua-format
 msgid "%s lies knocked out in the way and gets up again once you enter %s"
 msgstr ""
 
-#: main.lua:7850
+#: main.lua:7873
 #, lua-format
 msgid "%s lies knocked out in the way; the item is out of reach until they get up"
 msgstr ""
 
-#: main.lua:8044
+#: main.lua:8067
 #, lua-format
 msgid "%d objects here, radar off"
 msgstr ""
 
-#: main.lua:8045
+#: main.lua:8068
 #, lua-format
 msgid "%d objects here"
 msgstr ""
 
-#: main.lua:8164
+#: main.lua:8187
 msgid "Navigation traces unavailable"
 msgstr ""
 
-#: main.lua:8194
+#: main.lua:8217
 msgid "Navigation traces failed, retrying"
 msgstr ""
 
-#: main.lua:8260 main.lua:8964 main.lua:11047 main.lua:11356 main.lua:11932
+#: main.lua:8283 main.lua:8987 main.lua:11070 main.lua:11379 main.lua:11955
 msgid "No player"
 msgstr ""
 
-#: main.lua:8263
+#: main.lua:8286
 msgid "No Kismet/pos"
 msgstr ""
 
-#: main.lua:8275
+#: main.lua:8298
 msgid "No walls near"
 msgstr ""
 
-#: main.lua:8275
+#: main.lua:8298
 #, lua-format
 msgid "Blocked: %s"
 msgstr ""
 
-#: main.lua:8962
+#: main.lua:8985
 msgid "No target"
 msgstr ""
 
-#: main.lua:8965 main.lua:11048
+#: main.lua:8988 main.lua:11071
 msgid "No position"
 msgstr ""
 
-#: main.lua:8967 main.lua:11359 main.lua:11935
+#: main.lua:8990 main.lua:11382 main.lua:11958
 msgid "Target lost"
 msgstr ""
 
-#: main.lua:8980 main.lua:8982
+#: main.lua:9003 main.lua:9005
 msgid "inside a building"
 msgstr ""
 
-#: main.lua:8982 main.lua:8985
+#: main.lua:9005 main.lua:9008
 msgid "not reachable"
 msgstr ""
 
-#: main.lua:8989
+#: main.lua:9012
 msgid "behind a door"
 msgstr ""
 
-#: main.lua:9007
+#: main.lua:9030
 #, lua-format
 msgid "to %s"
 msgstr ""
 
-#: main.lua:9023 main.lua:13379
+#: main.lua:9046 main.lua:13402
 msgid "knocked out"
 msgstr ""
 
-#: main.lua:9028
+#: main.lua:9051
 msgid "opened"
 msgstr ""
 
-#: main.lua:9030
+#: main.lua:9053
 msgid "purple"
 msgstr ""
 
-#: main.lua:9032
+#: main.lua:9055
 #, lua-format
 msgid "%s%s %d of %d: %s%s, %d%s"
 msgstr ""
 
-#: main.lua:9059
+#: main.lua:9082
 #, lua-format
 msgid ", %d opened"
 msgstr ""
 
-#: main.lua:9061
+#: main.lua:9084
 #, lua-format
 msgid "%s, %d target%s. "
 msgid_plural "%s, %d targets%s. "
 msgstr[0] ""
 msgstr[1] ""
 
-#: main.lua:9066
+#: main.lua:9089
 msgid "No targets in any category"
 msgstr ""
 
-#: main.lua:9117 main.lua:9122
+#: main.lua:9140 main.lua:9145
 msgid "No targets here, control left or right for categories"
 msgstr ""
 
-#: main.lua:9118
+#: main.lua:9141
 #, lua-format
 msgid "%s, %d target. "
 msgid_plural "%s, %d targets. "
 msgstr[0] ""
 msgstr[1] ""
 
-#: main.lua:9175
+#: main.lua:9198
 msgid "and more"
 msgstr ""
 
-#: main.lua:9205
+#: main.lua:9228
 #, lua-format
 msgid "Walking, %s, total %d"
 msgstr ""
 
-#: main.lua:9462
+#: main.lua:9485
 msgid "Searching again from a bit further back"
 msgstr ""
 
-#: main.lua:9495 main.lua:11088
+#: main.lua:9518 main.lua:11111
 msgid "direct"
 msgstr ""
 
-#: main.lua:9505
+#: main.lua:9528
 msgid "Through the door first"
 msgstr ""
 
-#: main.lua:9507
+#: main.lua:9530
 msgid "through the door"
 msgstr ""
 
-#: main.lua:9516
+#: main.lua:9539
 msgid "The door is shut. Open it with Enter, then backspace again"
 msgstr ""
 
-#: main.lua:9532
+#: main.lua:9555
 msgid "Stuck, no way on from here. Step aside, then backspace again"
 msgstr ""
 
-#: main.lua:9538
+#: main.lua:9561
 msgid "No route found, search limit reached"
 msgstr ""
 
-#: main.lua:9550
+#: main.lua:9573
 msgid "Probably inside a building. Routing to its door"
 msgstr ""
 
-#: main.lua:9555
+#: main.lua:9578
 msgid "Not reachable, no route found"
 msgstr ""
 
-#: main.lua:9558
+#: main.lua:9581
 msgid "No route found"
 msgstr ""
 
-#: main.lua:9634
+#: main.lua:9657
 #, lua-format
 msgid "%s is in the way"
 msgstr ""
 
-#: main.lua:9634 main.lua:12652 main.lua:12659
+#: main.lua:9657 main.lua:12675 main.lua:12682
 msgid "Someone"
 msgstr ""
 
-#: main.lua:9664
+#: main.lua:9687
 msgid "downstairs"
 msgstr ""
 
-#: main.lua:9665
+#: main.lua:9688
 msgid "upstairs"
 msgstr ""
 
-#: main.lua:9670
+#: main.lua:9693
 msgid "A shut door on the way"
 msgstr ""
 
-#: main.lua:9671
+#: main.lua:9694
 msgid "back a bit first"
 msgstr ""
 
-#: main.lua:9672
+#: main.lua:9695
 msgid "to the door"
 msgstr ""
 
-#: main.lua:9672
+#: main.lua:9695
 msgid "traced route"
 msgstr ""
 
-#: main.lua:9675
+#: main.lua:9698
 #, lua-format
 msgid "Path: %s. Total %d%s%s."
 msgstr ""
 
-#: main.lua:9675
+#: main.lua:9698
 msgid "through a door"
 msgstr ""
 
-#: main.lua:10458
+#: main.lua:10481
 #, lua-format
 msgid "Entrance not reached, %d person is standing there"
 msgid_plural "Entrance not reached, %d people are standing there"
 msgstr[0] ""
 msgstr[1] ""
 
-#: main.lua:10460
+#: main.lua:10483
 msgid "Entrance not reached"
 msgstr ""
 
-#: main.lua:11024
+#: main.lua:11047
 msgid "Searching the whole area"
 msgstr ""
 
-#: main.lua:11038 main.lua:11042
+#: main.lua:11061 main.lua:11065
 msgid "Still routing"
 msgstr ""
 
-#: main.lua:11070
+#: main.lua:11093
 msgid "close by"
 msgstr ""
 
-#: main.lua:11072
+#: main.lua:11095
 msgid "Right here"
 msgstr ""
 
-#: main.lua:11091
+#: main.lua:11114
 #, lua-format
 msgid "Path: straight ahead, %d"
 msgstr ""
 
-#: main.lua:11350 main.lua:11926
+#: main.lua:11373 main.lua:11949
 msgid "Targets changed, none here"
 msgstr ""
 
-#: main.lua:11351 main.lua:11927
+#: main.lua:11374 main.lua:11950
 #, lua-format
 msgid "Targets changed. %s, %d target. "
 msgid_plural "Targets changed. %s, %d targets. "
 msgstr[0] ""
 msgstr[1] ""
 
-#: main.lua:11355
+#: main.lua:11378
 msgid "No target selected. Home and end pick a category, page up and down a target."
 msgstr ""
 
-#: main.lua:11363
+#: main.lua:11386
 msgid "same level"
 msgstr ""
 
-#: main.lua:11366
+#: main.lua:11389
 #, lua-format
 msgid "%s %d of %d, %s, %d, %s. "
 msgstr ""
 
-#: main.lua:11370
+#: main.lua:11393
 #, lua-format
 msgid "Path: %s. Total %d."
 msgstr ""
 
-#: main.lua:11372
+#: main.lua:11395
 msgid "Routing."
 msgstr ""
 
-#: main.lua:11722 main.lua:12638
+#: main.lua:11745 main.lua:12661
 msgid "That side can't be reached, trying another side"
 msgstr ""
 
-#: main.lua:11722
+#: main.lua:11745
 msgid "Not in reach here, trying another side"
 msgstr ""
 
-#: main.lua:11728
+#: main.lua:11751
 #, lua-format
 msgid "%s is not within reach"
 msgstr ""
 
-#: main.lua:11728
+#: main.lua:11751
 msgid "Not within reach"
 msgstr ""
 
-#: main.lua:11752
+#: main.lua:11775
 msgid "That side can't be reached"
 msgstr ""
 
-#: main.lua:11809
+#: main.lua:11832
 msgid "Opening the door"
 msgstr ""
 
-#: main.lua:11844
+#: main.lua:11867
 msgid "The door doesn't open. Press Enter yourself, then backspace again"
 msgstr ""
 
-#: main.lua:11904
+#: main.lua:11927
 msgid "same route as before"
 msgstr ""
 
-#: main.lua:11915 main.lua:11920 main.lua:12053
+#: main.lua:11938 main.lua:11943 main.lua:12076
 msgid "Walk stopped"
 msgstr ""
 
-#: main.lua:11916
+#: main.lua:11939
 msgid "Routing cancelled"
 msgstr ""
 
-#: main.lua:11923
+#: main.lua:11946
 msgid "Scene running, try again after"
 msgstr ""
 
-#: main.lua:11931
+#: main.lua:11954
 msgid "No target selected"
 msgstr ""
 
-#: main.lua:11972
+#: main.lua:11995
 #, lua-format
 msgid "Leaving the building first. Routing to its door, %d"
 msgstr ""
 
-#: main.lua:11993
+#: main.lua:12016
 #, lua-format
 msgid "%s is inside a building. Routing to its door, %d"
 msgstr ""
 
-#: main.lua:12004
+#: main.lua:12027
 msgid "Not reachable from here. Press again to try anyway"
 msgstr ""
 
-#: main.lua:12010
+#: main.lua:12033
 msgid "navmesh path"
 msgstr ""
 
-#: main.lua:12014
+#: main.lua:12037
 #, lua-format
 msgid "Routing to %s, %d"
 msgstr ""
 
-#: main.lua:12096
+#: main.lua:12119
 msgid "Trying another way"
 msgstr ""
 
-#: main.lua:12096 main.lua:12522
+#: main.lua:12119 main.lua:12545
 msgid "Rerouting"
 msgstr ""
 
-#: main.lua:12099
+#: main.lua:12122
 msgid "Walk interrupted, backspace to resume"
 msgstr ""
 
-#: main.lua:12168 main.lua:12334 main.lua:12385 main.lua:12391 main.lua:12398 main.lua:12512
-#: main.lua:12518
+#: main.lua:12191 main.lua:12357 main.lua:12408 main.lua:12414 main.lua:12421 main.lua:12535
+#: main.lua:12541
 msgid "Arrived"
 msgstr ""
 
-#: main.lua:12217 main.lua:12374
+#: main.lua:12240 main.lua:12397
 #, lua-format
 msgid "Still shut. %s, then backspace again"
 msgstr ""
 
-#: main.lua:12217 main.lua:12353 main.lua:12374
+#: main.lua:12240 main.lua:12376 main.lua:12397
 msgid "press Enter"
 msgstr ""
 
-#: main.lua:12218 main.lua:12376
+#: main.lua:12241 main.lua:12399
 msgid "then backspace again"
 msgstr ""
 
-#: main.lua:12240
+#: main.lua:12263
 msgid "At the door. Open it, then backspace again"
 msgstr ""
 
-#: main.lua:12241
+#: main.lua:12264
 msgid "At the exit, no way through"
 msgstr ""
 
-#: main.lua:12296
+#: main.lua:12319
 msgid "Walk cancelled"
 msgstr ""
 
-#: main.lua:12353
+#: main.lua:12376
 #, lua-format
 msgid "Still shut. %s"
 msgstr ""
 
-#: main.lua:12405
+#: main.lua:12428
 msgid "Walk ended, went through a door"
 msgstr ""
 
-#: main.lua:12428
+#: main.lua:12451
 msgid "Walk interrupted"
 msgstr ""
 
-#: main.lua:12448
+#: main.lua:12471
 #, lua-format
 msgid "Waiting for %s"
 msgstr ""
 
-#: main.lua:12448
+#: main.lua:12471
 msgid "Waiting for someone to walk on"
 msgstr ""
 
-#: main.lua:12527
+#: main.lua:12550
 #, lua-format
 msgid "Can't reach, closest %d"
 msgstr ""
 
-#: main.lua:12620
+#: main.lua:12643
 msgid "someone else"
 msgstr ""
 
-#: main.lua:12639
+#: main.lua:12662
 #, lua-format
 msgid "Here Enter goes to %s, trying another side"
 msgstr ""
 
-#: main.lua:12639
+#: main.lua:12662
 msgid "No prompt here, trying another side"
 msgstr ""
 
-#: main.lua:12653 main.lua:12660
+#: main.lua:12676 main.lua:12683
 msgid "That side can't be reached, and no other side found"
 msgstr ""
 
-#: main.lua:12654
+#: main.lua:12677
 #, lua-format
 msgid "Here Enter goes to %s, and no other side found"
 msgstr ""
 
-#: main.lua:12655
+#: main.lua:12678
 msgid "No prompt here, and no other side found"
 msgstr ""
 
-#: main.lua:12661
+#: main.lua:12684
 #, lua-format
 msgid "Here Enter goes to %s, not to the item"
 msgstr ""
 
-#: main.lua:12661
+#: main.lua:12684
 msgid "No prompt at this item"
 msgstr ""
 
-#: main.lua:13209
+#: main.lua:13232
 msgid "Hold Backspace to skip"
 msgstr ""
 
-#: main.lua:13351 main.lua:13400
+#: main.lua:13374 main.lua:13423
 msgid "Save point"
 msgstr ""
 
-#: main.lua:13373
+#: main.lua:13396
 msgid "Talk"
 msgstr ""
 
-#: main.lua:13574
+#: main.lua:13597
 #, lua-format
 msgid "action %s"
 msgstr ""
 
-#: main.lua:13642 main.lua:13674
+#: main.lua:13665 main.lua:13697
 msgid "done"
 msgstr ""
 
-#: main.lua:13642 main.lua:13675
+#: main.lua:13665 main.lua:13698
 msgid "not possible"
 msgstr ""
 
-#: main.lua:13676
+#: main.lua:13699
 msgid "unavailable"
 msgstr ""
 
-#: main.lua:13742
+#: main.lua:13765
 #, lua-format
 msgid "New: %s"
 msgstr ""
 
-#: main.lua:13812
+#: main.lua:13835
 msgid "stolen"
 msgstr ""
 
-#: main.lua:13812
+#: main.lua:13835
 msgid "bought"
 msgstr ""
 
-#: main.lua:13825
+#: main.lua:13848
 msgid "strength"
 msgstr ""
 
-#: main.lua:14022 main.lua:14023
+#: main.lua:14045 main.lua:14046
 msgid "save point"
 msgstr ""
 
-#: main.lua:14022
+#: main.lua:14045
 msgid "hidden item"
 msgstr ""
 
-#: main.lua:14022
+#: main.lua:14045
 msgid "objective"
 msgstr ""
 
-#: main.lua:14022
+#: main.lua:14045
 msgid "side story"
 msgstr ""
 
-#: main.lua:14023
+#: main.lua:14046
 msgid "exit toward objective"
 msgstr ""
 
-#: main.lua:14023
+#: main.lua:14046
 msgid "traveler to recruit"
 msgstr ""
 
-#: main.lua:14155
+#: main.lua:14178
 #, lua-format
 msgid "Marker gone: %s"
 msgstr ""
 
-#: main.lua:14194
+#: main.lua:14217
 #, lua-format
 msgid "New marker: %s, %s, %d"
 msgstr ""
 
-#: main.lua:14334
+#: main.lua:14357
 #, lua-format
 msgid "marker type %d"
 msgstr ""
 
-#: main.lua:14342
+#: main.lua:14365
 #, lua-format
 msgid "%s, collected"
 msgstr ""
 
-#: main.lua:14354
+#: main.lua:14377
 #, lua-format
 msgid "%s, to %s"
 msgstr ""
 
-#: main.lua:14358
+#: main.lua:14381
 #, lua-format
 msgid "%s place"
 msgstr ""
 
-#: main.lua:14394
+#: main.lua:14417
 msgid "boss fight"
 msgstr ""
 
-#: main.lua:14685
+#: main.lua:14708
 msgid "Radar off"
 msgstr ""
 
-#: main.lua:14685
+#: main.lua:14708
 msgid "Radar on"
 msgstr ""

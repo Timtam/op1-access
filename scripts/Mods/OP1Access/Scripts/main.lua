@@ -3258,7 +3258,7 @@ end
 -- we read every non-empty entry). Announced when the text changes, which covers both the
 -- pop-up appearing and paging forward/back through a multi-page tutorial.
 do
-    local last_tut
+    local last_tut, tut_t, tut_hinted
     M.poll_tutorial = function()
         local w, cls = M.get_active_screen()
         if cls ~= "UITutorial_C" then last_tut = nil; return end
@@ -3274,28 +3274,45 @@ do
         end) end)
         if #parts == 0 then return end
         local say = M.join_text(parts)
-        if say ~= last_tut then last_tut = say; speak(say .. " " .. M.tutorial_hint(w)) end
+        local now = os.clock()
+        if say ~= last_tut then
+            -- the page, at once ("Page 1 of 3."); its key only when nothing was pressed for
+            -- a while (M.HINT_DELAY)
+            last_tut, tut_t, tut_hinted = say, now, false
+            local i, n = M.tutorial_pages(w)
+            speak((n and n > 1) and (say .. " " .. trf("Page %d of %d.", i + 1, n)) or say)
+        elseif not tut_hinted and now - (tut_t or now) >= M.HINT_DELAY then
+            tut_hinted = true
+            speak(M.tutorial_key(w))
+        end
     end
 end
+-- KEY HINTS COME LATE (user 2026-11-24: said every time, "Continue with Enter" and the
+-- like were too much). A tutorial, a story page or a letter that waits for a key says
+-- which one only after this long with nothing pressed.
+M.HINT_DELAY = 20
 -- HOW TO GO ON (player report 2026-11-24: nothing said how to close a tutorial, though
 -- the screen shows it). The pop-up takes only the cancel key -- Backspace, Escape, B; its
 -- bytecode: OnMenuCancel -> ChangeNextImage, Enter does nothing -- which shows the next
 -- page, or closes it after the last (PageDataList has no page after ShowPageIndex).
--- Read raw: ShowPageIndex @0x238, PageDataList @0x2B0 (its Num at +8).
+-- Read raw: ShowPageIndex @0x238, PageDataList @0x2B0 (its Num at +8). -> the page
+-- (0-based) and the count, or nil
 M.TUT_PAGE, M.TUT_PAGES = 0x238, 0x2B0 + 8
-M.tutorial_hint = function(w)
+M.tutorial_pages = function(w)
     local i, n
     if shim and shim.Peek then
         local a = 0
         pcall(function() a = w:GetAddress() end)
         if a ~= 0 then i, n = shim.Peek(a + M.TUT_PAGE, "i32"), shim.Peek(a + M.TUT_PAGES, "i32") end
     end
-    if type(i) ~= "number" or type(n) ~= "number" or n < 1 or n > 50 or i < 0 or i >= n then
-        return tr("Go on with Backspace.")
-    end
-    if n == 1 then return tr("Close with Backspace.") end
-    if i + 1 < n then return trf("Page %d of %d. Next page with Backspace.", i + 1, n) end
-    return trf("Page %d of %d. Close with Backspace.", i + 1, n)
+    if type(i) ~= "number" or type(n) ~= "number" or n < 1 or n > 50 or i < 0 or i >= n then return nil end
+    return i, n
+end
+M.tutorial_key = function(w)
+    local i, n = M.tutorial_pages(w)
+    if not i then return tr("Go on with Backspace.") end
+    if i + 1 < n then return tr("Next page with Backspace.") end
+    return tr("Close with Backspace.")
 end
 
 -- WHEN A STORY PAGE WAITS (player report 2026-11-24: in stories and flashbacks the lines
@@ -3304,8 +3321,9 @@ end
 -- (each is said as it comes, GetTalkText), 7 = all drawn and WAITING -- only Decide
 -- (Enter, E) goes on: the next page, or after the last one the end. A letter or note
 -- (NoteMode @0xCE8, its whole text at once) waits in State 2 for Cancel (Backspace),
--- which closes it. Said once per wait, queued after the lines; M.narr_waited is cleared
--- by every other state (and by another event screen, M.poll_event_menus).
+-- which closes it. Said once per wait, and only after M.HINT_DELAY with nothing pressed
+-- (the page done at once is the usual case); M.narr_waited is cleared by every other
+-- state (and by another event screen, M.poll_event_menus).
 M.NARR_STATE, M.NARR_NOTE, M.NARR_PAGE = 0x2B8, 0xCE8, 0x2D0
 M.poll_narration = function(w)
     if not (shim and shim.Peek) then return end
@@ -3320,9 +3338,14 @@ M.poll_narration = function(w)
         key = "note"
     end
     if not key then M.narr_waited = nil; return end
-    if key == M.narr_waited then return end
-    M.narr_waited = key
-    log("NARRATION waits: " .. key)
+    local now = os.clock()
+    if key ~= M.narr_waited then
+        M.narr_waited, M.narr_wait_t, M.narr_hinted = key, now, false
+        log("NARRATION waits: " .. key)
+        return
+    end
+    if M.narr_hinted or now - (M.narr_wait_t or now) < M.HINT_DELAY then return end
+    M.narr_hinted = true
     speak(key == "note" and tr("Close with Backspace.") or tr("Continue with Enter."))
 end
 

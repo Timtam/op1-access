@@ -12,8 +12,8 @@ turns that section into the next version and uses it as the release notes.
 
 ### Story
 
-- Stories, flashbacks and letters say when the game waits for a key: “Continue with
-  Enter” after a page's last line, “Close with Backspace” for a letter.
+- A story or flashback page, a letter or a tutorial that has waited 20 seconds for a key
+  says which one goes on: “Continue with Enter”, “Close with Backspace”.
 
 ### Menus
 
@@ -21,8 +21,8 @@ turns that section into the next version and uses it as the release notes.
   Please wait...”); “Save successful” has only its OK.
 - Browsing the journal fast, the mod says the entry the cursor lands on, and then its
   text, also when you come back to an entry.
-- Tutorials say how to go on: the page, and that Backspace shows the next page or closes
-  the tutorial (Enter does nothing there).
+- Tutorials say their page (“Page 1 of 3”); Backspace shows the next page or closes the
+  tutorial (Enter does nothing there).
 
 ## [0.1.1] - 2026-11-24
 

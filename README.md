@@ -187,9 +187,10 @@ main menu, **Backspace** to go back in menus. The mod adds these:
 - Money is said as a word in the game's language (“50 leaves”); the game itself only
   shows a ⑳ sign, which screen readers can't read. Keys the tutorials and the menus'
   footers show as key caps (“Press Ⓞ”) are said by name (“Press O”).
-- Dialogue is read with the speaker's name, story scenes and tutorials too. When a page
-  of a story or flashback waits for a key, the mod says so (“Continue with Enter”), and a
-  letter says how to close it.
+- Dialogue is read with the speaker's name, story scenes and tutorials too, a tutorial
+  with its page (“Page 1 of 3”). When a story page, a letter or a tutorial has waited 20
+  seconds for a key, the mod says which one goes on (“Continue with Enter”, “Close with
+  Backspace”).
 
 ### Exploring
 
