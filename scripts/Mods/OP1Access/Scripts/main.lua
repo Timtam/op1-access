@@ -8080,11 +8080,16 @@ local function beacon_step()   -- driven by radar_pump while beacon_on
         pcall(function() shim.AudioSetListener(px, py, pz) end)
         -- THE PLAYER'S RADAR OFF (the game's O, M.radar_poll): the objects stay known
         -- (navigator, walker, the count), only their pings go -- silenced once, then
-        -- nothing to do
-        if M.radar_off then
+        -- nothing to do. The same while THE GUIDE leads (M.guide_on, NV.guide_tick): only
+        -- its own ping sounds, in M.GUIDE_SLOT, which is left to it.
+        if M.radar_off or M.guide_on then
             if not M.beacons_hushed then
                 M.beacons_hushed = true
-                for i = 0, BEACON_HARDCAP - 1 do pcall(function() shim.AudioSetSource(i, false, 0, 0, 0, 0) end) end
+                for i = 0, BEACON_HARDCAP - 1 do
+                    if not (M.guide_on and i == M.GUIDE_SLOT) then
+                        pcall(function() shim.AudioSetSource(i, false, 0, 0, 0, 0) end)
+                    end
+                end
                 beacon_slotof = {}
             end
             return
@@ -9202,6 +9207,8 @@ local function nav_describe_path(pts)
 end
 
 local function nav_walk_begin_path(pts, label)
+    -- Shift+Backspace: the route goes to THE GUIDE instead (NV.guide_begin), no walking
+    if NV.guide_req then NV.guide_begin(pts, label); return end
     -- how close to come to each waypoint before turning to the next: 40 on a straight
     -- run, 22 at a real turn -- turning 40 early cut the inside corner into the wall
     for i = 2, #pts - 1 do
@@ -11929,7 +11936,7 @@ NV.resume_paused = function(pr, key, cat, ox, oy, px, py)
     nav_walk_begin_path(pts, tr("same route as before"))
     return true
 end
-local function nav_walk_start(quiet)
+local function nav_walk_start(quiet, guide)
     NV.ctrlkey_t = os.clock()
     -- plain Backspace is also the GAME's cancel key ("Rück Zurück"): pressed in a menu,
     -- a dialog or a scene it must do nothing here -- no walk, no "Scene running"
@@ -11937,6 +11944,10 @@ local function nav_walk_start(quiet)
     -- ...nor the Backspace that just closed a menu: it said "No target selected" as the
     -- main menu closed, and with a target it would have walked off (2026-11-14)
     if quiet and os.clock() - (M.unexplore_t or -9) < 0.6 then return end
+    -- THE GUIDE leading: either key stops it. Else this start plans for the guide
+    -- (Shift+Backspace) or for a walk -- the flag is read where the route is handed over
+    if NV.guide then NV.guide_stop(tr("Guide stopped")); NV.guide_req = nil; return end
+    NV.guide_req = guide or nil
     if nav_walking then nav_walk_stop(tr("Walk stopped")); return end
     if NV.route then NV.route = nil; speak(tr("Routing cancelled")); return end
     if NV.door_auto then                -- the walker is opening a door: Backspace stops it
@@ -12038,6 +12049,88 @@ local function nav_walk_start(quiet)
     local d = math.floor(math.sqrt((ox - px) ^ 2 + (oy - py) ^ 2) + 0.5)
     speak(trf("Routing to %s, %d", M.cat_word(t.cat), d))
     nav_route_begin("walk", ox, oy, oz)
+end
+
+-- THE GUIDE (player wish 2026-11-24: "a directional audio beacon to guide you to the
+-- tracked POI", to walk there yourself instead of the walker walking for you).
+-- Shift+Backspace plans like Backspace (nav_walk_start: a building's door first, people,
+-- floors), but nav_walk_begin_path hands the route to the guide: ONE ping at the route's
+-- next waypoint -- the target's own category sound -- that moves on as you reach each;
+-- the route's legs have a clear line, so walking straight at the sound works. Every other
+-- object ping is quiet meanwhile (beacon_step, M.guide_on); walls, bumps and the door
+-- chirp stay. Far off the route for 3 s: planned again from where you are. At the end
+-- "Arrived". Stopped by Shift+Backspace or Backspace, and silently by another level (its
+-- points are the old one's). Paused with the radar (menus, scenes, battles): nav_tick.
+M.GUIDE_SLOT = BEACON_HARDCAP - 1   -- (the last object slot: beacon_step leaves it to the guide)
+NV.GUIDE_REACH, NV.GUIDE_OFF, NV.GUIDE_OFF_T = 90, 350, 3.0
+NV.guide_begin = function(pts, label)
+    NV.guide_req = nil
+    local total = 0
+    for i = 2, #pts do total = total + math.sqrt((pts[i].x - pts[i - 1].x) ^ 2 + (pts[i].y - pts[i - 1].y) ^ 2) end
+    local cat = NV.goal and NV.goal.cat
+    NV.guide = { pts = pts, wp = 2, level = M.level_id and M.level_id() or nil,
+        cue = CAT_CUE[cat] or (cat == "door" and CAT_CUE.building) or CAT_CUE.exit }
+    M.guide_on = true
+    log(string.format("GUIDE start %s wps=%d total=%d cat=%s", tostring(label), #pts, math.floor(total), tostring(cat)))
+    speak(trf("Guiding, %s, total %d", label, math.floor(total + 0.5)))
+end
+NV.guide_stop = function(msg)
+    NV.guide = nil
+    M.guide_on = nil
+    pcall(function() shim.AudioSetSource(M.GUIDE_SLOT, false, 0, 0, 0, 0) end)
+    if msg then speak(msg) end
+end
+-- the distance from (px, py) to the leg a -> b
+NV.seg_dist = function(px, py, ax, ay, bx, by)
+    local dx, dy = bx - ax, by - ay
+    local l2 = dx * dx + dy * dy
+    local t = l2 > 0 and ((px - ax) * dx + (py - ay) * dy) / l2 or 0
+    if t < 0 then t = 0 elseif t > 1 then t = 1 end
+    return math.sqrt((px - ax - t * dx) ^ 2 + (py - ay - t * dy) ^ 2)
+end
+NV.guide_tick = function()   -- nav_tick, while exploring
+    local g = NV.guide
+    if not g then return end
+    if g.level and M.level_id and M.level_id() ~= g.level then
+        log("GUIDE ended: another level")
+        NV.guide_stop(nil)
+        return
+    end
+    local p = get_player_obj()
+    local px, py, pz
+    if p then px, py, pz = read_actor_pos(p) end
+    if not px then return end
+    local pts, now = g.pts, os.clock()
+    -- reached: this waypoint, or one of the next three (a corner cut)
+    for j = math.min(#pts, g.wp + 3), g.wp, -1 do
+        local w = pts[j]
+        if (w.x - px) ^ 2 + (w.y - py) ^ 2 <= NV.GUIDE_REACH ^ 2 and not (w.z and math.abs(w.z - pz) > 250) then
+            g.wp, g.off_since = j + 1, nil
+            break
+        end
+    end
+    if g.wp > #pts then
+        log("GUIDE arrived")
+        NV.guide_stop(tr("Arrived"))
+        return
+    end
+    local w, a = pts[g.wp], pts[g.wp - 1]
+    -- far off the route for a while: plan again from here
+    if NV.seg_dist(px, py, a.x, a.y, w.x, w.y) > NV.GUIDE_OFF then
+        g.off_since = g.off_since or now
+        if now - g.off_since >= NV.GUIDE_OFF_T then
+            log("GUIDE off the route: routing again")
+            NV.guide_stop(tr("Off the route, routing again"))
+            pcall(nav_walk_start, true, true)
+            return
+        end
+    else
+        g.off_since = nil
+    end
+    -- the ping: at the player's height, unless the waypoint is on another floor
+    local wz = w.z and (w.z + 90) or pz
+    if math.abs(wz - pz) < 150 then wz = pz end
+    pcall(function() shim.AudioSetSource(M.GUIDE_SLOT, true, w.x, w.y, wz, g.cue) end)
 end
 
 nav_drive = function()   -- per FRAME from the tick hooks: steer by holding arrow keys
@@ -12566,6 +12659,7 @@ nav_tick = function()   -- ~10 Hz from the pump: routing slices + walk supervisi
         end
     end
     if nav_walking then pcall(nav_walk_watch) end
+    if NV.guide then pcall(NV.guide_tick) end
     if NV.resume_walk and not nav_walking and not NV.route and not NV.door_auto then
         NV.resume_walk = nil
         pcall(nav_walk_start, true)   -- after a doorway / an opened door: on to the target
@@ -12738,6 +12832,10 @@ do
         pcall(nav_walk_start, true)   -- quiet outside exploration (Backspace = game cancel)
     end, "nav walk")
     bindany({ "BACKSPACE", "BACK" }, { ModifierKey.CONTROL }, function() pcall(nav_info) end,       "nav info")
+    -- the guide: a ping to follow instead of walking (NV.guide_begin); again to stop
+    if ModifierKey.SHIFT then
+        bindany({ "BACKSPACE", "BACK" }, { ModifierKey.SHIFT }, function() pcall(nav_walk_start, true, true) end, "nav guide")
+    end
     bindany({ "RETURN", "ENTER" },   { ModifierKey.CONTROL }, function() pcall(nav_walk_start) end, "nav walk alt")
     -- speech history (M.hist_key): comma / period back / forward, with Shift the first /
     -- the last line. The game binds neither (DefaultInput.ini: W A S D Q E O I J M P,

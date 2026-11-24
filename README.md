@@ -138,6 +138,7 @@ main menu, **Backspace** to go back in menus. The mod adds these:
 | **Ctrl + Backspace** | The target's direction, distance and floor, and the way there step by step |
 | **Backspace** | Walk to the target; press again to stop |
 | **Ctrl + Enter** | Walk to the target or stop, like Backspace |
+| **Shift + Backspace** | Guide to the target: you walk, following a sound at the route's next point; press again to stop |
 | **Ctrl + F9** | What you can do in front of you right now: talk, and which path actions |
 | **O** (the game's own radar key) | Radar off / on: the game's minimap and the mod's object and wall sounds together; kept in the save game, like the minimap |
 
@@ -225,6 +226,11 @@ main menu, **Backspace** to go back in menus. The mod adds these:
   people, up and down narrow stairs, and through doors, which it opens itself. When
   someone blocks the only way it says who (“Guard is in the way”), and at a chest or a
   hidden item it waits for the game's prompt and tries another side when none comes.
+- **The guide** (Shift + Backspace) plans the same route but lets you walk: one sound,
+  the target's own, plays at the route's next point and moves on as you reach it, so you
+  can walk straight at it; the other radar sounds pause meanwhile. Far off the route
+  for a few seconds, it plans again from where you are; at the end you hear “Arrived”.
+  At a shut door it stops at the door: open it, then press Shift + Backspace again.
 
 ### Path actions
 
