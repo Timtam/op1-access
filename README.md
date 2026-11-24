@@ -188,9 +188,9 @@ main menu, **Backspace** to go back in menus. The mod adds these:
   shows a ⑳ sign, which screen readers can't read. Keys the tutorials and the menus'
   footers show as key caps (“Press Ⓞ”) are said by name (“Press O”).
 - Dialogue is read with the speaker's name, story scenes and tutorials too, a tutorial
-  with its page (“Page 1 of 3”). When a story page, a letter or a tutorial has waited 20
-  seconds for a key, the mod says which one goes on (“Continue with Enter”, “Close with
-  Backspace”).
+  with its page (“Page 1 of 3”). When a story page or a tutorial has waited 20 seconds
+  for a key, the mod says which one goes on (“Continue with Enter”); a letter says at once
+  that Backspace closes it.
 
 ### Exploring
 

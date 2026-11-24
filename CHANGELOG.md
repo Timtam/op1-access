@@ -12,8 +12,8 @@ turns that section into the next version and uses it as the release notes.
 
 ### Story
 
-- A story or flashback page, a letter or a tutorial that has waited 20 seconds for a key
-  says which one goes on: “Continue with Enter”, “Close with Backspace”.
+- A story or flashback page or a tutorial that has waited 20 seconds for a key says which
+  one goes on (“Continue with Enter”); a letter says at once that Backspace closes it.
 
 ### Menus
 

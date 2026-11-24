@@ -3342,9 +3342,11 @@ M.poll_narration = function(w)
     if key ~= M.narr_waited then
         M.narr_waited, M.narr_wait_t, M.narr_hinted = key, now, false
         log("NARRATION waits: " .. key)
-        return
+        -- (a letter says at once how to close it -- user 2026-11-24: it shows its whole
+        -- text in one go, and only Backspace closes it)
+        if key ~= "note" then return end
     end
-    if M.narr_hinted or now - (M.narr_wait_t or now) < M.HINT_DELAY then return end
+    if M.narr_hinted or (key ~= "note" and now - (M.narr_wait_t or now) < M.HINT_DELAY) then return end
     M.narr_hinted = true
     speak(key == "note" and tr("Close with Backspace.") or tr("Continue with Enter."))
 end
