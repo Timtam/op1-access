@@ -6391,16 +6391,35 @@ poll_dialog = function()
             end
         end
     end)
+    -- How many answers the dialog SHOWS: its SetupDialog sets AnswerNum to the NowParam
+    -- buttons it put up (0 = none, the answer area hidden). The Answer_0x widgets keep
+    -- the last question's texts while hidden -- the save point's "Now saving... Please
+    -- wait..." (no buttons, in the window of the save question) was read with "Yes", and
+    -- "Save successful." with "OK|No" (player report 2026-11-24). nil if unreadable: as
+    -- before.
+    local shown
+    pcall(function()
+        local n = inst.AnswerNum
+        if type(n) == "number" and n >= 0 and n <= 4 then shown = n end
+    end)
+    if shown and #buttons > shown then
+        for i = #buttons, shown + 1, -1 do buttons[i] = nil end
+    end
     -- Fallback for the buttons if the NowParam array doesn't marshal: read the
-    -- Answer_01..04 widgets (these read fine before), skipping "000" placeholders.
-    if #buttons == 0 then
-        for i = 1, 4 do
+    -- Answer_01..04 widgets (these read fine before), skipping "000" placeholders --
+    -- only the ones the dialog shows.
+    if #buttons == 0 and shown ~= 0 then
+        for i = 1, shown or 4 do
             local t
             pcall(function() local item = inst["Answer_0" .. i]; if item then t = read_text_block(item, "Text") end end)
             if t and t ~= "" and t ~= "000" then buttons[#buttons + 1] = t end
         end
     end
-    if #buttons == 0 then               -- no real answer buttons -> not a dialog we read
+    -- No answers: a pop-up that closes by itself ("Now saving...") is read for its text
+    -- alone; one without text either (the cached launch dialog, its NowParam empty) is
+    -- not a dialog we read.
+    local textonly = (#buttons == 0 and shown == 0 and (caption ~= "" or detail ~= ""))
+    if #buttons == 0 and not textonly then
         dlg_visible, dlg_last_focus = false, nil
         return false
     end

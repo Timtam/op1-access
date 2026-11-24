@@ -5,6 +5,11 @@ turns that section into the next version and uses it as the release notes.
 
 ## [Unreleased]
 
+### Menus
+
+- While the game saves, the mod no longer says a “Yes” that isn't there (“Now saving...
+  Please wait...”); “Save successful” has only its OK.
+
 ## [0.1.1] - 2026-11-24
 
 ### Speech
