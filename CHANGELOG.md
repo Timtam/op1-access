@@ -5,6 +5,8 @@ turns that section into the next version and uses it as the release notes.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-24
+
 ### Exploring
 
 - A guide: Shift + Backspace plans the route to the selected target like the walker,
