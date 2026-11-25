@@ -9345,6 +9345,104 @@ NV.exit_point = function(actor, rx, ry)
         cy, ex * 2, ey * 2, sx, sy, x and string.format("(%.0f,%.0f,%.0f)", x, y, z) or "none, the actor", tried))
     return x and c or nil
 end
+
+-- OTHER EXITS ARE NO WAY (user 2026-11-25: the walker kept walking into S'warkii. On the
+-- North S'warkii Trail the way to the Western one runs past the town's gate, and the route
+-- went straight through the town exit's trigger box -- 100 x 500 at (-4000,2700) --, so
+-- the game took you into the town every time). An exit fires on its Trigger box; a route
+-- now steps into no exit's box but its target's (the box holding the goal point), nor
+-- within NV.EXIT_MARGIN of one -- the capsule's reach and the walk's sway. A box you stand
+-- in or next to keeps only its own outline. Read once per exit (kept by address and root
+-- position), never in a fade; the list once per route (R.exitboxes).
+NV.EXIT_MARGIN = 80
+NV.exit_boxes = {}
+NV.exit_box = function(actor)
+    local addr
+    pcall(function() addr = actor:GetAddress() end)
+    if not addr then return nil end
+    local rx, ry = read_actor_pos(actor)
+    if not rx then return nil end
+    local c = NV.exit_boxes[addr]
+    if c and math.abs(c.rx - rx) < 1 and math.abs(c.ry - ry) < 1 then return c end
+    if M.fade_now then return nil end
+    local cx, cy, cz, ex, ey, ez, fx, fy
+    pcall(function()
+        local tb = actor.Trigger
+        local cl, e, fv = tb:K2_GetComponentLocation(), tb:GetScaledBoxExtent(), tb:GetForwardVector()
+        cx, cy, cz, ex, ey, ez, fx, fy = cl.X, cl.Y, cl.Z, e.X, e.Y, e.Z, fv.X, fv.Y
+    end)
+    if type(cx) ~= "number" or type(ex) ~= "number" or type(ey) ~= "number" or type(fx) ~= "number" then return nil end
+    local fl = math.sqrt(fx * fx + fy * fy)
+    if fl < 0.01 then fx, fy = 1, 0 else fx, fy = fx / fl, fy / fl end
+    local nm = "?"
+    pcall(function() nm = actor:GetFName():ToString() end)
+    c = { rx = rx, ry = ry, cx = cx, cy = cy, cz = cz or 0, ex = ex, ey = ey,
+          ez = (type(ez) == "number" and ez > 0) and ez or 200, fx = fx, fy = fy, name = nm }
+    NV.exit_boxes[addr] = c
+    return c
+end
+-- a point (x, y) into the box's frame: u along its forward vector, v across
+NV.box_local = function(b, x, y)
+    local dx, dy = x - b.cx, y - b.cy
+    return dx * b.fx + dy * b.fy, dy * b.fx - dx * b.fy
+end
+-- is (x, y) in the box grown by m?
+NV.box_has = function(b, x, y, m)
+    local u, v = NV.box_local(b, x, y)
+    return math.abs(u) <= b.ex + m and math.abs(v) <= b.ey + m
+end
+-- does the step a -> b cross the box grown by m? (Liang-Barsky, in the box's frame)
+NV.box_seg_hit = function(b, ax, ay, bx, by, m)
+    local u0, v0 = NV.box_local(b, ax, ay)
+    local u1, v1 = NV.box_local(b, bx, by)
+    local hu, hv = b.ex + m, b.ey + m
+    local du, dv = u1 - u0, v1 - v0
+    local t0, t1 = 0, 1
+    for _, pq in ipairs({ { -du, u0 + hu }, { du, hu - u0 }, { -dv, v0 + hv }, { dv, hv - v0 } }) do
+        local p, q = pq[1], pq[2]
+        if p == 0 then
+            if q < 0 then return false end
+        else
+            local r = q / p
+            if p < 0 then
+                if r > t1 then return false elseif r > t0 then t0 = r end
+            else
+                if r < t0 then return false elseif r < t1 then t1 = r end
+            end
+        end
+    end
+    return t0 <= t1
+end
+-- the route's boxes to keep out of: every exit's in the level but the target's
+NV.route_exit_boxes = function(R)
+    if R.exitboxes then return R.exitboxes end
+    local out, names = {}, {}
+    if M.find_all and not M.fade_now then
+        for _, o in ipairs(M.find_all("LevelTrigger_C", 600) or {}) do
+            local b = NV.exit_box(o)
+            if b and not (R.ox and NV.box_has(b, R.ox, R.oy, NV.EXIT_MARGIN)) then
+                -- (you in or next to it: only its own outline)
+                local m = NV.box_has(b, R.px, R.py, NV.EXIT_MARGIN) and 0 or NV.EXIT_MARGIN
+                out[#out + 1] = { b = b, m = m }
+                names[#names + 1] = b.name .. (m == 0 and " (you are at it)" or "")
+            end
+        end
+    end
+    R.exitboxes = out
+    -- (once per change: every retry and background check makes its own list)
+    local sig = table.concat(names, ", ")
+    if #out > 0 and sig ~= NV.exitbox_sig then log("ROUTE keeps out of " .. #out .. " other exits: " .. sig) end
+    NV.exitbox_sig = sig
+    return out
+end
+-- the first of the boxes the step a -> b (floor z) enters, or nil
+NV.exit_box_on = function(boxes, ax, ay, bx, by, z)
+    for _, e in ipairs(boxes) do
+        local b = e.b
+        if math.abs((z or b.cz) + 90 - b.cz) < b.ez + 150 and NV.box_seg_hit(b, ax, ay, bx, by, e.m) then return b end
+    end
+    return nil
+end
 -- The pick itself (no game calls): the box (center, half extents along its own X and Y,
 -- forward vector), the spawn point, and floor_at(x, y, z) -> floor z or false. Samples
 -- every 60 along the long middle line (40 in from the ends), nearest to the spawn's spot
@@ -10993,6 +11091,20 @@ NV.route_slice = function(R, budget, itercap, deadline)
                     end
                     if walled then R.wall_hit = (R.wall_hit or 0) + 1 end
                 end
+                -- ANOTHER EXIT'S TRIGGER BOX: a step into it sends you to its area
+                -- (NV.route_exit_boxes)
+                if not R.closed[nk] and not who and not walled and NV.route_exit_boxes then
+                    local boxes = NV.route_exit_boxes(R)
+                    if boxes[1] then
+                        if pre then
+                            walled = NV.exit_box_on(boxes, ax0, ay0, pre.x, pre.y, best.z)
+                                or NV.exit_box_on(boxes, pre.x, pre.y, bx, by, best.z)
+                        else
+                            walled = NV.exit_box_on(boxes, ax0, ay0, bx, by, best.z)
+                        end
+                        if walled then R.exit_hit = (R.exit_hit or 0) + 1 end
+                    end
+                end
                 if not R.closed[nk] and not who and not walled then
                     local isdoor = type(c[5]) == "number"
                     -- a door costs a stop and an E press: open ways up to 25 cells longer
@@ -11114,8 +11226,11 @@ local function nav_route_begin(mode, ox, oy, oz)
     -- direct-line shortcut (same level only): if a BODY-WIDTH corridor (3 lines,
     -- center +-42) to the target is clear, skip the search entirely
     local walls = NV.walls_here()
+    -- (...and through no other exit's box: NV.route_exit_boxes)
+    local xb = NV.route_exit_boxes({ px = px, py = py, ox = ox, oy = oy })
     if ksl and samelevel and NV.corridor_clear(ksl, p, px, py, pz, ox, oy)
-        and not NV.person_on(people, px, py, pz, ox, oy) and not NV.walls_cross(walls, px, py, ox, oy, pz) then
+        and not NV.person_on(people, px, py, pz, ox, oy) and not NV.walls_cross(walls, px, py, ox, oy, pz)
+        and not NV.exit_box_on(xb, px, py, ox, oy, pz - (M.pfoot or 82)) then
         if mode == "walk" then
             nav_walk_begin_path({ { x = px, y = py }, { x = ox, y = oy } }, tr("direct"))
         else

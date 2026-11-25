@@ -5,6 +5,11 @@ turns that section into the next version and uses it as the release notes.
 
 ## [Unreleased]
 
+### Exploring
+
+- The walker and the guide keep out of other exits' trigger zones: on the North S'warkii
+  Trail the way to the Western Trail no longer leads into the town.
+
 ## [0.1.2] - 2026-11-24
 
 ### Exploring
