@@ -2150,17 +2150,23 @@ do
     local J = {}
     M.poll_jobs = function()
         local w, cls = M.get_active_screen()
-        if cls ~= "JobStatusWidget_C" or not w then J.sig, J.st, J.help_at = nil, nil, nil; return end
+        if cls ~= "JobStatusWidget_C" or not w then J.sig, J.st, J.help_at, J.tab = nil, nil, nil, nil; return end
         local a = M.addr_of(w)
         if not (a and shim and shim.Peek) then return end
         local st = shim.Peek(a + M.JOB_STATE, "u8")
-        if st ~= J.st then J.st = st; log("JOBS state " .. tostring(st)) end
+        if st ~= J.st then
+            -- (into the wheel from elsewhere: its caption with the first line; 6 is its turning)
+            if st == 5 and J.st ~= 6 then J.on_wheel = false end
+            J.st = st
+            log("JOBS state " .. tostring(st))
+        end
         local now = os.clock()
         local sig, say, help
         if st == 2 then
             local name = M.wtext(w.TitleText)
             if not name or M.placeholder(name) then return end
             local idx, ntab = shim.Peek(a + M.JOB_TAB, "i32") or 0, 0
+            J.tab = idx
             pcall(function() w.CategoryWidgetList:ForEach(function() ntab = ntab + 1 end) end)
             local parts = { name .. (ntab > 1 and trf(", tab %d of %d", idx + 1, ntab) or "") }
             for _, k in ipairs({ { "MainJobWidget", "TextMainJobName" }, { "SubJobWidget", "TextSubJobName" } }) do
@@ -2194,7 +2200,24 @@ do
                 local who = M.TRAVELERS[owner - 1]
                 if who then say = trf("%s, equipped by %s", job, who) end
             end
-            sig = "J" .. tostring(ji) .. job
+            -- left / right on the wheel go to the next traveler (user 2026-11-25: it said
+            -- "Keine" for each one -- whose?): their name, and the wheel's caption on the
+            -- first line ("Olberic. Zweitlaufbahn: Keine"); a turn of the wheel the job alone
+            local tab = shim.Peek(a + M.JOB_TAB, "i32")
+            local head = {}
+            if tab ~= J.tab then
+                local name = M.wtext(w.TitleText)
+                if name and not M.placeholder(name) then head[#head + 1] = name end
+            end
+            if tab ~= J.tab or not J.on_wheel then
+                local cap
+                pcall(function() cap = M.wtext(sw.ListColumn.Column1_Title) end)
+                if cap and not M.placeholder(cap) then say = cap .. ": " .. say end
+            end
+            head[#head + 1] = say
+            say = M.join_text(head)
+            J.tab, J.on_wheel = tab, true
+            sig = "J" .. tostring(tab) .. ":" .. tostring(ji) .. job
             help = function() return M.eq_changes(w, "ListItemParamWidget") end
         end
         if sig and sig ~= J.sig then
@@ -4498,6 +4521,14 @@ M.poll_menu_list = function()
             return
         end
         pcall(function() w = aw.SupportAbilitySelectList end)
+    end
+    -- the jobs screen reads its travelers and its job wheel itself (M.poll_jobs); its skill
+    -- lists are active and visible meanwhile, without the cursor (user 2026-11-25: the
+    -- first skill was said at each step): read only in its list states (8, 12)
+    if top == "JobStatusWidget_C" and aw then
+        local ja = M.addr_of(aw)
+        local js = ja and shim and shim.Peek and shim.Peek(ja + M.JOB_STATE, "u8")
+        if js ~= 8 and js ~= 12 then return end
     end
     -- the focused list itself, as GetActiveStack returns it: the equipment screen has two
     -- lists active at once (slots, items) and the scan below took the wrong one
