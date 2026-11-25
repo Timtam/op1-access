@@ -7,6 +7,8 @@ turns that section into the next version and uses it as the release notes.
 
 ### Exploring
 
+- The object in a job shrine (and a few others you examine with Enter) is listed under the
+  markers as “object to examine”, so the walker and the guide can take you there.
 - The walker and the guide keep out of other exits' trigger zones: on the North S'warkii
   Trail the way to the Western Trail no longer leads into the town.
 

@@ -221,7 +221,8 @@ main menu, **Backspace** to go back in menus. The mod adds these:
   items, the objective, the exit toward it, save points, travelers to recruit. A new
   one is said when it comes up (“New marker: hidden item, right, 3872”). Where an
   optional boss waits, the spot that starts the fight is a marker too (“boss fight”),
-  though the minimap shows none.
+  though the minimap shows none; so is the object in a job shrine and the like, which you
+  examine with Enter (“object to examine”).
 - **The walker** takes you to the target over a computed route: around walls and
   people, up and down narrow stairs, and through doors, which it opens itself. When
   someone blocks the only way it says who (“Guard is in the way”), and at a chest or a

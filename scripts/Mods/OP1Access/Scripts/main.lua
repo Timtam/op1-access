@@ -14515,7 +14515,7 @@ M.minimap_markers = function(pz)
             icons[#icons + 1] = { type = t, green = green, reg = reg, x = x, y = y }
         end)
     end)
-    if #icons == 0 then return M.boss_markers({}) end
+    if #icons == 0 then return M.event_markers({}) end
     -- Pin every icon to an actor: NPCs by object name (they wander; the icon follows
     -- them), hidden items and exits by name or else the nearest chest / exit trigger.
     -- The actor gives the REAL height. With the player's own z (icons carry X/Y only)
@@ -14628,7 +14628,7 @@ M.minimap_markers = function(pz)
         if events[aaddr] then label, walkcat = trf("%s place", kind), "event" end
         out[#out + 1] = { actor = actor, x = x, y = y, z = z, label = label, walkcat = walkcat }
     end
-    return M.boss_markers(out)
+    return M.event_markers(out)
 end
 -- BOSS FIGHTS (user 2026-11-23, the Aashöhlen: the boss has no marker, so there was no
 -- way to be led there). An optional dungeon's boss starts as you step into its event box:
@@ -14639,7 +14639,14 @@ end
 -- isn't listed twice. Gone once the boss is beaten: the box's SpawnEndFlag (1035 here)
 -- keeps it from being placed again, but until the level is loaded again it stays -- so
 -- its EventEndFlag_A (@0xD4, the same flag) is asked too (M.boss_beaten).
-M.EVT_PLACE, M.EVT_TYPE_A, M.EVT_END_A, M.EVT_BOSS = 0x3A0, 0xCC, 0xD4, 6
+-- OBJECTS TO EXAMINE (user 2026-11-25: in the Schrein der Donnerklinge the shrine's object
+-- wasn't listed). Its event box has EventType_A 1 -- started with Enter where you stand, not
+-- by walking in: the twelve job shrines' altars (BOX_<area>_2J0000 / _3J0000, label
+-- SC_OB_*, no minimap icon), and a few more in the placement table (side story
+-- statues SS_EX4_0137*, SC_SL_* and story spots, those with an icon pinned already).
+-- They join the markers as "object to examine"; the walk ends close by (170, like a chest)
+-- and Enter does the rest.
+M.EVT_PLACE, M.EVT_TYPE_A, M.EVT_END_A, M.EVT_BOSS, M.EVT_EXAMINE = 0x3A0, 0xCC, 0xD4, 6, 1
 M.boss_beaten = function(a)
     local en = shim.Peek(a + M.EVT_PLACE + M.EVT_END_A, "i32")
     if type(en) ~= "number" or en <= 0 then return false end
@@ -14648,7 +14655,7 @@ M.boss_beaten = function(a)
     local ok, v = pcall(function() return sg:GetBitFlag(en) end)
     return ok and v == true
 end
-M.boss_markers = function(out)
+M.event_markers = function(out)
     if not (shim and shim.Peek) then return out end
     local have = {}
     for _, m in ipairs(out) do
@@ -14657,11 +14664,17 @@ M.boss_markers = function(out)
     for _, o in ipairs(M.find_all("EventTriggerBP_C", 600) or {}) do
         local a = 0
         pcall(function() a = o:GetAddress() end)
-        if a ~= 0 and not have[a] and shim.Peek(a + M.EVT_PLACE + M.EVT_TYPE_A, "u8") == M.EVT_BOSS
-            and not M.boss_beaten(a) then
+        local et = (a ~= 0 and not have[a]) and shim.Peek(a + M.EVT_PLACE + M.EVT_TYPE_A, "u8") or nil
+        local label, walkcat
+        if et == M.EVT_BOSS and not M.boss_beaten(a) then
+            label, walkcat = tr("boss fight"), "event"
+        elseif et == M.EVT_EXAMINE then
+            label = tr("object to examine")
+        end
+        if label then
             local x, y, z = read_actor_pos(o)
             if x then
-                out[#out + 1] = { actor = o, x = x, y = y, z = z, label = tr("boss fight"), walkcat = "event" }
+                out[#out + 1] = { actor = o, x = x, y = y, z = z, label = label, walkcat = walkcat }
             end
         end
     end
