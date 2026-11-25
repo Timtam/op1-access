@@ -36,6 +36,12 @@ data: keep it out of the repository.
   prints the route's cells with their floors, `verbose` the router's own log lines.
 - `norise` switches the ledge rule (`NV.rise_ok`) off, `noch0fences` lets channel 0 miss
   the fence boxes: to see which rule a failure hangs on.
+- `exitbox=cx,cy,w,h[,fx,fy]` adds another exit's trigger box the route keeps out of, as
+  in the game (`NV.route_exit_boxes`): the numbers of an `EXIT goal` line ("box (cx,cy) wxh"),
+  the forward vector `fx,fy` 1,0 unless given. Repeat it for more exits. Example, the North
+  S'warkii Trail (2026-11-25): from (-2745,2178) to the Western Trail's exit at (-1500,-5150)
+  the route went through the town's box; with `exitbox=-4000,2700,100,500` it takes another
+  way, 1343 from that box at its closest.
 
 Example (the Mountain Pass, from the Cobbleston entrance to the Brigands' Den exit):
 

@@ -6,7 +6,8 @@
 --   a floor is a number, "top" (the highest floor there) or "under<z>" (the first floor
 --   below z, e.g. under450). Options: path (print the route's cells), norise (without the
 --   ledge rule, NV.rise_ok), noch0fences (channel 0 doesn't see the KSMapEditor fence
---   boxes), verbose (the router's log lines).
+--   boxes), verbose (the router's log lines), exitbox=cx,cy,w,h[,fx,fy] (another exit's
+--   trigger box to keep out of, repeatable).
 -- Exit code 0 = found, 1 = not reachable.
 local function dirof(p)
   for i = #p, 1, -1 do
@@ -16,7 +17,7 @@ local function dirof(p)
   return ""
 end
 if #arg < 8 then
-  io.stderr:write("usage: lua route.lua <main.lua> <world.lua> <sx> <sy> <sfloor> <tx> <ty> <tfloor> [path] [norise] [noch0fences] [verbose]\n")
+  io.stderr:write("usage: lua route.lua <main.lua> <world.lua> <sx> <sy> <sfloor> <tx> <ty> <tfloor> [path] [norise] [noch0fences] [verbose] [exitbox=cx,cy,w,h[,fx,fy]]\n")
   os.exit(2)
 end
 local f = assert(io.open(arg[1], "rb"))
@@ -28,13 +29,33 @@ local function cut(a_pat, b_pat)
   return src:sub(a, b - 1)
 end
 local opt = {}
-for i = 9, #arg do opt[arg[i]] = true end
+-- exitbox=cx,cy,w,h[,fx,fy]: another exit's Trigger box to keep out of (the EXIT goal lines
+-- of the session log: "box (cx,cy) wxh"; forward vector fx,fy, default 1,0)
+local EXITS = {}
+for i = 9, #arg do
+  local spec = arg[i]:match("^exitbox=(.+)$")
+  if spec then
+    local v = {}
+    for num in spec:gmatch("[^,]+") do v[#v + 1] = tonumber(num) end
+    assert(#v >= 4, "exitbox=cx,cy,w,h[,fx,fy]")
+    local cx, cy, w, h, fx, fy = v[1], v[2], v[3], v[4], v[5] or 1, v[6] or 0
+    local box = { X = w / 2, Y = h / 2, Z = 200 }
+    EXITS[#EXITS + 1] = { x = cx, y = cy, GetAddress = function() return 0x1000 + i end,
+      GetFName = function() return { ToString = function() return "exit" .. i end } end,
+      Trigger = { K2_GetComponentLocation = function() return { X = cx, Y = cy, Z = 100 } end,
+        GetScaledBoxExtent = function() return box end,
+        GetForwardVector = function() return { X = fx, Y = fy, Z = 0 } end } }
+  else
+    opt[arg[i]] = true
+  end
+end
 local World = dofile(dirof(arg[0]) .. "world.lua")
 local W = World.load(arg[2], { ch0_fences = not opt.noch0fences })
 
 -- what the router needs from the mod around it
 local M = { door_list = function() return {} end, tr_native = true, area_said = "sim", pfoot = 82,
-  level_id = function() return 1 end, handle_ok = function(h) return h ~= nil end }
+  level_id = function() return 1 end, handle_ok = function(h) return h ~= nil end,
+  find_all = function(cls) return cls == "LevelTrigger_C" and EXITS or {} end }
 -- the "whole area" box comes from the field objects: the level's own extent here
 local b = W.bounds
 local OBJECTS = { { x = b[1], y = b[2] }, { x = b[3], y = b[4] } }
