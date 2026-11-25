@@ -253,6 +253,8 @@ out.
   change, the tutorials and
   the Miscellaneous submenu. Coming back from a list, the options or a dialog, the menu
   says where you are again.
+- The jobs screen: each traveler with their job and secondary job, and on the job wheel
+  the job, who has it equipped already, and the stats it would give.
 - The objective is read when the menu opens, and with Q in the field and in the menu's
   category list.
 - The world map: the place under the cursor (town, path or dungeon, region, danger

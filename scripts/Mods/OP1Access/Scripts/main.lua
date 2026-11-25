@@ -2133,6 +2133,83 @@ do
     end
 end
 
+-- THE JOBS SCREEN ("Laufbahnen", user 2026-11-25: unlocked with the first job shrine, and
+-- nothing was read there). JobStatusWidget_C on the active stack (cooked bytecode): State
+-- @0x2D8 -- 2 choosing the traveler (face tabs: SelectCategoryIndex @0x2A8,
+-- CategoryWidgetList; the name in TitleText), 5 choosing the secondary job on the wheel,
+-- 6 the wheel turning, 7 the change's confirm, 8 / 12 the job's skills / support skills,
+-- 11 a skill's confirm, 1 / 13 opening / closing. MainJobWidget.TextMainJobName = the
+-- main job. SubJobWidget: JobSelectIndex @0x3F8 on the wheel; TextSubJobName the job there
+-- as the game shows it (SetCenterUI: its name, the game's "none" on the traveler's own job
+-- = no secondary job, "???" not obtained yet); SecondJobEquipmentList (TArray<int> @0x450)
+-- who wears that job (EPlayableCharacterID 1-8 = M.TRAVELERS[id - 1], as the objectives'
+-- rows); CharacterData.CharacterID @0x320 the traveler shown. The stats the job would
+-- give: ListItemParamWidget (M.eq_changes), said a moment later. Other states: logged.
+M.JOB_STATE, M.JOB_TAB, M.JOB_WHEEL, M.JOB_ME, M.JOB_WORN = 0x2D8, 0x2A8, 0x3F8, 0x320, 0x450
+do
+    local J = {}
+    M.poll_jobs = function()
+        local w, cls = M.get_active_screen()
+        if cls ~= "JobStatusWidget_C" or not w then J.sig, J.st, J.help_at = nil, nil, nil; return end
+        local a = M.addr_of(w)
+        if not (a and shim and shim.Peek) then return end
+        local st = shim.Peek(a + M.JOB_STATE, "u8")
+        if st ~= J.st then J.st = st; log("JOBS state " .. tostring(st)) end
+        local now = os.clock()
+        local sig, say, help
+        if st == 2 then
+            local name = M.wtext(w.TitleText)
+            if not name or M.placeholder(name) then return end
+            local idx, ntab = shim.Peek(a + M.JOB_TAB, "i32") or 0, 0
+            pcall(function() w.CategoryWidgetList:ForEach(function() ntab = ntab + 1 end) end)
+            local parts = { name .. (ntab > 1 and trf(", tab %d of %d", idx + 1, ntab) or "") }
+            for _, k in ipairs({ { "MainJobWidget", "TextMainJobName" }, { "SubJobWidget", "TextSubJobName" } }) do
+                local pw, t, cap
+                pcall(function() pw = w[k[1]] end)
+                if pw then
+                    t = M.wtext(pw[k[2]])
+                    pcall(function() cap = M.wtext(pw.ListColumn.Column1_Title) end)
+                end
+                if t and not M.placeholder(t) then
+                    parts[#parts + 1] = (cap and not M.placeholder(cap)) and (cap .. ": " .. t) or t
+                end
+            end
+            sig, say = "C" .. tostring(idx) .. name, M.join_text(parts)
+        elseif st == 5 then
+            local sw
+            pcall(function() sw = w.SubJobWidget end)
+            local sa = sw and M.addr_of(sw)
+            if not sa then return end
+            local ji = shim.Peek(sa + M.JOB_WHEEL, "i32")
+            local job = M.wtext(sw.TextSubJobName)
+            if type(ji) ~= "number" or not job or M.placeholder(job) then return end
+            local me = shim.Peek(sa + M.JOB_ME, "i32")
+            local data, n = shim.Peek(sa + M.JOB_WORN, "ptr"), shim.Peek(sa + M.JOB_WORN + 8, "i32")
+            local owner = (data and data ~= 0 and type(n) == "number" and ji >= 0 and ji < n)
+                and shim.Peek(data + ji * 4, "i32") or 0
+            say = job
+            -- (the game's "???": a job whose shrine you haven't found yet)
+            if job:match("^[%?%s]+$") then say = tr("Job not obtained yet") end
+            if owner and owner > 0 and owner ~= me then
+                local who = M.TRAVELERS[owner - 1]
+                if who then say = trf("%s, equipped by %s", job, who) end
+            end
+            sig = "J" .. tostring(ji) .. job
+            help = function() return M.eq_changes(w, "ListItemParamWidget") end
+        end
+        if sig and sig ~= J.sig then
+            J.sig = sig
+            log("JOBS " .. say)
+            speak(say, true)
+            J.help, J.help_at = help, help and (now + 0.3) or nil
+        elseif J.help_at and now >= J.help_at then
+            J.help_at = nil
+            local okh, h = pcall(J.help)
+            if okh and h then speak(h, false) end
+        end
+    end
+end
+
 -- GAME OVER (user report 2026-11-14: after the party fell, the menu was silent).
 -- UIGameOver_C, on the active stack (object dump): NowCursorPos @0x2D0 indexes CursorList
 -- @0x2C0, the GameoverItemWidget_C items Save @0x288 ("Weiter ab letztem Speicherpunkt")
@@ -6100,6 +6177,7 @@ M.fast_steps = {
     { "mainmenu", function() M.poll_mainmenu() end },
     { "status", function() M.poll_status() end },
     { "journal", function() M.poll_journal() end },
+    { "jobs", function() M.poll_jobs() end },
     { "worldmap", function() M.poll_worldmap() end },
     { "gameover", function() M.poll_gameover() end },
     { "shop", function() M.poll_shop() end },

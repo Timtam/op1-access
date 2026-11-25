@@ -18,7 +18,7 @@ msgstr "暂无消息"
 msgid "Tab"
 msgstr "Tab 键"
 
-#: main.lua:454 main.lua:13410
+#: main.lua:454 main.lua:13488
 msgid "Enter"
 msgstr "回车键"
 
@@ -287,7 +287,7 @@ msgstr "职业状态"
 msgid "Save and load"
 msgstr "保存与读取"
 
-#: main.lua:730 main.lua:13643
+#: main.lua:730 main.lua:13721
 msgid "Path action"
 msgstr "地图指令"
 
@@ -323,7 +323,7 @@ msgstr "制作人员名单"
 msgid "Party chat"
 msgstr "队伍对话"
 
-#: main.lua:1245 main.lua:1788 main.lua:2180 main.lua:2424
+#: main.lua:1245 main.lua:1788 main.lua:2257 main.lua:2501
 #, lua-format
 msgid "Item %s"
 msgstr "道具 %s"
@@ -378,7 +378,7 @@ msgstr "%s，等级 %s"
 msgid "can't be chosen"
 msgstr "无法选择"
 
-#: main.lua:1660 main.lua:13411
+#: main.lua:1660 main.lua:13489
 #, lua-format
 msgid "%s: %s"
 msgstr "%s：%s"
@@ -406,7 +406,7 @@ msgstr "不可用"
 msgid "Category %s"
 msgstr "类别 %s"
 
-#: main.lua:1864 main.lua:1980 main.lua:13971
+#: main.lua:1864 main.lua:1980 main.lua:14049
 #, lua-format
 msgid "%d of %d"
 msgstr "%d/%d"
@@ -420,7 +420,7 @@ msgstr "等级 %s"
 msgid "Weapon"
 msgstr "武器"
 
-#: main.lua:1973 main.lua:9026
+#: main.lua:1973 main.lua:9104
 msgid "Unknown"
 msgstr "未知"
 
@@ -449,1770 +449,1779 @@ msgstr "%s，已完成"
 msgid "%s, new"
 msgstr "%s，新条目"
 
-#: main.lua:2185
+#: main.lua:2165 main.lua:4405 main.lua:4546
+#, lua-format
+msgid ", tab %d of %d"
+msgstr "，标签页 %d/%d"
+
+#: main.lua:2192
+msgid "Job not obtained yet"
+msgstr "尚未获得该职业"
+
+#: main.lua:2195
+#, lua-format
+msgid "%s, equipped by %s"
+msgstr "%s，由%s装备"
+
+#: main.lua:2262
 msgid "Game over"
 msgstr "游戏结束"
 
-#: main.lua:2349
+#: main.lua:2426
 msgid "Shop"
 msgstr "商店"
 
-#: main.lua:2425 main.lua:2535 main.lua:4548 main.lua:5477 main.lua:14083
+#: main.lua:2502 main.lua:2612 main.lua:4625 main.lua:5554 main.lua:14161
 #, lua-format
 msgid "%s, unavailable"
 msgstr "%s，不可用"
 
-#: main.lua:2469
+#: main.lua:2546
 #, lua-format
 msgid "Party %d of %d: %s"
 msgstr "队伍 %d/%d：%s"
 
-#: main.lua:2469 main.lua:2470 main.lua:2471 main.lua:2471
+#: main.lua:2546 main.lua:2547 main.lua:2548 main.lua:2548
 msgid "empty"
 msgstr "空"
 
-#: main.lua:2470
+#: main.lua:2547
 #, lua-format
 msgid "Waiting %d of %d: %s"
 msgstr "待命 %d/%d：%s"
 
-#: main.lua:2471
+#: main.lua:2548
 #, lua-format
 msgid "Party %d: %s"
 msgstr "队伍第 %d 位：%s"
 
-#: main.lua:2471
+#: main.lua:2548
 #, lua-format
 msgid "Waiting %d: %s"
 msgstr "待命第 %d 位：%s"
 
-#: main.lua:2473
+#: main.lua:2550
 #, lua-format
 msgid "%s, chosen"
 msgstr "%s，已选中"
 
-#: main.lua:2527
+#: main.lua:2604
 msgid "recommended level"
 msgstr "推荐等级"
 
-#: main.lua:2534
+#: main.lua:2611
 #, lua-format
 msgid "%d of %d: "
 msgstr "%d/%d："
 
-#: main.lua:2623
+#: main.lua:2700
 msgid "town"
 msgstr "城镇"
 
-#: main.lua:2623
+#: main.lua:2700
 msgid "path"
 msgstr "道路"
 
-#: main.lua:2623
+#: main.lua:2700
 msgid "dungeon"
 msgstr "迷宫"
 
-#: main.lua:2670 main.lua:2717
+#: main.lua:2747 main.lua:2794
 #, lua-format
 msgid "%s, chapter %d"
 msgstr "%s，第 %d 章"
 
-#: main.lua:2670
+#: main.lua:2747
 #, lua-format
 msgid "traveler %d"
 msgstr "旅人 %d"
 
-#: main.lua:2716
+#: main.lua:2793
 msgid "someone"
 msgstr "某人"
 
-#: main.lua:2719
+#: main.lua:2796
 #, lua-format
 msgid "%s, level %d"
 msgstr "%s，等级 %d"
 
-#: main.lua:2757
+#: main.lua:2834
 msgid "unknown place"
 msgstr "未知地点"
 
-#: main.lua:2763
+#: main.lua:2840
 #, lua-format
 msgid "danger level %d to %d"
 msgstr "危险等级 %d 至 %d"
 
-#: main.lua:2764 main.lua:3147 main.lua:14796
+#: main.lua:2841 main.lua:3224 main.lua:14874
 #, lua-format
 msgid "danger level %d"
 msgstr "危险等级 %d"
 
-#: main.lua:2766
+#: main.lua:2843
 msgid "you are here"
 msgstr "当前位置"
 
-#: main.lua:2769
+#: main.lua:2846
 msgid "not discovered"
 msgstr "尚未发现"
 
-#: main.lua:2770
+#: main.lua:2847
 msgid "not visited"
 msgstr "尚未到访"
 
-#: main.lua:2773
+#: main.lua:2850
 #, lua-format
 msgid "%s. Recommended: %s"
 msgstr "%s。推荐等级：%s"
 
-#: main.lua:2776
+#: main.lua:2853
 #, lua-format
 msgid "%s. Story destination: %s"
 msgstr "%s。剧情目的地：%s"
 
-#: main.lua:2777
+#: main.lua:2854
 #, lua-format
 msgid "%s. Story destination"
 msgstr "%s。剧情目的地"
 
-#: main.lua:2819
+#: main.lua:2896
 msgid "north"
 msgstr "北"
 
-#: main.lua:2819
+#: main.lua:2896
 msgid "south"
 msgstr "南"
 
-#: main.lua:2819
+#: main.lua:2896
 msgid "east"
 msgstr "东"
 
-#: main.lua:2819
+#: main.lua:2896
 msgid "west"
 msgstr "西"
 
-#: main.lua:2819
+#: main.lua:2896
 msgid "north-east"
 msgstr "东北"
 
-#: main.lua:2819
+#: main.lua:2896
 msgid "north-west"
 msgstr "西北"
 
-#: main.lua:2820
+#: main.lua:2897
 msgid "south-east"
 msgstr "东南"
 
-#: main.lua:2820
+#: main.lua:2897
 msgid "south-west"
 msgstr "西南"
 
-#: main.lua:2823 main.lua:6354 main.lua:7481
+#: main.lua:2900 main.lua:6432 main.lua:7559
 msgid "here"
 msgstr "此处"
 
-#: main.lua:2879
+#: main.lua:2956
 msgid "No places"
 msgstr "没有地点"
 
-#: main.lua:2879
+#: main.lua:2956
 msgid "No places on the map"
 msgstr "地图上没有地点"
 
-#: main.lua:2887
+#: main.lua:2964
 #, lua-format
 msgid "%d of %d: %s"
 msgstr "%d/%d：%s"
 
-#: main.lua:2934
+#: main.lua:3011
 msgid "No regions"
 msgstr "没有地区"
 
-#: main.lua:2947
+#: main.lua:3024
 #, lua-format
 msgid "Places on the map, %d"
 msgstr "地图上的地点，共 %d 个"
 
-#: main.lua:2954
+#: main.lua:3031
 #, lua-format
 msgid "%s, %d places, %d of them on your map"
 msgstr "%s，共 %d 个地点，其中 %d 个已在地图上显示"
 
-#: main.lua:3000
+#: main.lua:3077
 #, lua-format
 msgid "World map. You are at %s"
 msgstr "世界地图。你在 %s"
 
-#: main.lua:3000
+#: main.lua:3077
 msgid "World map"
 msgstr "世界地图"
 
-#: main.lua:3150
+#: main.lua:3227
 #, lua-format
 msgid "%d area: %s"
 msgid_plural "%d areas: %s"
 msgstr[0] "%d 个区域：%s"
 msgstr[1] "%d 个区域：%s"
 
-#: main.lua:3185
+#: main.lua:3262
 #, lua-format
 msgid "Cursor on %s. Enter for fast travel."
 msgstr "光标位于 %s。按回车键快速旅行。"
 
-#: main.lua:3194
+#: main.lua:3271
 msgid "Pick a place with page up and page down first"
 msgstr "先用 Page Up 和 Page Down 键选择地点"
 
-#: main.lua:3196
+#: main.lua:3273
 msgid "No route data"
 msgstr "没有路线数据"
 
-#: main.lua:3201
+#: main.lua:3278
 msgid "Can't tell where you are on the map"
 msgstr "无法确定你在地图上的位置"
 
-#: main.lua:3208
+#: main.lua:3285
 msgid "You are there"
 msgstr "你已经到了"
 
-#: main.lua:3223
+#: main.lua:3300
 #, lua-format
 msgid "%s: you can fast travel there. Control backspace again puts the cursor on it."
 msgstr "%s：可以快速旅行到那里。再按一次 Ctrl 加退格键，将光标移到那里。"
 
-#: main.lua:3225
+#: main.lua:3302
 #, lua-format
 msgid "Route to %s: fast travel to %s, then %s. Control backspace again puts the cursor on %s."
 msgstr "前往 %s 的路线：先快速旅行到 %s，接着步行经过 %s。再按一次 Ctrl 加退格键，将光标移到 %s。"
 
-#: main.lua:3232
+#: main.lua:3309
 #, lua-format
 msgid "No route known to %s"
 msgstr "没有已知路线可到达 %s"
 
-#: main.lua:3237
+#: main.lua:3314
 #, lua-format
 msgid "Route to %s, %s. In each area the exit on the way says so."
 msgstr "前往 %s 的路线：%s。沿途每个区域都会提示该走哪个出口。"
 
-#: main.lua:3251
+#: main.lua:3328
 #, lua-format
 msgid "on the way to %s"
 msgstr "前往 %s 的途中"
 
-#: main.lua:3283
+#: main.lua:3360
 #, lua-format
 msgid "Page %d of %d."
 msgstr "第 %d 页，共 %d 页。"
 
-#: main.lua:3313
+#: main.lua:3390
 msgid "Go on with Backspace."
 msgstr "按退格键继续。"
 
-#: main.lua:3314
+#: main.lua:3391
 msgid "Next page with Backspace."
 msgstr "按退格键翻到下一页。"
 
-#: main.lua:3315 main.lua:3351
+#: main.lua:3392 main.lua:3428
 msgid "Close with Backspace."
 msgstr "按退格键关闭。"
 
-#: main.lua:3351
+#: main.lua:3428
 msgid "Continue with Enter."
 msgstr "按回车键继续。"
 
-#: main.lua:3374
+#: main.lua:3451
 #, lua-format
 msgid "Action %s"
 msgstr "指令 %s"
 
-#: main.lua:4076
+#: main.lua:4153
 #, lua-format
 msgid "%s %d to %d"
 msgstr "%s，从 %d 变为 %d"
 
-#: main.lua:4159
+#: main.lua:4236
 #, lua-format
 msgid "%s %s to %s"
 msgstr "%s，从 %s 变为 %s"
 
-#: main.lua:4167
+#: main.lua:4244
 msgid "can't equip"
 msgstr "无法装备"
 
-#: main.lua:4226
+#: main.lua:4303
 msgid "Equip it: choose a traveler"
 msgstr "选择要装备的旅人"
 
-#: main.lua:4290
+#: main.lua:4367
 #, lua-format
 msgid "%d free slot"
 msgid_plural "%d free slots"
 msgstr[0] "%d 个空栏位"
 msgstr[1] "%d 个空栏位"
 
-#: main.lua:4328 main.lua:4469
-#, lua-format
-msgid ", tab %d of %d"
-msgstr "，标签页 %d/%d"
-
-#: main.lua:4349
+#: main.lua:4426
 msgid "No support skills learned yet"
 msgstr "尚未习得支援技能"
 
-#: main.lua:4351
+#: main.lua:4428
 #, lua-format
 msgid "Slot %d of %d: %s"
 msgstr "栏位 %d/%d：%s"
 
-#: main.lua:4373
+#: main.lua:4450
 #, lua-format
 msgid "%s, level %s"
 msgstr "%s，等级 %s"
 
-#: main.lua:4375
+#: main.lua:4452
 #, lua-format
 msgid "%s, HP %s of %s"
 msgstr "%s，HP %s，上限 %s"
 
-#: main.lua:4376
+#: main.lua:4453
 #, lua-format
 msgid "%s, SP %s of %s"
 msgstr "%s，SP %s，上限 %s"
 
-#: main.lua:4469
+#: main.lua:4546
 #, lua-format
 msgid "Tab %d"
 msgstr "标签页 %d"
 
-#: main.lua:4481
+#: main.lua:4558
 #, lua-format
 msgid "%s, next skill %s LBP"
 msgstr "%s，习得下个技能需要 %s LBP"
 
-#: main.lua:4546 main.lua:14081
+#: main.lua:4623 main.lua:14159
 msgid "on hand"
 msgstr "持有数"
 
-#: main.lua:4552
+#: main.lua:4629
 #, lua-format
 msgid "%s, not usable here"
 msgstr "%s，无法在此使用"
 
-#: main.lua:4563
+#: main.lua:4640
 msgid "Locked skill"
 msgstr "技能未解锁"
 
-#: main.lua:4564
+#: main.lua:4641
 #, lua-format
 msgid "%s, learned"
 msgstr "%s，已习得"
 
-#: main.lua:4569 main.lua:4596
+#: main.lua:4646 main.lua:4673
 #, lua-format
 msgid "%s, equipped"
 msgstr "%s，已装备"
 
-#: main.lua:4569
+#: main.lua:4646
 #, lua-format
 msgid "%s, can't equip"
 msgstr "%s，无法装备"
 
-#: main.lua:4601
+#: main.lua:4678
 #, lua-format
 msgid "Slot %d of %d"
 msgstr "栏位 %d/%d"
 
-#: main.lua:4726
+#: main.lua:4803
 msgid "Sword"
 msgstr "剑"
 
-#: main.lua:4726
+#: main.lua:4803
 msgid "Spear"
 msgstr "枪"
 
-#: main.lua:4726
+#: main.lua:4803
 msgid "Dagger"
 msgstr "短剑"
 
-#: main.lua:4726
+#: main.lua:4803
 msgid "Axe"
 msgstr "斧"
 
-#: main.lua:4726
+#: main.lua:4803
 msgid "Bow"
 msgstr "弓"
 
-#: main.lua:4727
+#: main.lua:4804
 msgid "Staff"
 msgstr "杖"
 
-#: main.lua:4727 main.lua:4727 main.lua:4727
+#: main.lua:4804 main.lua:4804 main.lua:4804
 msgid "Fire"
 msgstr "火"
 
-#: main.lua:4727
+#: main.lua:4804
 msgid "Ice"
 msgstr "冰"
 
-#: main.lua:4727
+#: main.lua:4804
 msgid "Lightning"
 msgstr "雷"
 
-#: main.lua:4728
+#: main.lua:4805
 msgid "Wind"
 msgstr "风"
 
-#: main.lua:4728
+#: main.lua:4805
 msgid "Light"
 msgstr "光"
 
-#: main.lua:4728
+#: main.lua:4805
 msgid "Dark"
 msgstr "暗"
 
-#: main.lua:4806
+#: main.lua:4883
 #, lua-format
 msgid "%s SP"
 msgstr "消耗 %s SP"
 
-#: main.lua:4808
+#: main.lua:4885
 #, lua-format
 msgid "%s left"
 msgstr "剩余 %s"
 
-#: main.lua:4949
+#: main.lua:5026
 msgid "Companion"
 msgstr "同行者"
 
-#: main.lua:5002
+#: main.lua:5079
 #, lua-format
 msgid "%d unknown"
 msgstr "%d 个未知弱点"
 
-#: main.lua:5008
+#: main.lua:5085
 #, lua-format
 msgid "%s locked"
 msgstr "%s已锁定"
 
-#: main.lua:5011
+#: main.lua:5088
 msgid "1 unknown locked"
 msgstr "1 个未知弱点已锁定"
 
-#: main.lua:5017
+#: main.lua:5094
 #, lua-format
 msgid "weak to %s, all locked"
 msgstr "弱点：%s，全部已锁定"
 
-#: main.lua:5018
+#: main.lua:5095
 #, lua-format
 msgid "weak to %s"
 msgstr "弱点：%s"
 
-#: main.lua:5053
+#: main.lua:5130
 #, lua-format
 msgid "%s: weaknesses locked"
 msgstr "%s的弱点已锁定"
 
-#: main.lua:5053
+#: main.lua:5130
 #, lua-format
 msgid "%s: weaknesses free again"
 msgstr "%s的弱点已解锁"
 
-#: main.lua:5083 main.lua:5121 main.lua:5145
+#: main.lua:5160 main.lua:5198 main.lua:5222
 msgid "broken"
 msgstr "已破防"
 
-#: main.lua:5084
+#: main.lua:5161
 #, lua-format
 msgid "shield %s"
 msgstr "护盾 %s"
 
-#: main.lua:5136
+#: main.lua:5213
 msgid "abilities hit all"
 msgstr "技能作用于全体"
 
-#: main.lua:5136
+#: main.lua:5213
 msgid "attacks hit all"
 msgstr "攻击命中全体"
 
-#: main.lua:5136
+#: main.lua:5213
 msgid "evasion up"
 msgstr "回避上升"
 
-#: main.lua:5137
+#: main.lua:5214
 msgid "BP boost"
 msgstr "BP 增加"
 
-#: main.lua:5137
+#: main.lua:5214
 msgid "counter"
 msgstr "反击"
 
-#: main.lua:5137
+#: main.lua:5214
 msgid "critical up"
 msgstr "会心上升"
 
-#: main.lua:5137
+#: main.lua:5214
 msgid "criticals continue"
 msgstr "持续会心"
 
-#: main.lua:5138
+#: main.lua:5215
 msgid "dark enchant"
 msgstr "暗属性附魔"
 
-#: main.lua:5138
+#: main.lua:5215
 msgid "damage guard"
 msgstr "伤害减免"
 
-#: main.lua:5138
+#: main.lua:5215
 msgid "elemental evasion up"
 msgstr "属性回避上升"
 
-#: main.lua:5138
+#: main.lua:5215
 msgid "fire enchant"
 msgstr "火属性附魔"
 
-#: main.lua:5139
+#: main.lua:5216
 msgid "health up"
 msgstr "生命值上升"
 
-#: main.lua:5139
+#: main.lua:5216
 msgid "accuracy up"
 msgstr "命中上升"
 
-#: main.lua:5139
+#: main.lua:5216
 msgid "ice enchant"
 msgstr "冰属性附魔"
 
-#: main.lua:5139
+#: main.lua:5216
 msgid "invincible"
 msgstr "无敌"
 
-#: main.lua:5140
+#: main.lua:5217
 msgid "items hit all"
 msgstr "道具作用于全体"
 
-#: main.lua:5140
+#: main.lua:5217
 msgid "light enchant"
 msgstr "光属性附魔"
 
-#: main.lua:5140
+#: main.lua:5217
 msgid "elemental attack up"
 msgstr "属性攻击上升"
 
-#: main.lua:5141
+#: main.lua:5218
 msgid "spells continue"
 msgstr "法术连续发动"
 
-#: main.lua:5141
+#: main.lua:5218
 msgid "spells converge"
 msgstr "法术集中"
 
-#: main.lua:5141
+#: main.lua:5218
 msgid "spell criticals"
 msgstr "法术可触发会心"
 
-#: main.lua:5142
+#: main.lua:5219
 msgid "elemental defense up"
 msgstr "属性防御上升"
 
-#: main.lua:5142
+#: main.lua:5219
 msgid "physical attack up"
 msgstr "物理攻击上升"
 
-#: main.lua:5142
+#: main.lua:5219
 msgid "physical defense up"
 msgstr "物理防御上升"
 
-#: main.lua:5143
+#: main.lua:5220
 msgid "provoke"
 msgstr "挑衅"
 
-#: main.lua:5143
+#: main.lua:5220
 msgid "reflect"
 msgstr "反射"
 
-#: main.lua:5143
+#: main.lua:5220
 msgid "HP regeneration"
 msgstr "持续恢复 HP"
 
-#: main.lua:5143
+#: main.lua:5220
 msgid "auto revive"
 msgstr "自动复活"
 
-#: main.lua:5144
+#: main.lua:5221
 msgid "speed up"
 msgstr "速度上升"
 
-#: main.lua:5144
+#: main.lua:5221
 msgid "SP regeneration"
 msgstr "持续恢复 SP"
 
-#: main.lua:5144
+#: main.lua:5221
 msgid "lightning enchant"
 msgstr "雷属性附魔"
 
-#: main.lua:5144
+#: main.lua:5221
 msgid "wind enchant"
 msgstr "风属性附魔"
 
-#: main.lua:5145
+#: main.lua:5222
 msgid "stuck"
 msgstr "被黏住"
 
-#: main.lua:5145
+#: main.lua:5222
 msgid "evasion down"
 msgstr "回避下降"
 
-#: main.lua:5145
+#: main.lua:5222
 msgid "buffs blocked"
 msgstr "无法获得增益"
 
-#: main.lua:5146
+#: main.lua:5223
 msgid "confused"
 msgstr "混乱"
 
-#: main.lua:5146
+#: main.lua:5223
 msgid "critical down"
 msgstr "会心下降"
 
-#: main.lua:5146
+#: main.lua:5223
 msgid "blinded"
 msgstr "失明"
 
-#: main.lua:5146
+#: main.lua:5223
 msgid "unconscious"
 msgstr "昏厥"
 
-#: main.lua:5146
+#: main.lua:5223
 msgid "terrified"
 msgstr "恐惧"
 
-#: main.lua:5147
+#: main.lua:5224
 msgid "accuracy down"
 msgstr "命中下降"
 
-#: main.lua:5147
+#: main.lua:5224
 msgid "elemental attack down"
 msgstr "属性攻击下降"
 
-#: main.lua:5147
+#: main.lua:5224
 msgid "elemental defense down"
 msgstr "属性防御下降"
 
-#: main.lua:5148
+#: main.lua:5225
 msgid "abilities sealed"
 msgstr "技能被封印"
 
-#: main.lua:5148
+#: main.lua:5225
 msgid "physical attack down"
 msgstr "物理攻击下降"
 
-#: main.lua:5148
+#: main.lua:5225
 msgid "physical defense down"
 msgstr "物理防御下降"
 
-#: main.lua:5149
+#: main.lua:5226
 msgid "poisoned"
 msgstr "中毒"
 
-#: main.lua:5149
+#: main.lua:5226
 msgid "silenced"
 msgstr "沉默"
 
-#: main.lua:5149
+#: main.lua:5226
 msgid "asleep"
 msgstr "睡眠"
 
-#: main.lua:5149
+#: main.lua:5226
 msgid "speed down"
 msgstr "速度下降"
 
-#: main.lua:5149
+#: main.lua:5226
 msgid "badly poisoned"
 msgstr "剧毒"
 
-#: main.lua:5162
+#: main.lua:5239
 #, lua-format
 msgid "%s up"
 msgstr "%s上升"
 
-#: main.lua:5162
+#: main.lua:5239
 #, lua-format
 msgid "%s down"
 msgstr "%s下降"
 
-#: main.lua:5165
+#: main.lua:5242
 #, lua-format
 msgid "%d turn"
 msgid_plural "%d turns"
 msgstr[0] "%d 回合"
 msgstr[1] "%d 回合"
 
-#: main.lua:5212
+#: main.lua:5289
 #, lua-format
 msgid "%s, HP %s of %s, SP %s of %s, BP %d"
 msgstr "%s，HP %s，上限 %s，SP %s，上限 %s，BP %d"
 
-#: main.lua:5215
+#: main.lua:5292
 #, lua-format
 msgid "%s, down"
 msgstr "%s，已倒下"
 
-#: main.lua:5224
+#: main.lua:5301
 #, lua-format
 msgid "%s at %d"
 msgstr "%s，位于 %d 号位"
 
-#: main.lua:5361
+#: main.lua:5438
 #, lua-format
 msgid "%s broken"
 msgstr "%s已破防"
 
-#: main.lua:5362
+#: main.lua:5439
 #, lua-format
 msgid "%s recovers, shield %s"
 msgstr "%s恢复行动，护盾 %s"
 
-#: main.lua:5363
+#: main.lua:5440
 #, lua-format
 msgid "%s shield %s"
 msgstr "%s，护盾 %s"
 
-#: main.lua:5377
+#: main.lua:5454
 #, lua-format
 msgid "%s is down"
 msgstr "%s倒下了"
 
-#: main.lua:5377
+#: main.lua:5454
 #, lua-format
 msgid "%s is back up"
 msgstr "%s重新站起来了"
 
-#: main.lua:5386
+#: main.lua:5463
 #, lua-format
 msgid "%s defeated"
 msgstr "%s已被击败"
 
-#: main.lua:5403
+#: main.lua:5480
 #, lua-format
 msgid "%s, weaknesses locked"
 msgstr "%s，弱点已锁定"
 
-#: main.lua:5405
+#: main.lua:5482
 #, lua-format
 msgid "Battle: %s"
 msgstr "战斗：%s"
 
-#: main.lua:5457
+#: main.lua:5534
 msgid "target"
 msgstr "目标"
 
-#: main.lua:5458
+#: main.lua:5535
 #, lua-format
 msgid "%d targets"
 msgstr "%d 个目标"
 
-#: main.lua:5501
+#: main.lua:5578
 #, lua-format
 msgid "Boost %d"
 msgstr "增幅 %d"
 
-#: main.lua:5501
+#: main.lua:5578
 msgid "No boost"
 msgstr "无增幅"
 
-#: main.lua:5512
+#: main.lua:5589
 #, lua-format
 msgid "%s. %s raises, %s lowers"
 msgstr "%s。按 %s 增加，按 %s 减少"
 
-#: main.lua:5598
+#: main.lua:5675
 #, lua-format
 msgid "%s reaches level %s"
 msgstr "%s升到 %s 级"
 
-#: main.lua:5621
+#: main.lua:5698
 #, lua-format
 msgid "Victory. %s %s, %s EXP, %s JP"
 msgstr "战斗胜利。获得 %s %s，%s 经验值，%s JP"
 
-#: main.lua:5629
+#: main.lua:5706
 #, lua-format
 msgid "Items: %s"
 msgstr "道具：%s"
 
-#: main.lua:5668
+#: main.lua:5745
 msgid "weak"
 msgstr "命中弱点"
 
-#: main.lua:5672
+#: main.lua:5749
 msgid "miss"
 msgstr "未命中"
 
-#: main.lua:5672
+#: main.lua:5749
 msgid "break"
 msgstr "破防"
 
-#: main.lua:5677
+#: main.lua:5754
 msgid "HP"
 msgstr "HP"
 
-#: main.lua:5677
+#: main.lua:5754
 msgid "SP"
 msgstr "SP"
 
-#: main.lua:5677
+#: main.lua:5754
 msgid "BP"
 msgstr "BP"
 
-#: main.lua:5806
+#: main.lua:5883
 #, lua-format
 msgid "Enemy %d of %d: %s"
 msgstr "敌人 %d/%d：%s"
 
-#: main.lua:5807
+#: main.lua:5884
 msgid "The battle is starting"
 msgstr "战斗即将开始"
 
-#: main.lua:5808
+#: main.lua:5885
 msgid "No enemies"
 msgstr "没有敌人"
 
-#: main.lua:5808
+#: main.lua:5885
 #, lua-format
 msgid "Only %d enemy"
 msgid_plural "Only %d enemies"
 msgstr[0] "只有 %d 名敌人"
 msgstr[1] "只有 %d 名敌人"
 
-#: main.lua:5811
+#: main.lua:5888
 #, lua-format
 msgid "No party member %d"
 msgstr "没有第 %d 位队员"
 
-#: main.lua:5860 main.lua:5908
+#: main.lua:5937 main.lua:5985
 #, lua-format
 msgid "%s (broken)"
 msgstr "%s（已破防）"
 
-#: main.lua:5868 main.lua:14012
+#: main.lua:5945 main.lua:14090
 #, lua-format
 msgid "Now: %s"
 msgstr "当前行动：%s"
 
-#: main.lua:5870
+#: main.lua:5947
 #, lua-format
 msgid "Next round: %s"
 msgstr "下一回合：%s"
 
-#: main.lua:5912
+#: main.lua:5989
 msgid "Turn order unknown"
 msgstr "行动顺序未知"
 
-#: main.lua:5913
+#: main.lua:5990
 #, lua-format
 msgid "This round: %s"
 msgstr "本回合：%s"
 
-#: main.lua:5913
+#: main.lua:5990
 msgid "none"
 msgstr "无"
 
-#: main.lua:5914
+#: main.lua:5991
 #, lua-format
 msgid "%s. Next: %s"
 msgstr "%s。接下来：%s"
 
-#: main.lua:5985
+#: main.lua:6062
 msgid "No release of OP1 Access is published yet"
 msgstr "OP1 Access 尚未发布任何版本"
 
-#: main.lua:5990 main.lua:6030
+#: main.lua:6067 main.lua:6107
 msgid "Could not check for updates"
 msgstr "无法检查更新"
 
-#: main.lua:6000
+#: main.lua:6077
 #, lua-format
 msgid "OP1 Access %s is available. Press F5 twice to install it."
 msgstr "OP1 Access %s 已发布。按两次 F5 键安装。"
 
-#: main.lua:6003
+#: main.lua:6080
 #, lua-format
 msgid "OP1 Access is up to date, version %s"
 msgstr "OP1 Access 已是最新版本，版本号 %s"
 
-#: main.lua:6013
+#: main.lua:6090
 msgid "This copy of OP1 Access has no update source"
 msgstr "此版本的 OP1 Access 没有配置更新来源"
 
-#: main.lua:6016 main.lua:6029
+#: main.lua:6093 main.lua:6106
 msgid "Checking for updates"
 msgstr "正在检查更新"
 
-#: main.lua:6025
+#: main.lua:6102
 #, lua-format
 msgid "Version %s. Press F5 again to install it. The game closes without saving and starts again."
 msgstr "版本 %s。再按一次 F5 键安装。游戏将直接关闭并重新启动，未保存的进度会丢失。"
 
-#: main.lua:6044
+#: main.lua:6121
 msgid "Could not start the installer. Opening the download page."
 msgstr "无法启动安装程序。正在打开下载页面。"
 
-#: main.lua:6050
+#: main.lua:6127
 msgid "Installing the update. The game closes now."
 msgstr "正在安装更新。游戏即将关闭。"
 
-#: main.lua:6068
+#: main.lua:6145
 msgid "Problem reports are not available in this build"
 msgstr "此版本无法报告问题"
 
-#: main.lua:6073
+#: main.lua:6150
 msgid "Report a problem: press F1 again. A window opens beside the game, the game keeps running."
 msgstr "再按一次 F1 键报告问题。报告窗口将在游戏旁打开，游戏会继续运行。"
 
-#: main.lua:6085
+#: main.lua:6162
 msgid "Could not open the problem report window"
 msgstr "无法打开问题报告窗口"
 
-#: main.lua:6089
+#: main.lua:6166
 msgid "Opening the problem report window"
 msgstr "正在打开问题报告窗口"
 
-#: main.lua:6157
+#: main.lua:6235
 msgid "OP1 Access loaded"
 msgstr "OP1 Access 已加载"
 
-#: main.lua:6163
+#: main.lua:6241
 msgid "Dumping headers"
 msgstr "正在导出头文件"
 
-#: main.lua:6165
+#: main.lua:6243
 msgid "Dump complete"
 msgstr "导出完成"
 
-#: main.lua:6165 main.lua:6170
+#: main.lua:6243 main.lua:6248
 msgid "Dump failed"
 msgstr "导出失败"
 
-#: main.lua:6168
+#: main.lua:6246
 msgid "Dumping objects"
 msgstr "正在导出对象"
 
-#: main.lua:6170
+#: main.lua:6248
 msgid "Object dump complete"
 msgstr "对象导出完成"
 
-#: main.lua:6366
+#: main.lua:6444
 msgid "very near"
 msgstr "很近"
 
-#: main.lua:6367
+#: main.lua:6445
 msgid "near"
 msgstr "近"
 
-#: main.lua:6368
+#: main.lua:6446
 msgid "far"
 msgstr "远"
 
-#: main.lua:6732 main.lua:6891
+#: main.lua:6810 main.lua:6969
 #, lua-format
 msgid "%d, %d"
 msgstr "%d，%d"
 
-#: main.lua:6783
+#: main.lua:6861
 msgid "Character cycle is only active on character select"
 msgstr "只有在角色选择画面才能轮换角色"
 
-#: main.lua:6792
+#: main.lua:6870
 msgid "Cycle unavailable"
 msgstr "无法轮换"
 
-#: main.lua:6959
+#: main.lua:7037
 msgid "reversing"
 msgstr "正在反向移动"
 
-#: main.lua:6959
+#: main.lua:7037
 msgid "blocked"
 msgstr "受阻"
 
-#: main.lua:6960
+#: main.lua:7038
 #, lua-format
 msgid "%s, %d, %d"
 msgstr "%s，%d，%d"
 
-#: main.lua:7039
+#: main.lua:7117
 msgid "No characters mapped yet. Give it a second, then try again."
 msgstr "尚未定位任何角色。稍等一会儿再试。"
 
-#: main.lua:7048
+#: main.lua:7126
 msgid "Character"
 msgstr "角色"
 
-#: main.lua:7049
+#: main.lua:7127
 #, lua-format
 msgid "%s, here"
 msgstr "%s，在这里"
 
-#: main.lua:7055
+#: main.lua:7133
 #, lua-format
 msgid "%s, %s. At %d, %d"
 msgstr "%s，%s。坐标 %d，%d"
 
-#: main.lua:7056
+#: main.lua:7134
 msgid " and "
 msgstr "和"
 
-#: main.lua:7058
+#: main.lua:7136
 #, lua-format
 msgid "%s, at %d, %d"
 msgstr "%s，坐标 %d，%d"
 
-#: main.lua:7089
+#: main.lua:7167
 msgid "No menu detected"
 msgstr "未检测到菜单"
 
-#: main.lua:7139
+#: main.lua:7217
 #, lua-format
 msgid "command %s"
 msgstr "指令 %s"
 
-#: main.lua:7148
+#: main.lua:7226
 msgid "No interaction here"
 msgstr "此处无法互动"
 
-#: main.lua:7151
+#: main.lua:7229
 msgid "Nothing to interact with"
 msgstr "没有可互动的对象"
 
-#: main.lua:7479
+#: main.lua:7557
 msgid "up"
 msgstr "上方"
 
-#: main.lua:7479
+#: main.lua:7557
 msgid "down"
 msgstr "下方"
 
-#: main.lua:7480
+#: main.lua:7558
 msgid "right"
 msgstr "右方"
 
-#: main.lua:7480
+#: main.lua:7558
 msgid "left"
 msgstr "左方"
 
-#: main.lua:7487
+#: main.lua:7565
 msgid "up left"
 msgstr "左上方"
 
-#: main.lua:7487
+#: main.lua:7565
 msgid "up right"
 msgstr "右上方"
 
-#: main.lua:7487
+#: main.lua:7565
 msgid "down left"
 msgstr "左下方"
 
-#: main.lua:7487
+#: main.lua:7565
 msgid "down right"
 msgstr "右下方"
 
-#: main.lua:7487
+#: main.lua:7565
 msgid "chest"
 msgstr "宝箱"
 
-#: main.lua:7487
+#: main.lua:7565
 msgid "exit"
 msgstr "出口"
 
-#: main.lua:7488
+#: main.lua:7566
 msgid "building"
 msgstr "建筑入口"
 
-#: main.lua:7488
+#: main.lua:7566
 msgid "shop"
 msgstr "商店"
 
-#: main.lua:7488
+#: main.lua:7566
 msgid "marker"
 msgstr "标记"
 
-#: main.lua:7491
+#: main.lua:7569
 msgid "person"
 msgstr "人物"
 
-#: main.lua:7496 main.lua:8288 main.lua:9070 main.lua:9145 main.lua:12074
+#: main.lua:7574 main.lua:8366 main.lua:9148 main.lua:9223 main.lua:12152
 msgid "In battle"
 msgstr "正在战斗"
 
-#: main.lua:7496 main.lua:8288 main.lua:9070 main.lua:9145
+#: main.lua:7574 main.lua:8366 main.lua:9148 main.lua:9223
 msgid "Scene running"
 msgstr "正在播放剧情"
 
-#: main.lua:7498 main.lua:7627
+#: main.lua:7576 main.lua:7705
 msgid "No player position"
 msgstr "无法获取玩家位置"
 
-#: main.lua:7500
+#: main.lua:7578
 msgid "Player position unreadable"
 msgstr "无法读取玩家位置"
 
-#: main.lua:7548
+#: main.lua:7626
 msgid "No objects found"
 msgstr "未找到对象"
 
-#: main.lua:7551
+#: main.lua:7629
 msgid "above"
 msgstr "高处"
 
-#: main.lua:7552
+#: main.lua:7630
 msgid "below"
 msgstr "低处"
 
-#: main.lua:7553
+#: main.lua:7631
 #, lua-format
 msgid "%s%s, %s, distance %d"
 msgstr "%s%s，%s，距离 %d"
 
-#: main.lua:7573
+#: main.lua:7651
 msgid "Screenshot saved"
 msgstr "截图已保存"
 
-#: main.lua:7573
+#: main.lua:7651
 msgid "Screenshot failed"
 msgstr "截图失败"
 
-#: main.lua:7592
+#: main.lua:7670
 msgid "engine right"
 msgstr "引擎坐标的右侧"
 
-#: main.lua:7593
+#: main.lua:7671
 msgid "engine left"
 msgstr "引擎坐标的左侧"
 
-#: main.lua:7594
+#: main.lua:7672
 msgid "engine front"
 msgstr "引擎坐标的前方"
 
-#: main.lua:7595
+#: main.lua:7673
 msgid "engine behind"
 msgstr "引擎坐标的后方"
 
-#: main.lua:7596
+#: main.lua:7674
 msgid "world right, the right arrow side"
 msgstr "游戏中的右侧，对应右方向键"
 
-#: main.lua:7597
+#: main.lua:7675
 msgid "world left, the left arrow side"
 msgstr "游戏中的左侧，对应左方向键"
 
-#: main.lua:7598
+#: main.lua:7676
 msgid "world front, the up arrow side"
 msgstr "游戏中的前方，对应上方向键"
 
-#: main.lua:7599
+#: main.lua:7677
 msgid "world behind, the down arrow side"
 msgstr "游戏中的后方，对应下方向键"
 
-#: main.lua:7600
+#: main.lua:7678
 msgid "bump sound"
 msgstr "撞墙提示音"
 
-#: main.lua:7603
+#: main.lua:7681
 msgid "Audio module not loaded"
 msgstr "音频模块未加载"
 
-#: main.lua:7610
+#: main.lua:7688
 #, lua-format
 msgid "Audio init failed: %s"
 msgstr "音频初始化失败：%s"
 
-#: main.lua:7618
+#: main.lua:7696
 msgid "test off"
 msgstr "测试已关闭"
 
-#: main.lua:7866
+#: main.lua:7944
 msgid "this area again"
 msgstr "再次进入本区域"
 
-#: main.lua:7869
+#: main.lua:7947
 #, lua-format
 msgid "%s or %s"
 msgstr "%s或%s"
 
-#: main.lua:7874
+#: main.lua:7952
 #, lua-format
 msgid "%s lies knocked out in the way and gets up again once you enter %s"
 msgstr "%s被击倒后挡住了路。进入%s后，此人会重新站起来"
 
-#: main.lua:7875
+#: main.lua:7953
 #, lua-format
 msgid "%s lies knocked out in the way; the item is out of reach until they get up"
 msgstr "%s被击倒后挡住了路，等此人重新站起来才能拿到道具"
 
-#: main.lua:8069
+#: main.lua:8147
 #, lua-format
 msgid "%d objects here, radar off"
 msgstr "此处有 %d 个对象，雷达已关闭"
 
-#: main.lua:8070
+#: main.lua:8148
 #, lua-format
 msgid "%d objects here"
 msgstr "此处有 %d 个对象"
 
-#: main.lua:8194
+#: main.lua:8272
 msgid "Navigation traces unavailable"
 msgstr "无法进行导航射线检测"
 
-#: main.lua:8224
+#: main.lua:8302
 msgid "Navigation traces failed, retrying"
 msgstr "导航射线检测失败，正在重试"
 
-#: main.lua:8290 main.lua:8994 main.lua:11191 main.lua:11503 main.lua:12083
+#: main.lua:8368 main.lua:9072 main.lua:11269 main.lua:11581 main.lua:12161
 msgid "No player"
 msgstr "找不到玩家角色"
 
-#: main.lua:8293
+#: main.lua:8371
 msgid "No Kismet/pos"
 msgstr "无法获取 Kismet 或位置"
 
-#: main.lua:8305
+#: main.lua:8383
 msgid "No walls near"
 msgstr "附近没有墙"
 
-#: main.lua:8305
+#: main.lua:8383
 #, lua-format
 msgid "Blocked: %s"
 msgstr "受阻：%s"
 
-#: main.lua:8992
+#: main.lua:9070
 msgid "No target"
 msgstr "没有目标"
 
-#: main.lua:8995 main.lua:11192
+#: main.lua:9073 main.lua:11270
 msgid "No position"
 msgstr "无法获取位置"
 
-#: main.lua:8997 main.lua:11506 main.lua:12086
+#: main.lua:9075 main.lua:11584 main.lua:12164
 msgid "Target lost"
 msgstr "目标丢失"
 
-#: main.lua:9010 main.lua:9012
+#: main.lua:9088 main.lua:9090
 msgid "inside a building"
 msgstr "在建筑内"
 
-#: main.lua:9012 main.lua:9015
+#: main.lua:9090 main.lua:9093
 msgid "not reachable"
 msgstr "无法到达"
 
-#: main.lua:9019
+#: main.lua:9097
 msgid "behind a door"
 msgstr "在门后"
 
-#: main.lua:9037
+#: main.lua:9115
 #, lua-format
 msgid "to %s"
 msgstr "通往%s"
 
-#: main.lua:9053 main.lua:13649
+#: main.lua:9131 main.lua:13727
 msgid "knocked out"
 msgstr "已被击倒"
 
-#: main.lua:9058
+#: main.lua:9136
 msgid "opened"
 msgstr "已打开"
 
-#: main.lua:9060
+#: main.lua:9138
 msgid "purple"
 msgstr "紫色"
 
-#: main.lua:9062
+#: main.lua:9140
 #, lua-format
 msgid "%s%s %d of %d: %s%s, %d%s"
 msgstr "%s%s，%d/%d：%s%s，距离 %d%s"
 
-#: main.lua:9089
+#: main.lua:9167
 #, lua-format
 msgid ", %d opened"
 msgstr "，%d 个已打开"
 
-#: main.lua:9091
+#: main.lua:9169
 #, lua-format
 msgid "%s, %d target%s. "
 msgid_plural "%s, %d targets%s. "
 msgstr[0] "%s，%d 个目标%s。"
 msgstr[1] "%s，%d 个目标%s。"
 
-#: main.lua:9096
+#: main.lua:9174
 msgid "No targets in any category"
 msgstr "所有类别都没有目标"
 
-#: main.lua:9147 main.lua:9152
+#: main.lua:9225 main.lua:9230
 msgid "No targets here, control left or right for categories"
 msgstr "此类别没有目标，按 Ctrl 加左或右方向键切换类别"
 
-#: main.lua:9148
+#: main.lua:9226
 #, lua-format
 msgid "%s, %d target. "
 msgid_plural "%s, %d targets. "
 msgstr[0] "%s，%d 个目标。"
 msgstr[1] "%s，%d 个目标。"
 
-#: main.lua:9205
+#: main.lua:9283
 msgid "and more"
 msgstr "还有更多"
 
-#: main.lua:9237
+#: main.lua:9315
 #, lua-format
 msgid "Walking, %s, total %d"
 msgstr "正在行走，%s，总距离 %d"
 
-#: main.lua:9592
+#: main.lua:9670
 msgid "Searching again from a bit further back"
 msgstr "从更靠后的位置重新搜索"
 
-#: main.lua:9625 main.lua:11235
+#: main.lua:9703 main.lua:11313
 msgid "direct"
 msgstr "直达"
 
-#: main.lua:9635
+#: main.lua:9713
 msgid "Through the door first"
 msgstr "先穿过这扇门"
 
-#: main.lua:9637
+#: main.lua:9715
 msgid "through the door"
 msgstr "穿过这扇门"
 
-#: main.lua:9646
+#: main.lua:9724
 msgid "The door is shut. Open it with Enter, then backspace again"
 msgstr "门关着。按回车键开门，再按退格键"
 
-#: main.lua:9662
+#: main.lua:9740
 msgid "Stuck, no way on from here. Step aside, then backspace again"
 msgstr "卡住了，从这里走不通。往旁边挪一点，再按退格键"
 
-#: main.lua:9668
+#: main.lua:9746
 msgid "No route found, search limit reached"
 msgstr "已达到搜索上限，未找到路线"
 
-#: main.lua:9680
+#: main.lua:9758
 msgid "Probably inside a building. Routing to its door"
 msgstr "目标可能在建筑内。正在规划通往入口的路线"
 
-#: main.lua:9685
+#: main.lua:9763
 msgid "Not reachable, no route found"
 msgstr "无法到达，未找到路线"
 
-#: main.lua:9688
+#: main.lua:9766
 msgid "No route found"
 msgstr "未找到路线"
 
-#: main.lua:9764
+#: main.lua:9842
 #, lua-format
 msgid "%s is in the way"
 msgstr "%s挡住了路"
 
-#: main.lua:9764 main.lua:12918 main.lua:12925
+#: main.lua:9842 main.lua:12996 main.lua:13003
 msgid "Someone"
 msgstr "有人"
 
-#: main.lua:9794
+#: main.lua:9872
 msgid "downstairs"
 msgstr "在楼下"
 
-#: main.lua:9795
+#: main.lua:9873
 msgid "upstairs"
 msgstr "在楼上"
 
-#: main.lua:9800
+#: main.lua:9878
 msgid "A shut door on the way"
 msgstr "路上有一扇关着的门"
 
-#: main.lua:9801
+#: main.lua:9879
 msgid "back a bit first"
 msgstr "先往后退一点"
 
-#: main.lua:9802
+#: main.lua:9880
 msgid "to the door"
 msgstr "前往门口"
 
-#: main.lua:9802
+#: main.lua:9880
 msgid "traced route"
 msgstr "射线检测得出的路线"
 
-#: main.lua:9805
+#: main.lua:9883
 #, lua-format
 msgid "Path: %s. Total %d%s%s."
 msgstr "路线：%s。总距离 %d%s%s。"
 
-#: main.lua:9805
+#: main.lua:9883
 msgid "through a door"
 msgstr "穿过一扇门"
 
-#: main.lua:10588
+#: main.lua:10666
 #, lua-format
 msgid "Entrance not reached, %d person is standing there"
 msgid_plural "Entrance not reached, %d people are standing there"
 msgstr[0] "未到达入口，有 %d 人站在那里"
 msgstr[1] "未到达入口，有 %d 人站在那里"
 
-#: main.lua:10590
+#: main.lua:10668
 msgid "Entrance not reached"
 msgstr "未到达入口"
 
-#: main.lua:11168
+#: main.lua:11246
 msgid "Searching the whole area"
 msgstr "正在搜索整个区域"
 
-#: main.lua:11182 main.lua:11186
+#: main.lua:11260 main.lua:11264
 msgid "Still routing"
 msgstr "仍在规划路线"
 
-#: main.lua:11214
+#: main.lua:11292
 msgid "close by"
 msgstr "就在附近"
 
-#: main.lua:11216
+#: main.lua:11294
 msgid "Right here"
 msgstr "就在这里"
 
-#: main.lua:11238
+#: main.lua:11316
 #, lua-format
 msgid "Path: straight ahead, %d"
 msgstr "路线：直走，距离 %d"
 
-#: main.lua:11497 main.lua:12077
+#: main.lua:11575 main.lua:12155
 msgid "Targets changed, none here"
 msgstr "目标已变化，此类别现在没有目标"
 
-#: main.lua:11498 main.lua:12078
+#: main.lua:11576 main.lua:12156
 #, lua-format
 msgid "Targets changed. %s, %d target. "
 msgid_plural "Targets changed. %s, %d targets. "
 msgstr[0] "目标已变化。%s，%d 个目标。"
 msgstr[1] "目标已变化。%s，%d 个目标。"
 
-#: main.lua:11502
+#: main.lua:11580
 msgid "No target selected. Home and end pick a category, page up and down a target."
 msgstr "尚未选择目标。按 Home 或 End 键选择类别，按 Page Up 或 Page Down 键选择目标。"
 
-#: main.lua:11510
+#: main.lua:11588
 msgid "same level"
 msgstr "同一高度"
 
-#: main.lua:11513
+#: main.lua:11591
 #, lua-format
 msgid "%s %d of %d, %s, %d, %s. "
 msgstr "%s，%d/%d，%s，距离 %d，%s。"
 
-#: main.lua:11517
+#: main.lua:11595
 #, lua-format
 msgid "Path: %s. Total %d."
 msgstr "路线：%s。总距离 %d。"
 
-#: main.lua:11519
+#: main.lua:11597
 msgid "Routing."
 msgstr "正在规划路线。"
 
-#: main.lua:11869 main.lua:12904
+#: main.lua:11947 main.lua:12982
 msgid "That side can't be reached, trying another side"
 msgstr "这一侧无法到达，正在尝试另一侧"
 
-#: main.lua:11869
+#: main.lua:11947
 msgid "Not in reach here, trying another side"
 msgstr "从这里够不到，正在尝试另一侧"
 
-#: main.lua:11875
+#: main.lua:11953
 #, lua-format
 msgid "%s is not within reach"
 msgstr "够不到%s"
 
-#: main.lua:11875
+#: main.lua:11953
 msgid "Not within reach"
 msgstr "够不到目标"
 
-#: main.lua:11899
+#: main.lua:11977
 msgid "That side can't be reached"
 msgstr "这一侧无法到达"
 
-#: main.lua:11956
+#: main.lua:12034
 msgid "Opening the door"
 msgstr "正在开门"
 
-#: main.lua:11991
+#: main.lua:12069
 msgid "The door doesn't open. Press Enter yourself, then backspace again"
 msgstr "门没打开。请手动按回车键，再按退格键"
 
-#: main.lua:12051
+#: main.lua:12129
 msgid "same route as before"
 msgstr "沿用上一次的路线"
 
-#: main.lua:12064
+#: main.lua:12142
 msgid "Guide stopped"
 msgstr "已关闭引导"
 
-#: main.lua:12066 main.lua:12071 main.lua:12318
+#: main.lua:12144 main.lua:12149 main.lua:12396
 msgid "Walk stopped"
 msgstr "已停止行走"
 
-#: main.lua:12067
+#: main.lua:12145
 msgid "Routing cancelled"
 msgstr "已取消路线规划"
 
-#: main.lua:12074
+#: main.lua:12152
 msgid "Scene running, try again after"
 msgstr "正在播放剧情，请等剧情结束后再试"
 
-#: main.lua:12082
+#: main.lua:12160
 msgid "No target selected"
 msgstr "尚未选择目标"
 
-#: main.lua:12123
+#: main.lua:12201
 #, lua-format
 msgid "Leaving the building first. Routing to its door, %d"
 msgstr "先离开建筑。正在规划通往出口的路线，距离 %d"
 
-#: main.lua:12144
+#: main.lua:12222
 #, lua-format
 msgid "%s is inside a building. Routing to its door, %d"
 msgstr "%s在建筑内。正在规划通往入口的路线，距离 %d"
 
-#: main.lua:12155
+#: main.lua:12233
 msgid "Not reachable from here. Press again to try anyway"
 msgstr "从这里无法到达。再按一次可强制尝试"
 
-#: main.lua:12161
+#: main.lua:12239
 msgid "navmesh path"
 msgstr "导航网格路线"
 
-#: main.lua:12165
+#: main.lua:12243
 #, lua-format
 msgid "Routing to %s, %d"
 msgstr "正在规划前往%s的路线，距离 %d"
 
-#: main.lua:12190
+#: main.lua:12268
 #, lua-format
 msgid "Guiding, %s, total %d"
 msgstr "正在引导，%s，总距离 %d"
 
-#: main.lua:12238 main.lua:12260 main.lua:12433 main.lua:12599 main.lua:12650 main.lua:12656
-#: main.lua:12663 main.lua:12777 main.lua:12783
+#: main.lua:12316 main.lua:12338 main.lua:12511 main.lua:12677 main.lua:12728 main.lua:12734
+#: main.lua:12741 main.lua:12855 main.lua:12861
 msgid "Arrived"
 msgstr "已到达"
 
-#: main.lua:12270
+#: main.lua:12348
 msgid "Off the route, routing again"
 msgstr "已偏离路线，重新规划"
 
-#: main.lua:12361
+#: main.lua:12439
 msgid "Trying another way"
 msgstr "正在尝试另一条路"
 
-#: main.lua:12361 main.lua:12787
+#: main.lua:12439 main.lua:12865
 msgid "Rerouting"
 msgstr "正在重新规划路线"
 
-#: main.lua:12364
+#: main.lua:12442
 msgid "Walk interrupted, backspace to resume"
 msgstr "行走已中断，按退格键继续"
 
-#: main.lua:12482 main.lua:12639
+#: main.lua:12560 main.lua:12717
 #, lua-format
 msgid "Still shut. %s, then backspace again"
 msgstr "门仍关着。%s，再按退格键"
 
-#: main.lua:12482 main.lua:12618 main.lua:12639
+#: main.lua:12560 main.lua:12696 main.lua:12717
 msgid "press Enter"
 msgstr "按回车键"
 
-#: main.lua:12483 main.lua:12641
+#: main.lua:12561 main.lua:12719
 msgid "then backspace again"
 msgstr "然后再按退格键"
 
-#: main.lua:12505
+#: main.lua:12583
 msgid "At the door. Open it, then backspace again"
 msgstr "已到门口。开门后再按退格键"
 
-#: main.lua:12506
+#: main.lua:12584
 msgid "At the exit, no way through"
 msgstr "已到出口，无法通过"
 
-#: main.lua:12561
+#: main.lua:12639
 msgid "Walk cancelled"
 msgstr "已取消行走"
 
-#: main.lua:12618
+#: main.lua:12696
 #, lua-format
 msgid "Still shut. %s"
 msgstr "门仍关着。%s"
 
-#: main.lua:12670
+#: main.lua:12748
 msgid "Walk ended, went through a door"
 msgstr "已穿过门，行走结束"
 
-#: main.lua:12693
+#: main.lua:12771
 msgid "Walk interrupted"
 msgstr "行走已中断"
 
-#: main.lua:12713
+#: main.lua:12791
 #, lua-format
 msgid "Waiting for %s"
 msgstr "正在等待%s让开"
 
-#: main.lua:12713
+#: main.lua:12791
 msgid "Waiting for someone to walk on"
 msgstr "正在等待挡路的人走开"
 
-#: main.lua:12792
+#: main.lua:12870
 #, lua-format
 msgid "Can't reach, closest %d"
 msgstr "无法到达，最近距离 %d"
 
-#: main.lua:12886
+#: main.lua:12964
 msgid "someone else"
 msgstr "其他人"
 
-#: main.lua:12905
+#: main.lua:12983
 #, lua-format
 msgid "Here Enter goes to %s, trying another side"
 msgstr "在这里按回车键会与%s互动，正在尝试另一侧"
 
-#: main.lua:12905
+#: main.lua:12983
 msgid "No prompt here, trying another side"
 msgstr "此处没有交互提示，正在尝试另一侧"
 
-#: main.lua:12919 main.lua:12926
+#: main.lua:12997 main.lua:13004
 msgid "That side can't be reached, and no other side found"
 msgstr "这一侧无法到达，也找不到其他可到达的位置"
 
-#: main.lua:12920
+#: main.lua:12998
 #, lua-format
 msgid "Here Enter goes to %s, and no other side found"
 msgstr "在这里按回车键会与%s互动，也找不到其他可用的位置"
 
-#: main.lua:12921
+#: main.lua:12999
 msgid "No prompt here, and no other side found"
 msgstr "此处没有交互提示，也找不到其他可用的位置"
 
-#: main.lua:12927
+#: main.lua:13005
 #, lua-format
 msgid "Here Enter goes to %s, not to the item"
 msgstr "在这里按回车键会与%s互动，无法拾取道具"
 
-#: main.lua:12927
+#: main.lua:13005
 msgid "No prompt at this item"
 msgstr "这个道具没有交互提示"
 
-#: main.lua:13479
+#: main.lua:13557
 msgid "Hold Backspace to skip"
 msgstr "长按退格键跳过"
 
-#: main.lua:13621 main.lua:13670
+#: main.lua:13699 main.lua:13748
 msgid "Save point"
 msgstr "存档点"
 
-#: main.lua:13643
+#: main.lua:13721
 msgid "Talk"
 msgstr "交谈"
 
-#: main.lua:13844
+#: main.lua:13922
 #, lua-format
 msgid "action %s"
 msgstr "指令 %s"
 
-#: main.lua:13912 main.lua:13944
+#: main.lua:13990 main.lua:14022
 msgid "done"
 msgstr "已完成"
 
-#: main.lua:13912 main.lua:13945
+#: main.lua:13990 main.lua:14023
 msgid "not possible"
 msgstr "无法执行"
 
-#: main.lua:13946
+#: main.lua:14024
 msgid "unavailable"
 msgstr "不可用"
 
-#: main.lua:14012
+#: main.lua:14090
 #, lua-format
 msgid "New: %s"
 msgstr "新增：%s"
 
-#: main.lua:14082
+#: main.lua:14160
 msgid "stolen"
 msgstr "已偷取"
 
-#: main.lua:14082
+#: main.lua:14160
 msgid "bought"
 msgstr "已购买"
 
-#: main.lua:14095
+#: main.lua:14173
 msgid "strength"
 msgstr "强度"
 
-#: main.lua:14292 main.lua:14293
+#: main.lua:14370 main.lua:14371
 msgid "save point"
 msgstr "存档点"
 
-#: main.lua:14292
+#: main.lua:14370
 msgid "hidden item"
 msgstr "隐藏道具"
 
-#: main.lua:14292
+#: main.lua:14370
 msgid "objective"
 msgstr "目标"
 
-#: main.lua:14292
+#: main.lua:14370
 msgid "side story"
 msgstr "支线故事"
 
-#: main.lua:14293
+#: main.lua:14371
 msgid "exit toward objective"
 msgstr "通往目标的出口"
 
-#: main.lua:14293
+#: main.lua:14371
 msgid "traveler to recruit"
 msgstr "可招募的旅人"
 
-#: main.lua:14425
+#: main.lua:14503
 #, lua-format
 msgid "Marker gone: %s"
 msgstr "标记已消失：%s"
 
-#: main.lua:14464
+#: main.lua:14542
 #, lua-format
 msgid "New marker: %s, %s, %d"
 msgstr "新标记：%s，%s，距离 %d"
 
-#: main.lua:14604
+#: main.lua:14682
 #, lua-format
 msgid "marker type %d"
 msgstr "标记类型 %d"
 
-#: main.lua:14612
+#: main.lua:14690
 #, lua-format
 msgid "%s, collected"
 msgstr "%s，已收集"
 
-#: main.lua:14624
+#: main.lua:14702
 #, lua-format
 msgid "%s, to %s"
 msgstr "%s，通往%s"
 
-#: main.lua:14628
+#: main.lua:14706
 #, lua-format
 msgid "%s place"
 msgstr "%s的位置"
 
-#: main.lua:14670
+#: main.lua:14748
 msgid "boss fight"
 msgstr "首领战"
 
-#: main.lua:14672
+#: main.lua:14750
 msgid "object to examine"
 msgstr "可调查的物体"
 
-#: main.lua:14968
+#: main.lua:15046
 msgid "Radar off"
 msgstr "雷达已关闭"
 
-#: main.lua:14968
+#: main.lua:15046
 msgid "Radar on"
 msgstr "雷达已开启"
 

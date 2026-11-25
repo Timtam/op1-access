@@ -5,6 +5,11 @@ turns that section into the next version and uses it as the release notes.
 
 ## [Unreleased]
 
+### Menus
+
+- The jobs screen is read: the traveler with their job and secondary job, and on the job
+  wheel the job, who has it equipped, and the stats it would give.
+
 ### Exploring
 
 - The object in a job shrine (and a few others you examine with Enter) is listed under the
