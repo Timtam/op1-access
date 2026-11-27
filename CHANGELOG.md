@@ -5,6 +5,8 @@ turns that section into the next version and uses it as the release notes.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-27
+
 ### Controller
 
 - The mod's main keys are on the controller, on the buttons the game leaves free (the

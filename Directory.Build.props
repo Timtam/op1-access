@@ -2,7 +2,7 @@
   <!-- The version of a release: the mod, the installer and the package share it. The release
        workflow raises ModVersion (scripts/release-prepare.ps1). -->
   <PropertyGroup>
-    <ModVersion>0.1.2</ModVersion>
+    <ModVersion>0.2.0</ModVersion>
     <Version>$(ModVersion)</Version>
     <!-- Disables the "+commit" suffix the SDK appends to the informational version. -->
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
