@@ -18,11 +18,13 @@
 //   DtCount / DtRowAt / DtFind -> DataTable rows (RowMap), read only
 //   Peek / PeekFName           -> SEH-guarded raw reads of fields Lua can't reach
 //   GameTextFName(cmp, num)    -> string|nil  (GameText label FName -> localized text)
+//   PadState()                 -> connected, buttons, lt, rt, rx, ry, lx, ly, slot (XInput)
 //   (and more: see op1access_funcs at the end)
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <winhttp.h>
+#include <Xinput.h>   // types only: XInputGetState comes from the game's own XINPUT1_3.dll
 
 #include <atomic>
 #include <mutex>
@@ -1626,6 +1628,82 @@ int l_key_scan(lua_State* L) {
     return 1;
 }
 
+// PadState() -> connected [, buttons, lt, rt, rx, ry, lx, ly, slot]
+// The first connected XInput pad (user 2026-11-27: the mod's walker and battle readers on
+// the controller). Read with XInputGetState from the XInput DLL the game itself loaded
+// (XINPUT1_3.dll, UE 4.18): Steam Input feeds PlayStation and Switch pads in there too.
+// No hook -- the game reads the very same state; the mod only uses inputs the game leaves
+// alone. buttons = XINPUT_GAMEPAD_* bits, triggers 0..255, sticks -32768..32767 (up = +).
+// An empty slot is slow to ask (XInput enumerates devices), so after a pad is gone the four
+// slots are looked at again at most every 2 s.
+typedef DWORD(WINAPI* XInputGetStateFn)(DWORD, XINPUT_STATE*);
+XInputGetStateFn g_xinput_get = nullptr;
+bool g_xinput_tried = false;
+int g_pad_slot = -1;
+ULONGLONG g_pad_scan_t = 0;
+
+XInputGetStateFn xinput_get_fn() {
+    if (g_xinput_tried) return g_xinput_get;
+    g_xinput_tried = true;
+    const wchar_t* dlls[] = {L"XINPUT1_3.dll", L"xinput1_4.dll", L"XINPUT9_1_0.dll"};
+    HMODULE m = nullptr;
+    for (const wchar_t* d : dlls) {
+        m = GetModuleHandleW(d);
+        if (m) break;
+    }
+    if (!m) {
+        for (const wchar_t* d : dlls) {
+            m = LoadLibraryW(d);
+            if (m) break;
+        }
+    }
+    if (m) g_xinput_get = reinterpret_cast<XInputGetStateFn>(GetProcAddress(m, "XInputGetState"));
+    return g_xinput_get;
+}
+
+int l_pad_state(lua_State* L) {
+    XInputGetStateFn get = xinput_get_fn();
+    if (!get) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    XINPUT_STATE st;
+    ZeroMemory(&st, sizeof st);
+    if (g_pad_slot >= 0 && get(static_cast<DWORD>(g_pad_slot), &st) != ERROR_SUCCESS) {
+        g_pad_slot = -1;
+        g_pad_scan_t = GetTickCount64();   // (just looked: the next search in 2 s)
+    }
+    if (g_pad_slot < 0) {
+        const ULONGLONG now = GetTickCount64();
+        if (g_pad_scan_t != 0 && now - g_pad_scan_t < 2000) {
+            lua_pushboolean(L, 0);
+            return 1;
+        }
+        g_pad_scan_t = now;
+        for (DWORD i = 0; i < 4; ++i) {
+            ZeroMemory(&st, sizeof st);
+            if (get(i, &st) == ERROR_SUCCESS) {
+                g_pad_slot = static_cast<int>(i);
+                break;
+            }
+        }
+        if (g_pad_slot < 0) {
+            lua_pushboolean(L, 0);
+            return 1;
+        }
+    }
+    lua_pushboolean(L, 1);
+    lua_pushinteger(L, st.Gamepad.wButtons);
+    lua_pushinteger(L, st.Gamepad.bLeftTrigger);
+    lua_pushinteger(L, st.Gamepad.bRightTrigger);
+    lua_pushinteger(L, st.Gamepad.sThumbRX);
+    lua_pushinteger(L, st.Gamepad.sThumbRY);
+    lua_pushinteger(L, st.Gamepad.sThumbLX);
+    lua_pushinteger(L, st.Gamepad.sThumbLY);
+    lua_pushinteger(L, g_pad_slot);
+    return 9;
+}
+
 int l_game_exe_path(lua_State* L) {
     wchar_t buf[1024] = {0};
     DWORD n = GetModuleFileNameW(nullptr, buf, 1024);
@@ -1680,6 +1758,7 @@ const luaL_Reg op1access_funcs[] = {
     {"GameExePath",          l_game_exe_path},
     {"KeyModifiers",         l_key_modifiers},
     {"KeyScan",              l_key_scan},
+    {"PadState",             l_pad_state},
     {nullptr, nullptr},
 };
 

@@ -163,6 +163,26 @@ main menu, **Backspace** to go back in menus. The mod adds these:
 **Page Up / Page Down**, the **arrow keys** and **N**, see
 [Character select](#character-select-choose-your-character) below.
 
+### Controller
+
+With a controller (an Xbox controller, or another one through Steam Input) the mod uses
+only the buttons the game leaves free: the right stick, the stick clicks and the
+triggers. Everything else stays the game's.
+
+| Button | Exploring | In battle |
+|--------|-----------|-----------|
+| **Right stick left / right** | Navigator: previous / next category | Previous / next enemy (like 1 to 5) |
+| **Right stick up / down** | Navigator: previous / next target | Previous / next party member (like 6 to 9) |
+| **Right stick click (R3)** | Walk to the target; again to stop | The turn order (like 0) |
+| **Right trigger (RT)** | Guide to the target on / off | — |
+| **Left trigger (LT)** | The target's direction, distance and the way there | — |
+| **Left stick click (L3)** | The current objective | — |
+
+On the world map, the right stick left / right picks the places (like Page Up / Down;
+up / down stays the game's zoom) and LT says the route. At character select the right
+stick jumps to the previous / next traveler. A button you give to a game action in the
+game's gamepad options stays the game's.
+
 ### Developer keys
 
 | Key | Action |
@@ -340,7 +360,8 @@ use this.
   screen reader never stalls the game. The shim also plays the radar through
   **Steam Audio** (`phonon.dll`), hooks the game's dialogue text natively (MinHook),
   fires the walker's collision traces and reads game memory where Lua can't reach,
-  each read guarded so a stale address can't crash the game.
+  each read guarded so a stale address can't crash the game. It reads the keyboard and
+  the controller (XInput, through the game's own XInput DLL) for the mod's keys.
 - The mod's own texts are English in the code; `Scripts/lang/<language>.po` holds the
   translations (gettext), and `Scripts/worldlinks.lua` the links between the areas that
   the world map's route finder uses.

@@ -13163,6 +13163,181 @@ do
 end
 end   -- nav do-block
 
+-- ===== CONTROLLER (user 2026-11-27, player wish 7) =====
+-- The game leaves the triggers, the stick clicks and the right stick alone: a scan of all
+-- 297 UI blueprints found real handlers only for the title's "press any button" and the
+-- world map's zoom (right stick up/down, WorldMap RightAxisUp/Down); the field input
+-- (ActionController_Impl) has none. Those inputs are the mod's. shim.PadState() reads the
+-- first XInput pad every frame through the game's own XINPUT1_3.dll -- no hook, the game
+-- reads the same state, Steam Input pads included. A mod input becomes the key press the
+-- keyboard would make (M.vkey: the mod's own binds run, the game sees nothing), so every
+-- screen keeps its key logic:
+--   field:      right stick left/right = Home/End (category), up/down = Page Up/Down
+--               (target; user: categories sideways, targets up and down), R3 = Backspace
+--               (walk / stop), RT = Shift+Backspace (guide), LT = Ctrl+Backspace (where
+--               is it, the way there), L3 = Q (objective)
+--   world map:  right stick left/right = Page Up/Down (the places; up/down stays the
+--               game's zoom), LT = Ctrl+Backspace (the route)
+--   character select: right stick up or left = Page Up, down or right = Page Down
+--   battle:     right stick left/right = the enemies one by one (keys 1-5), up/down = the
+--               party (6-9), R3 = the turn order (0)
+-- The stick is four directions (the stronger axis past 60 %, free again under 35 %,
+-- repeating after 0.55 s every 0.3 s); a trigger counts past half its travel.
+M.PAD_MAP = {
+    field = { left = { "key", "HOME" }, right = { "key", "END" }, up = { "key", "PAGE_UP" },
+        down = { "key", "PAGE_DOWN" }, r3 = { "key", "BACKSPACE" }, rt = { "key", "BACKSPACE", 2 },
+        lt = { "key", "BACKSPACE", 1 }, l3 = { "key", "Q" } },
+    worldmap = { left = { "key", "PAGE_UP" }, right = { "key", "PAGE_DOWN" }, lt = { "key", "BACKSPACE", 1 } },
+    charselect = { up = { "key", "PAGE_UP" }, left = { "key", "PAGE_UP" }, down = { "key", "PAGE_DOWN" },
+        right = { "key", "PAGE_DOWN" } },
+    battle = { left = { "enemy", -1 }, right = { "enemy", 1 }, up = { "party", -1 }, down = { "party", 1 },
+        r3 = { "key", "ZERO" } },
+}
+M.PAD_PRESS, M.PAD_FREE = 0.6 * 32767, 0.35 * 32767
+M.PAD_DELAY, M.PAD_REPEAT = 0.55, 0.3
+M.PAD_LTHUMB, M.PAD_RTHUMB = 0x40, 0x80   -- XINPUT_GAMEPAD_LEFT_THUMB / RIGHT_THUMB
+M.PAD = { held = {}, prime = true }
+-- where the pad's inputs go now
+M.pad_context = function()
+    if M.battle_now then return "battle" end
+    if M.WM and M.WM.open and M.explore_now ~= true then return "worldmap" end
+    if last_polled_class == "TitlePlayerSelect_C" then return "charselect" end
+    if M.explore_now == true then return "field" end
+    return nil
+end
+-- a key press as the keyboard makes it, for the mod's own binds only (mod: 1 Ctrl, 2 Shift)
+M.vkey = function(kn, mod)
+    local vk
+    pcall(function() vk = Key[kn] end)
+    if type(vk) ~= "number" then return false end
+    local hit = false
+    for _, b in ipairs(M.keys.list) do
+        if b.vk == vk and b.mask == (mod or 0) then
+            hit = true
+            local ok, err = pcall(b.fn)
+            if not ok then log(string.format("PAD key %s failed: %s", kn, tostring(err))) end
+        end
+    end
+    return hit
+end
+-- the battle readers one by one: the next / previous enemy (keys 1-5) or party member
+-- (6-9); the place in each list is kept per battle (M.bt starts afresh)
+M.pad_bt_step = function(kind, delta)
+    if not M.battle_now then return end
+    M.in_gt(function()
+        local list = (kind == "enemy") and M.bt_living() or M.bt_party()
+        local n = #(list or {})
+        if kind ~= "enemy" and n > 4 then n = 4 end
+        local field = (kind == "enemy") and "pad_e" or "pad_p"
+        local i = M.bt[field]
+        if n == 0 then i = 1
+        elseif i == nil then i = (delta > 0) and 1 or n
+        else i = (i - 1 + delta) % n + 1 end
+        M.bt[field] = i
+        pcall(M.bt_key, (kind == "enemy") and i or i + 5)
+    end)
+end
+M.pad_press = function(name)
+    local P = M.PAD
+    M.key_t = os.clock()
+    local ctx = M.pad_context()
+    local act = ctx and M.PAD_MAP[ctx] and M.PAD_MAP[ctx][name]
+    if P.taken and P.taken[name] then act = nil end   -- the game's own (its options)
+    log(string.format("PAD %s in %s: %s", name, tostring(ctx), act and table.concat(
+        { tostring(act[1]), tostring(act[2]), tostring(act[3] or "") }, " ") or "-"))
+    if not act then return end
+    if act[1] == "key" then M.vkey(act[2], act[3])
+    else M.pad_bt_step(act[1], act[2]) end
+end
+-- The game's own pad buttons for its eight actions (the options' gamepad rows,
+-- EKSKeyConfigElement 0-7), once a session: a mod input the player gave to the game
+-- stays the game's; the log line shows the game's layout.
+M.PAD_GAME_KEYS = { Gamepad_LeftTrigger = "lt", Gamepad_RightTrigger = "rt", Gamepad_LeftThumbstick = "l3",
+    Gamepad_RightThumbstick = "r3", Gamepad_RightStick_Up = "up", Gamepad_RightStick_Down = "down",
+    Gamepad_RightStick_Left = "left", Gamepad_RightStick_Right = "right" }
+M.pad_check_game = function()
+    local P = M.PAD
+    if P.checked or M.fade_now or os.clock() - (P.check_t or -99) < 5 then return end
+    P.check_t = os.clock()
+    if M.ctrl_state then pcall(M.ctrl_state) end   -- (finds the player controller: M.pc_h)
+    local pc = M.kept(M.pc_h)
+    if not pc then return end
+    P.checked, P.taken = true, {}
+    local names = {}
+    for e = 0, 7 do
+        local nm
+        pcall(function()
+            local f = pc:GetKeyNameByKeyConfigElement(e)
+            nm = f and f:ToString()
+        end)
+        names[#names + 1] = string.format("%d=%s", e, tostring(nm))
+        local which = nm and M.PAD_GAME_KEYS[nm]
+        if which then P.taken[which] = true end
+    end
+    log("PAD game layout: " .. table.concat(names, " "))
+    for which in pairs(P.taken) do log("PAD " .. which .. " is the game's (its options): the mod leaves it") end
+end
+M.pad_poll = function()
+    local P = M.PAD
+    if not (shim and shim.PadState) then return end
+    -- away from the game (another window, no pad): what is held then is not a press
+    -- when it comes back (P.prime: the next read only takes the state in)
+    if not M.fg_ok() then P.prime = true; return end
+    local ok, conn, btn, lt, rt, rx, ry, _, _, slot = pcall(shim.PadState)
+    if not (ok and conn) then
+        if P.slot then log("PAD gone"); P.slot = nil end
+        P.prime = true
+        return
+    end
+    if P.slot ~= slot then
+        P.slot = slot
+        log(string.format("PAD connected (slot %s)", tostring(slot)))
+    end
+    if not P.checked then pcall(M.pad_check_game) end
+    btn, lt, rt, rx, ry = btn or 0, lt or 0, rt or 0, rx or 0, ry or 0
+    local now = os.clock()
+    local ax, ay = math.abs(rx), math.abs(ry)
+    local m = math.max(ax, ay)
+    if P.prime then
+        P.prime = nil
+        P.held = { l3 = (btn & M.PAD_LTHUMB) ~= 0, r3 = (btn & M.PAD_RTHUMB) ~= 0, lt = lt >= 128, rt = rt >= 128 }
+        P.dir, P.rep_t = (m >= M.PAD_FREE) and "wait" or nil, math.huge   -- (a held stick: let go first)
+        return
+    end
+    local function edge(name, down)
+        local was = P.held[name]
+        P.held[name] = down
+        if down and not was then M.pad_press(name) end
+    end
+    edge("l3", (btn & M.PAD_LTHUMB) ~= 0)
+    edge("r3", (btn & M.PAD_RTHUMB) ~= 0)
+    edge("lt", lt >= (P.held.lt and 64 or 128))
+    edge("rt", rt >= (P.held.rt and 64 or 128))
+    -- the right stick: four directions, the stronger axis
+    if P.dir then
+        if m < M.PAD_FREE then P.dir = nil
+        elseif now >= P.rep_t then
+            P.rep_t = now + M.PAD_REPEAT
+            M.pad_press(P.dir)
+        end
+    elseif m >= M.PAD_PRESS then
+        P.dir = (ax > ay) and (rx > 0 and "right" or "left") or (ry > 0 and "up" or "down")
+        P.rep_t = now + M.PAD_DELAY
+        M.pad_press(P.dir)
+    end
+end
+if shim and shim.PadState then
+    local okp, h
+    if EngineTickAvailable and LoopInGameThreadAfterFrames then
+        okp, h = pcall(LoopInGameThreadAfterFrames, 1, function() pcall(M.pad_poll) end)
+    else
+        okp, h = pcall(LoopInGameThreadWithDelay, 10, function() pcall(M.pad_poll) end)
+    end
+    log("pad: read on the game thread: " .. tostring(okp and h))
+else
+    log("pad: the shim can't read a controller (no PadState)")
+end
+
 -- ===== Radar pump: one update step, three independent drivers =====
 -- ExecuteWithDelay self-rescheduling chains silently die mid-session in this game
 -- (the frozen wall radar / beacon / bump of 2026-06-11), while keybinds, hooks and

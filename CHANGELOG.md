@@ -5,6 +5,15 @@ turns that section into the next version and uses it as the release notes.
 
 ## [Unreleased]
 
+### Controller
+
+- The mod's main keys are on the controller, on the buttons the game leaves free (the
+  right stick, the stick clicks, the triggers): in the field the navigator and the
+  walker (right stick sideways for the category, up and down for the target, R3 walks,
+  RT guides, LT says where the target is, L3 the objective), in battle the enemies and
+  the party one by one and the turn order, on the world map and at character select the
+  places and the travelers. The README lists them under *Controller*.
+
 ### Menus
 
 - The jobs screen is read: the traveler with their job and secondary job, and on the job
