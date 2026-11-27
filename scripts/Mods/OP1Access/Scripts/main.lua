@@ -743,7 +743,7 @@ local SCENE_LABELS = {
     NarrationNoteWidget_C    = N_("Narration note"),
     -- Misc
     StaffCreditWBP_C         = N_("Staff credits"),
-    PartyChat_C              = N_("Party chat"),
+    PartyChat_C              = N_("Travel banter"),
 }
 
 -- Suppression: avoid speaking very transient / decorative widgets that
@@ -6230,6 +6230,7 @@ M.fast_steps = {
     { "fcscreens", function() M.poll_fc_screens() end },
     { "tavern", function() M.poll_tavern() end },
     { "notice", function() M.poll_notice() end },
+    { "banter", function() M.poll_banter() end },
 }
 M.fast_polls = function()
     M.fast_run = {}
@@ -13662,6 +13663,80 @@ M.poll_notice = function()
         log("NOTICE " .. txt)
         speak(txt, false)
     end
+end
+
+-- TRAVEL BANTER ("Reisegeplänkel", user 2026-11-27: which key, is it read?). Talks between
+-- travelers, each tied to a map, a stretch of a chapter and a partner in the party
+-- (UI/PartyChat/Database/PartyChat, 188 rows, title "Kapitel 2: Cyrus & Olberic"; tavern
+-- ones only inside the tavern). The game offers one with a prompt in the corner and nothing
+-- else, no sound: ButtonMessage_C (EKSUIKind 28, KSUIManager:GetList(28)), text
+-- ePARTRCHAT_BUTTON_TEXT "Drückt ⑬, um dem Reisegeplänkel zu lauschen" -- ⑬ is the
+-- MenuPlusButton, P on the keyboard, Start on a gamepad: ActionController_Impl
+-- :OnActionMenuPlusButton asks for OPEN_PARTYCHAT while that prompt is visible (in the
+-- field; not in an event, a battle or the main menu). IsTextVisible @0x230 = one is on
+-- offer (talks hide the widget for a moment; the flag stays, so it is said once).
+-- The banter itself is PartyChat_C (EKSUIKind 24): P -> SetupPlayEventData takes the first
+-- one on offer (PlayData @0x328, its TitleName FName @+8 a GameText label), VisibleState
+-- @0x2D8 on, ~3 s of fades, then EventPlay: its lines come through GetTalkText like any
+-- scene's and the shim speaks them. Its title is said at the start, before those fades.
+M.BANTER_KIND, M.BANTER_OPEN, M.BANTER_TITLE = 24, 0x2D8, 0x328 + 8
+M.BPROMPT_KIND, M.BPROMPT_ON, M.BPROMPT_TEXT = 28, 0x230, "TextBlock_19"
+-- a UIManager widget of one kind (GetList: no object search), kept by handle; looked up
+-- again at most every 2 s while there is none, never during a fade
+M.ui_kind_widget = function(key, kind, cls)
+    local w = M.kept(M.uik_h and M.uik_h[key])
+    if w then return w end
+    M.uik_h, M.uik_t = M.uik_h or {}, M.uik_t or {}
+    M.uik_h[key] = nil
+    local now = os.clock()
+    if M.fade_now or now - (M.uik_t[key] or -99) < 2.0 then return nil end
+    M.uik_t[key] = now
+    local kuim = M.ui_manager
+    if not kuim then return nil end
+    local o
+    pcall(function() o = kuim:GetList(kind) end)
+    local ok = false
+    pcall(function() ok = (o ~= nil) and o:IsValid() end)
+    if not ok or class_name_of(o) ~= cls then return nil end
+    M.uik_h[key] = M.handle(o)
+    log(string.format("UI widget %s (kind %d) %X", cls, kind, M.addr_of(o) or 0))
+    return o
+end
+M.poll_banter = function()
+    local S = M.banter_s
+    if not S then S = {}; M.banter_s = S end
+    local peek = shim and shim.Peek
+    if not peek then return end
+    -- a banter starting: its title
+    local pc = M.ui_kind_widget("banter", M.BANTER_KIND, "PartyChat_C")
+    local pa = pc and M.addr_of(pc)
+    local open = pa and peek(pa + M.BANTER_OPEN, "u8")
+    open = open ~= nil and open ~= 0
+    if open and not S.open then
+        local title = M.gametext(peek(pa + M.BANTER_TITLE, "i32"), peek(pa + M.BANTER_TITLE + 4, "i32"))
+        local s = title and trf("Travel banter: %s", title) or tr("Travel banter")
+        log("BANTER start: " .. s)
+        speak(s, true)
+        S.said = true   -- (the prompt goes once it played)
+    end
+    S.open = open
+    -- the prompt: said once when one is on offer and it shows
+    local w = M.ui_kind_widget("bprompt", M.BPROMPT_KIND, "ButtonMessage_C")
+    local a = w and M.addr_of(w)
+    if a ~= S.addr then S.said, S.addr = nil, a end   -- (another widget: its own prompt)
+    local on = a and peek(a + M.BPROMPT_ON, "u8")
+    if not (on and on ~= 0) then S.said = nil; return end
+    if S.said or open or M.fade_now then return end
+    local vis = M.wvis(w)   -- hidden while the main menu is open or an event plays
+    if vis == nil or vis == 1 or vis == 2 then return end
+    local txt
+    pcall(function() txt = M.wtext(w[M.BPROMPT_TEXT]) end)
+    if not txt or txt == "" then txt = M.gt_label and M.gt_label("ePARTRCHAT_BUTTON_TEXT") end
+    -- (the game turns ⑬ into the bound key's glyph; if it ever stays, the default key)
+    txt = txt and txt:gsub("\226\145\172", "P") or tr("Travel banter available, press P")
+    S.said = true
+    log("BANTER prompt: " .. txt)
+    speak(txt, false)
 end
 
 -- INTERACTION HINT (talk + path action). The game picks ONE character you would talk

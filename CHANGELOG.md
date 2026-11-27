@@ -12,6 +12,12 @@ turns that section into the next version and uses it as the release notes.
 - When you choose a tale (entering a town, or at the tavern), an entry the game shows only
   as “???” is no longer skipped: it says “Unknown tale, unavailable”.
 
+### Story
+
+- Travel banter is announced: when the game offers a talk between your travelers, the
+  mod says the game's prompt (“Press P to hear travel banter”), and when it starts, its
+  title. Its lines are read like any scene.
+
 ### Exploring
 
 - The object in a job shrine (and a few others you examine with Enter) is listed under the
