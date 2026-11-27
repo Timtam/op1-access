@@ -2589,8 +2589,12 @@ end
 -- (BarMenuStorySelectItem_C: StoryCharacterName, StoryChapter "Kapitel 1", StoryText,
 -- the recommended level RecomandationText + RecomandationLV, the state overlays
 -- StoryProccess1..3 with StoryProccesstext1..3 "Im Gange" / "Unterbrochen" /
--- "Abgeschlossen"; ItemEnable), CursorPos the focused one. Its question ("Pfad von Cyrus,
--- Kapitel 1. Die Geschichte beginnen?") is a common dialog.
+-- "Abgeschlossen"; ItemEnable), CursorPos the focused one (it indexes ShowItemList, which
+-- ItemUpdate fills with StorySelectItem00.. in order: one widget per entry). Its question
+-- ("Pfad von Cyrus, Kapitel 1. Die Geschichte beginnen?") is a common dialog.
+-- An entry titled "???" (eBAR_MENU_STORYSELECT_HIDETITLE; CheckItemType 2: a chapter whose
+-- traveler you haven't met or whose earlier chapter isn't done) has no chapter, no text and
+-- ItemEnable off -- "Unknown tale, unavailable".
 M.poll_story_select = function(w)
     local T = M.TAV
     local tp = os.clock()
@@ -2616,6 +2620,15 @@ M.poll_story_select = function(w)
         "Level", "StoryProccesstext1", "StoryProccesstext2", "StoryProccesstext3" }) do
         f[k] = M.fc_txt(item, k)
         raw[#raw + 1] = k .. "=" .. tostring(f[k])
+    end
+    -- fc_txt drops "???" as a filler, and with nothing else on it that entry said nothing
+    -- at all (user 2026-11-27, Steingrad: H'aanit, then silence, then "3 of 3")
+    local nb = M.fc_get(item, "StoryCharacterName")
+    local nm = f.StoryCharacterName or (nb and M.fc_shown(nb) and M.wtext(nb))
+    nm = type(nm) == "string" and nm:gsub("\239\188\159", "?") or nil   -- (full-width "？")
+    if nm and nm:find("?", 1, true) and nm:match("^[%?%s]+$") then
+        f.StoryCharacterName = tr("Unknown tale")
+        raw[#raw + 1] = "hidden title"
     end
     local en = M.fc_get(item, "ItemEnable")
     local t1 = os.clock()

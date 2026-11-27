@@ -9,6 +9,8 @@ turns that section into the next version and uses it as the release notes.
 
 - The jobs screen is read: the traveler with their job and secondary job, and on the job
   wheel the job, who has it equipped, and the stats it would give.
+- When you choose a tale (entering a town, or at the tavern), an entry the game shows only
+  as “???” is no longer skipped: it says “Unknown tale, unavailable”.
 
 ### Exploring
 
