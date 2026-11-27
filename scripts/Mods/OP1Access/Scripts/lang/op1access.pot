@@ -1,7 +1,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: OP1 Access\n"
-"POT-Creation-Date: 2026-11-27 19:52\n"
+"POT-Creation-Date: 2026-11-27 20:09\n"
 "Language: \n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -285,7 +285,7 @@ msgstr ""
 msgid "Save and load"
 msgstr ""
 
-#: main.lua:730 main.lua:13839
+#: main.lua:730 main.lua:13845
 msgid "Path action"
 msgstr ""
 
@@ -317,7 +317,7 @@ msgstr ""
 msgid "Staff credits"
 msgstr ""
 
-#: main.lua:746 main.lua:13717
+#: main.lua:746 main.lua:13722
 msgid "Travel banter"
 msgstr ""
 
@@ -404,7 +404,7 @@ msgstr ""
 msgid "Category %s"
 msgstr ""
 
-#: main.lua:1864 main.lua:1980 main.lua:14167
+#: main.lua:1864 main.lua:1980 main.lua:14173
 #, lua-format
 msgid "%d of %d"
 msgstr ""
@@ -469,7 +469,7 @@ msgstr ""
 msgid "Shop"
 msgstr ""
 
-#: main.lua:2525 main.lua:2648 main.lua:4669 main.lua:5598 main.lua:14279
+#: main.lua:2525 main.lua:2648 main.lua:4669 main.lua:5598 main.lua:14285
 #, lua-format
 msgid "%s, unavailable"
 msgstr ""
@@ -556,7 +556,7 @@ msgstr ""
 msgid "danger level %d to %d"
 msgstr ""
 
-#: main.lua:2877 main.lua:3260 main.lua:14992
+#: main.lua:2877 main.lua:3260 main.lua:14998
 #, lua-format
 msgid "danger level %d"
 msgstr ""
@@ -798,7 +798,7 @@ msgstr ""
 msgid "%s, next skill %s LBP"
 msgstr ""
 
-#: main.lua:4667 main.lua:14277
+#: main.lua:4667 main.lua:14283
 msgid "on hand"
 msgstr ""
 
@@ -1304,7 +1304,7 @@ msgstr ""
 msgid "%s (broken)"
 msgstr ""
 
-#: main.lua:5989 main.lua:14208
+#: main.lua:5989 main.lua:14214
 #, lua-format
 msgid "Now: %s"
 msgstr ""
@@ -1722,7 +1722,7 @@ msgstr ""
 msgid "to %s"
 msgstr ""
 
-#: main.lua:9176 main.lua:13845
+#: main.lua:9176 main.lua:13851
 msgid "knocked out"
 msgstr ""
 
@@ -2115,123 +2115,124 @@ msgstr ""
 msgid "Hold Backspace to skip"
 msgstr ""
 
-#: main.lua:13717
+#: main.lua:13722
 #, lua-format
 msgid "Travel banter: %s"
 msgstr ""
 
-#: main.lua:13735
-msgid "Travel banter available, press P"
+#: main.lua:13741
+#, lua-format
+msgid "Travel banter available, press %s"
 msgstr ""
 
-#: main.lua:13817 main.lua:13866
+#: main.lua:13823 main.lua:13872
 msgid "Save point"
 msgstr ""
 
-#: main.lua:13839
+#: main.lua:13845
 msgid "Talk"
 msgstr ""
 
-#: main.lua:14040
+#: main.lua:14046
 #, lua-format
 msgid "action %s"
 msgstr ""
 
-#: main.lua:14108 main.lua:14140
+#: main.lua:14114 main.lua:14146
 msgid "done"
 msgstr ""
 
-#: main.lua:14108 main.lua:14141
+#: main.lua:14114 main.lua:14147
 msgid "not possible"
 msgstr ""
 
-#: main.lua:14142
+#: main.lua:14148
 msgid "unavailable"
 msgstr ""
 
-#: main.lua:14208
+#: main.lua:14214
 #, lua-format
 msgid "New: %s"
 msgstr ""
 
-#: main.lua:14278
+#: main.lua:14284
 msgid "stolen"
 msgstr ""
 
-#: main.lua:14278
+#: main.lua:14284
 msgid "bought"
 msgstr ""
 
-#: main.lua:14291
+#: main.lua:14297
 msgid "strength"
 msgstr ""
 
-#: main.lua:14488 main.lua:14489
+#: main.lua:14494 main.lua:14495
 msgid "save point"
 msgstr ""
 
-#: main.lua:14488
+#: main.lua:14494
 msgid "hidden item"
 msgstr ""
 
-#: main.lua:14488
+#: main.lua:14494
 msgid "objective"
 msgstr ""
 
-#: main.lua:14488
+#: main.lua:14494
 msgid "side story"
 msgstr ""
 
-#: main.lua:14489
+#: main.lua:14495
 msgid "exit toward objective"
 msgstr ""
 
-#: main.lua:14489
+#: main.lua:14495
 msgid "traveler to recruit"
 msgstr ""
 
-#: main.lua:14621
+#: main.lua:14627
 #, lua-format
 msgid "Marker gone: %s"
 msgstr ""
 
-#: main.lua:14660
+#: main.lua:14666
 #, lua-format
 msgid "New marker: %s, %s, %d"
 msgstr ""
 
-#: main.lua:14800
+#: main.lua:14806
 #, lua-format
 msgid "marker type %d"
 msgstr ""
 
-#: main.lua:14808
+#: main.lua:14814
 #, lua-format
 msgid "%s, collected"
 msgstr ""
 
-#: main.lua:14820
+#: main.lua:14826
 #, lua-format
 msgid "%s, to %s"
 msgstr ""
 
-#: main.lua:14824
+#: main.lua:14830
 #, lua-format
 msgid "%s place"
 msgstr ""
 
-#: main.lua:14866
+#: main.lua:14872
 msgid "boss fight"
 msgstr ""
 
-#: main.lua:14868
+#: main.lua:14874
 msgid "object to examine"
 msgstr ""
 
-#: main.lua:15164
+#: main.lua:15170
 msgid "Radar off"
 msgstr ""
 
-#: main.lua:15164
+#: main.lua:15170
 msgid "Radar on"
 msgstr ""

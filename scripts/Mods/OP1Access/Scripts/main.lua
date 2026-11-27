@@ -13671,10 +13671,15 @@ end
 -- ones only inside the tavern). The game offers one with a prompt in the corner and nothing
 -- else, no sound: ButtonMessage_C (EKSUIKind 28, KSUIManager:GetList(28)), text
 -- ePARTRCHAT_BUTTON_TEXT "Drückt ⑬, um dem Reisegeplänkel zu lauschen" -- ⑬ is the
--- MenuPlusButton, P on the keyboard, Start on a gamepad: ActionController_Impl
--- :OnActionMenuPlusButton asks for OPEN_PARTYCHAT while that prompt is visible (in the
--- field; not in an event, a battle or the main menu). IsTextVisible @0x230 = one is on
--- offer (talks hide the widget for a moment; the flag stays, so it is said once).
+-- MenuPlusButton: ActionController_Impl:OnActionMenuPlusButton asks for OPEN_PARTYCHAT
+-- while that prompt is visible (in the field; not in an event, a battle or the main menu).
+-- Its key is the PC key config's row "Reisegeplänkel" (option kind 46 = keyboard element
+-- 25 in SystemData.sav KeyConfigParam): L by default; P is "Schnelles Reisen", the world
+-- map (MenuMinusButton). DefaultInput.ini's P/M are overridden by that key config (user
+-- 2026-11-27: "P is the world map"). On a gamepad: the Menu button. The game puts the
+-- bound key's glyph in place of ⑬ ("Drückt die Ⓞ-Taste" for ⑥ in the tutorials).
+-- IsTextVisible @0x230 = one is on offer (talks hide the widget for a moment; the flag
+-- stays, so it is said once).
 -- The banter itself is PartyChat_C (EKSUIKind 24): P -> SetupPlayEventData takes the first
 -- one on offer (PlayData @0x328, its TitleName FName @+8 a GameText label), VisibleState
 -- @0x2D8 on, ~3 s of fades, then EventPlay: its lines come through GetTalkText like any
@@ -13733,7 +13738,7 @@ M.poll_banter = function()
     pcall(function() txt = M.wtext(w[M.BPROMPT_TEXT]) end)
     if not txt or txt == "" then txt = M.gt_label and M.gt_label("ePARTRCHAT_BUTTON_TEXT") end
     -- (the game turns ⑬ into the bound key's glyph; if it ever stays, the default key)
-    txt = txt and txt:gsub("\226\145\172", "P") or tr("Travel banter available, press P")
+    txt = txt and txt:gsub("\226\145\172", "L") or trf("Travel banter available, press %s", "L")
     S.said = true
     log("BANTER prompt: " .. txt)
     speak(txt, false)

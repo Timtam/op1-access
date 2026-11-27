@@ -15,8 +15,9 @@ turns that section into the next version and uses it as the release notes.
 ### Story
 
 - Travel banter is announced: when the game offers a talk between your travelers, the
-  mod says the game's prompt (“Press P to hear travel banter”), and when it starts, its
-  title. Its lines are read like any scene.
+  mod says the game's prompt with its key (“Press L to hear travel banter”; L by
+  default, P is the world map), and when it starts, its title. Its lines are read like
+  any scene.
 
 ### Exploring
 

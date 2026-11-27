@@ -285,7 +285,7 @@ msgstr "Berufsstatus"
 msgid "Save and load"
 msgstr "Speichern und Laden"
 
-#: main.lua:730 main.lua:13839
+#: main.lua:730 main.lua:13845
 msgid "Path action"
 msgstr "Wege-Aktion"
 
@@ -317,7 +317,7 @@ msgstr "Notiz"
 msgid "Staff credits"
 msgstr "Abspann"
 
-#: main.lua:746 main.lua:13717
+#: main.lua:746 main.lua:13722
 msgid "Travel banter"
 msgstr "Reisegeplänkel"
 
@@ -404,7 +404,7 @@ msgstr "Nicht verfügbar"
 msgid "Category %s"
 msgstr "Kategorie %s"
 
-#: main.lua:1864 main.lua:1980 main.lua:14167
+#: main.lua:1864 main.lua:1980 main.lua:14173
 #, lua-format
 msgid "%d of %d"
 msgstr "%d von %d"
@@ -469,7 +469,7 @@ msgstr "Game over"
 msgid "Shop"
 msgstr "Laden"
 
-#: main.lua:2525 main.lua:2648 main.lua:4669 main.lua:5598 main.lua:14279
+#: main.lua:2525 main.lua:2648 main.lua:4669 main.lua:5598 main.lua:14285
 #, lua-format
 msgid "%s, unavailable"
 msgstr "%s, nicht verfügbar"
@@ -556,7 +556,7 @@ msgstr "unbekannter Ort"
 msgid "danger level %d to %d"
 msgstr "Gefahrenstufe %d bis %d"
 
-#: main.lua:2877 main.lua:3260 main.lua:14992
+#: main.lua:2877 main.lua:3260 main.lua:14998
 #, lua-format
 msgid "danger level %d"
 msgstr "Gefahrenstufe %d"
@@ -798,7 +798,7 @@ msgstr "Reiter %d"
 msgid "%s, next skill %s LBP"
 msgstr "%s, nächste Fertigkeit %s LBP"
 
-#: main.lua:4667 main.lua:14277
+#: main.lua:4667 main.lua:14283
 msgid "on hand"
 msgstr "im Besitz"
 
@@ -1304,7 +1304,7 @@ msgstr "Kein Gruppenmitglied %d"
 msgid "%s (broken)"
 msgstr "%s (gebrochen)"
 
-#: main.lua:5989 main.lua:14208
+#: main.lua:5989 main.lua:14214
 #, lua-format
 msgid "Now: %s"
 msgstr "Jetzt: %s"
@@ -1722,7 +1722,7 @@ msgstr "hinter einer Tür"
 msgid "to %s"
 msgstr "nach %s"
 
-#: main.lua:9176 main.lua:13845
+#: main.lua:9176 main.lua:13851
 msgid "knocked out"
 msgstr "besiegt"
 
@@ -2115,124 +2115,125 @@ msgstr "Keine Aktionsanzeige an diesem Gegenstand"
 msgid "Hold Backspace to skip"
 msgstr "Rücktaste halten zum Überspringen"
 
-#: main.lua:13717
+#: main.lua:13722
 #, lua-format
 msgid "Travel banter: %s"
 msgstr "Reisegeplänkel: %s"
 
-#: main.lua:13735
-msgid "Travel banter available, press P"
-msgstr "Reisegeplänkel verfügbar, P drücken"
+#: main.lua:13741
+#, lua-format
+msgid "Travel banter available, press %s"
+msgstr "Reisegeplänkel verfügbar, %s drücken"
 
-#: main.lua:13817 main.lua:13866
+#: main.lua:13823 main.lua:13872
 msgid "Save point"
 msgstr "Speicherpunkt"
 
-#: main.lua:13839
+#: main.lua:13845
 msgid "Talk"
 msgstr "Sprechen"
 
-#: main.lua:14040
+#: main.lua:14046
 #, lua-format
 msgid "action %s"
 msgstr "Aktion %s"
 
-#: main.lua:14108 main.lua:14140
+#: main.lua:14114 main.lua:14146
 msgid "done"
 msgstr "erledigt"
 
-#: main.lua:14108 main.lua:14141
+#: main.lua:14114 main.lua:14147
 msgid "not possible"
 msgstr "nicht möglich"
 
-#: main.lua:14142
+#: main.lua:14148
 msgid "unavailable"
 msgstr "nicht verfügbar"
 
-#: main.lua:14208
+#: main.lua:14214
 #, lua-format
 msgid "New: %s"
 msgstr "Neu: %s"
 
-#: main.lua:14278
+#: main.lua:14284
 msgid "stolen"
 msgstr "gestohlen"
 
-#: main.lua:14278
+#: main.lua:14284
 msgid "bought"
 msgstr "gekauft"
 
-#: main.lua:14291
+#: main.lua:14297
 msgid "strength"
 msgstr "Stärke"
 
-#: main.lua:14488 main.lua:14489
+#: main.lua:14494 main.lua:14495
 msgid "save point"
 msgstr "Speicherpunkt"
 
-#: main.lua:14488
+#: main.lua:14494
 msgid "hidden item"
 msgstr "verborgenes Objekt"
 
-#: main.lua:14488
+#: main.lua:14494
 msgid "objective"
 msgstr "Hauptziel"
 
-#: main.lua:14488
+#: main.lua:14494
 msgid "side story"
 msgstr "Nebengeschichte"
 
-#: main.lua:14489
+#: main.lua:14495
 msgid "exit toward objective"
 msgstr "Ausgang zum Hauptziel"
 
-#: main.lua:14489
+#: main.lua:14495
 msgid "traveler to recruit"
 msgstr "Reisender zum Anwerben"
 
-#: main.lua:14621
+#: main.lua:14627
 #, lua-format
 msgid "Marker gone: %s"
 msgstr "Markierung weg: %s"
 
-#: main.lua:14660
+#: main.lua:14666
 #, lua-format
 msgid "New marker: %s, %s, %d"
 msgstr "Neue Markierung: %s, %s, %d"
 
-#: main.lua:14800
+#: main.lua:14806
 #, lua-format
 msgid "marker type %d"
 msgstr "Markierungstyp %d"
 
-#: main.lua:14808
+#: main.lua:14814
 #, lua-format
 msgid "%s, collected"
 msgstr "%s, eingesammelt"
 
-#: main.lua:14820
+#: main.lua:14826
 #, lua-format
 msgid "%s, to %s"
 msgstr "%s, nach %s"
 
-#: main.lua:14824
+#: main.lua:14830
 #, lua-format
 msgid "%s place"
 msgstr "%s, Ort"
 
-#: main.lua:14866
+#: main.lua:14872
 msgid "boss fight"
 msgstr "Bosskampf"
 
-#: main.lua:14868
+#: main.lua:14874
 msgid "object to examine"
 msgstr "Objekt zum Untersuchen"
 
-#: main.lua:15164
+#: main.lua:15170
 msgid "Radar off"
 msgstr "Radar aus"
 
-#: main.lua:15164
+#: main.lua:15170
 msgid "Radar on"
 msgstr "Radar an"
 

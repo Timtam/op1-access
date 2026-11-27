@@ -193,8 +193,10 @@ main menu, **Backspace** to go back in menus. The mod adds these:
   for a key, the mod says which one goes on (“Continue with Enter”); a letter says at once
   that Backspace closes it.
 - Travel banter: when the game offers a talk between your travelers, the mod says its
-  prompt (“Press P to hear travel banter”; P is the game's key, a gamepad's is Start).
-  Pressing it says the banter's title, then its lines are read like any scene.
+  prompt with the key it shows (“Press L to hear travel banter”: L by default, P is
+  the world map; on a gamepad the Menu button; in the game's keyboard options the row
+  “Travel Banter”). Pressing it says the banter's title, then its lines are read like
+  any scene.
 
 ### Exploring
 

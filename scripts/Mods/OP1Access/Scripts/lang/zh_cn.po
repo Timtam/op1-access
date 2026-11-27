@@ -287,7 +287,7 @@ msgstr "职业状态"
 msgid "Save and load"
 msgstr "保存与读取"
 
-#: main.lua:730 main.lua:13839
+#: main.lua:730 main.lua:13845
 msgid "Path action"
 msgstr "地图指令"
 
@@ -319,7 +319,7 @@ msgstr "旁白备注"
 msgid "Staff credits"
 msgstr "制作人员名单"
 
-#: main.lua:746 main.lua:13717
+#: main.lua:746 main.lua:13722
 msgid "Travel banter"
 msgstr "队伍对话"
 
@@ -406,7 +406,7 @@ msgstr "不可用"
 msgid "Category %s"
 msgstr "类别 %s"
 
-#: main.lua:1864 main.lua:1980 main.lua:14167
+#: main.lua:1864 main.lua:1980 main.lua:14173
 #, lua-format
 msgid "%d of %d"
 msgstr "%d/%d"
@@ -471,7 +471,7 @@ msgstr "游戏结束"
 msgid "Shop"
 msgstr "商店"
 
-#: main.lua:2525 main.lua:2648 main.lua:4669 main.lua:5598 main.lua:14279
+#: main.lua:2525 main.lua:2648 main.lua:4669 main.lua:5598 main.lua:14285
 #, lua-format
 msgid "%s, unavailable"
 msgstr "%s，不可用"
@@ -558,7 +558,7 @@ msgstr "未知地点"
 msgid "danger level %d to %d"
 msgstr "危险等级 %d 至 %d"
 
-#: main.lua:2877 main.lua:3260 main.lua:14992
+#: main.lua:2877 main.lua:3260 main.lua:14998
 #, lua-format
 msgid "danger level %d"
 msgstr "危险等级 %d"
@@ -800,7 +800,7 @@ msgstr "标签页 %d"
 msgid "%s, next skill %s LBP"
 msgstr "%s，习得下个技能需要 %s LBP"
 
-#: main.lua:4667 main.lua:14277
+#: main.lua:4667 main.lua:14283
 msgid "on hand"
 msgstr "持有数"
 
@@ -1306,7 +1306,7 @@ msgstr "没有第 %d 位队员"
 msgid "%s (broken)"
 msgstr "%s（已破防）"
 
-#: main.lua:5989 main.lua:14208
+#: main.lua:5989 main.lua:14214
 #, lua-format
 msgid "Now: %s"
 msgstr "当前行动：%s"
@@ -1724,7 +1724,7 @@ msgstr "在门后"
 msgid "to %s"
 msgstr "通往%s"
 
-#: main.lua:9176 main.lua:13845
+#: main.lua:9176 main.lua:13851
 msgid "knocked out"
 msgstr "已被击倒"
 
@@ -2117,124 +2117,125 @@ msgstr "这个道具没有交互提示"
 msgid "Hold Backspace to skip"
 msgstr "长按退格键跳过"
 
-#: main.lua:13717
+#: main.lua:13722
 #, lua-format
 msgid "Travel banter: %s"
 msgstr "队伍对话：%s"
 
-#: main.lua:13735
-msgid "Travel banter available, press P"
-msgstr "可以进行队伍对话，按P键"
+#: main.lua:13741
+#, lua-format
+msgid "Travel banter available, press %s"
+msgstr "可以进行队伍对话，按%s键"
 
-#: main.lua:13817 main.lua:13866
+#: main.lua:13823 main.lua:13872
 msgid "Save point"
 msgstr "存档点"
 
-#: main.lua:13839
+#: main.lua:13845
 msgid "Talk"
 msgstr "交谈"
 
-#: main.lua:14040
+#: main.lua:14046
 #, lua-format
 msgid "action %s"
 msgstr "指令 %s"
 
-#: main.lua:14108 main.lua:14140
+#: main.lua:14114 main.lua:14146
 msgid "done"
 msgstr "已完成"
 
-#: main.lua:14108 main.lua:14141
+#: main.lua:14114 main.lua:14147
 msgid "not possible"
 msgstr "无法执行"
 
-#: main.lua:14142
+#: main.lua:14148
 msgid "unavailable"
 msgstr "不可用"
 
-#: main.lua:14208
+#: main.lua:14214
 #, lua-format
 msgid "New: %s"
 msgstr "新增：%s"
 
-#: main.lua:14278
+#: main.lua:14284
 msgid "stolen"
 msgstr "已偷取"
 
-#: main.lua:14278
+#: main.lua:14284
 msgid "bought"
 msgstr "已购买"
 
-#: main.lua:14291
+#: main.lua:14297
 msgid "strength"
 msgstr "强度"
 
-#: main.lua:14488 main.lua:14489
+#: main.lua:14494 main.lua:14495
 msgid "save point"
 msgstr "存档点"
 
-#: main.lua:14488
+#: main.lua:14494
 msgid "hidden item"
 msgstr "隐藏道具"
 
-#: main.lua:14488
+#: main.lua:14494
 msgid "objective"
 msgstr "目标"
 
-#: main.lua:14488
+#: main.lua:14494
 msgid "side story"
 msgstr "支线故事"
 
-#: main.lua:14489
+#: main.lua:14495
 msgid "exit toward objective"
 msgstr "通往目标的出口"
 
-#: main.lua:14489
+#: main.lua:14495
 msgid "traveler to recruit"
 msgstr "可招募的旅人"
 
-#: main.lua:14621
+#: main.lua:14627
 #, lua-format
 msgid "Marker gone: %s"
 msgstr "标记已消失：%s"
 
-#: main.lua:14660
+#: main.lua:14666
 #, lua-format
 msgid "New marker: %s, %s, %d"
 msgstr "新标记：%s，%s，距离 %d"
 
-#: main.lua:14800
+#: main.lua:14806
 #, lua-format
 msgid "marker type %d"
 msgstr "标记类型 %d"
 
-#: main.lua:14808
+#: main.lua:14814
 #, lua-format
 msgid "%s, collected"
 msgstr "%s，已收集"
 
-#: main.lua:14820
+#: main.lua:14826
 #, lua-format
 msgid "%s, to %s"
 msgstr "%s，通往%s"
 
-#: main.lua:14824
+#: main.lua:14830
 #, lua-format
 msgid "%s place"
 msgstr "%s的位置"
 
-#: main.lua:14866
+#: main.lua:14872
 msgid "boss fight"
 msgstr "首领战"
 
-#: main.lua:14868
+#: main.lua:14874
 msgid "object to examine"
 msgstr "可调查的物体"
 
-#: main.lua:15164
+#: main.lua:15170
 msgid "Radar off"
 msgstr "雷达已关闭"
 
-#: main.lua:15164
+#: main.lua:15170
 msgid "Radar on"
 msgstr "雷达已开启"
 
