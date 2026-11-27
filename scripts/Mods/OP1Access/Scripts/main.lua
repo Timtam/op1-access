@@ -1725,10 +1725,19 @@ pcall(RegisterKeyBind, Key.Q, function() if M.q_objective_ok() then M.read_objec
 -- a MenuText text block carrying the localized label. So: GetChildAt(cursor).MenuText.
 -- Announce the selected category on open + each move (interrupt behaviour via say_item).
 do
-    local mm_idx, sub_idx, mm_away
+    local mm_idx, sub_idx, mm_away, mm_vis_t
     -- back from a sub-screen that left the list as it was (the world map): say the
     -- selected category again, without the objective
     M.mainmenu_reannounce = function() mm_idx = nil; sub_idx = nil; M.mm_no_objective = true end
+    -- The menu shows the world map, not its category list: MainState 7 (MainMenuWidget
+    -- RightAxisX/Y go to the map then), or the map has the focus outside its after-travel
+    -- state 3 (it keeps IsFocus after a fast travel until the menu opens again).
+    M.mm_on_map = function(mw, ms)
+        if ms == 7 then return true end
+        local f, st
+        pcall(function() local wm = mw.WorldMap; f = wm.IsFocus; st = wm.WorldMapState end)
+        return f == true and st ~= 3
+    end
     M.poll_mainmenu = function()
         local mw
         for i = 1, #scene_widgets do
@@ -1740,7 +1749,8 @@ do
         end
         -- (the "no objective" flag goes with the menu: it outlived a "Return to Title"
         -- from the submenu and skipped the objective after the next load -- review)
-        if not mw then mm_idx = nil; sub_idx = nil; mm_away = nil; M.mm_no_objective = nil; return end
+        if not mw then mm_idx = nil; sub_idx = nil; mm_away = nil; M.mm_no_objective = nil; mm_vis_t = nil; return end
+        mm_vis_t = mm_vis_t or os.clock()
         -- Another screen on top (an item list, the options, a dialog): nothing to say here.
         -- Back on the menu, its selected entry again, without the objective. Not while the
         -- world map is open: a dialog over it (fast travel? "No") is no way back to the
@@ -1798,6 +1808,12 @@ do
             mm_idx = nil
             M.mm_no_objective = true
         end
+        -- Opened straight onto the world map (the game's map key: View on a pad, P on the
+        -- keyboard): the list is not where you are -- its "Inventar" came just before the
+        -- map's own reader (user 2026-11-27). Right after opening the state may lag a frame,
+        -- so the first category waits 0.1 s.
+        if M.mm_on_map(mw, ms) then return end
+        if mm_idx == nil and os.clock() - mm_vis_t < 0.1 then return end
         local list; pcall(function() list = mw.MainMenuList end)
         if not list then mm_idx = nil; return end
         local ci; pcall(function() ci = list.CursorPosition end)

@@ -13,6 +13,8 @@ turns that section into the next version and uses it as the release notes.
   RT guides, LT says where the target is, L3 the objective), in battle the enemies and
   the party one by one and the turn order, on the world map and at character select the
   places and the travelers. The README lists them under *Controller*.
+- Opening the world map with its own key (View on a controller, P on the keyboard) no longer
+  says the main menu's category (“Inventory”) and the objective first.
 
 ### Menus
 
